@@ -4,6 +4,7 @@ import 'package:logger/logger.dart';
 
 import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
+import '../data/health_repository.dart';
 import '../storage/app_database.dart';
 
 final GetIt sl = GetIt.instance;
@@ -29,5 +30,10 @@ Future<void> setupServiceLocator() async {
     () => AesGcmCryptoService(keyVault: keyVault),
   );
 
-  sl.registerSingleton<AppDatabase>(AppDatabase.instance);
+  final appDatabase = AppDatabase.instance;
+  sl.registerSingleton<AppDatabase>(appDatabase);
+
+  final healthRepository = HealthRepository(database: appDatabase);
+  await healthRepository.initialize();
+  sl.registerSingleton<HealthRepository>(healthRepository);
 }

@@ -1,6 +1,6 @@
 {
-    "name": "health_reset_plan",
-    "short_name": "health_reset_plan",
+    "name": "健康重启计划",
+    "short_name": "健康重启",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

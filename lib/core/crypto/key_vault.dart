@@ -48,8 +48,13 @@ class KeyVault {
     if (!bip39.validateMnemonic(normalized)) {
       throw ArgumentError('助记词无效，请检查后重新输入');
     }
-    final seed = bip39.mnemonicToSeed(normalized);
-    final umk = Uint8List.fromList(seed.sublist(0, 32));
+    final entropyHex = bip39.mnemonicToEntropy(normalized);
+    final umk = Uint8List.fromList(
+      List<int>.generate(
+        entropyHex.length ~/ 2,
+        (index) => int.parse(entropyHex.substring(index * 2, index * 2 + 2), radix: 16),
+      ),
+    );
     await storage.write(key: _umkKey, value: base64Encode(umk));
     await storage.write(key: _backedUpKey, value: 'true');
     return umk;
