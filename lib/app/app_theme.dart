@@ -104,5 +104,34 @@ class AppTheme {
           seedColor: healthGreen,
           brightness: Brightness.dark,
         ),
+        scaffoldBackgroundColor: const Color(0xFF0F1C2E),
+        appBarTheme: const AppBarTheme(
+          centerTitle: false,
+          backgroundColor: Color(0xFF162336),
+          foregroundColor: Colors.white,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          surfaceTintColor: Color(0xFF162336),
+          titleTextStyle: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: const Color(0xFF162336),
+          indicatorColor: primaryBlue.withValues(alpha: 0.22),
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => TextStyle(
+              fontSize: 12,
+              fontWeight: states.contains(WidgetState.selected)
+                  ? FontWeight.w700
+                  : FontWeight.w500,
+              color: states.contains(WidgetState.selected)
+                  ? primaryBlue
+                  : Colors.white54,
+            ),
+          ),
+        ),
       );
 }

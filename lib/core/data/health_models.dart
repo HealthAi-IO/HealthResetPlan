@@ -15,6 +15,9 @@ class UserProfileData {
     required this.medications,
     required this.createdAt,
     required this.updatedAt,
+    this.goal = 'maintain',
+    this.exerciseBase = 'none',
+    this.dietPreference = 'normal',
     this.version = 0,
     this.isDirty = 1,
   });
@@ -30,6 +33,12 @@ class UserProfileData {
   final String medications;
   final int createdAt;
   final int updatedAt;
+  // fat_loss | glucose_control | bp_control | maintain
+  final String goal;
+  // none | light | moderate
+  final String exerciseBase;
+  // light | normal | vegetarian | custom
+  final String dietPreference;
   final int version;
   final int isDirty;
 
@@ -68,6 +77,9 @@ class UserProfileData {
     String? medications,
     int? createdAt,
     int? updatedAt,
+    String? goal,
+    String? exerciseBase,
+    String? dietPreference,
     int? version,
     int? isDirty,
   }) {
@@ -83,6 +95,9 @@ class UserProfileData {
       medications: medications ?? this.medications,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      goal: goal ?? this.goal,
+      exerciseBase: exerciseBase ?? this.exerciseBase,
+      dietPreference: dietPreference ?? this.dietPreference,
       version: version ?? this.version,
       isDirty: isDirty ?? this.isDirty,
     );
@@ -116,6 +131,9 @@ class UserProfileData {
       medications: row['medications'] as String? ?? '',
       createdAt: _asInt(row['created_at']) ?? 0,
       updatedAt: _asInt(row['updated_at']) ?? 0,
+      goal: row['goal'] as String? ?? 'maintain',
+      exerciseBase: row['exercise_base'] as String? ?? 'none',
+      dietPreference: row['diet_preference'] as String? ?? 'normal',
       version: _asInt(row['version']) ?? 0,
       isDirty: _asInt(row['is_dirty']) ?? 1,
     );
@@ -133,6 +151,9 @@ class UserProfileData {
       'medications': medications,
       'created_at': createdAt,
       'updated_at': updatedAt,
+      'goal': goal,
+      'exercise_base': exerciseBase,
+      'diet_preference': dietPreference,
       'version': version,
       'is_dirty': isDirty,
     };
@@ -143,6 +164,7 @@ class HealthIndicatorEntry {
   const HealthIndicatorEntry({
     this.id,
     this.userId = kLocalUserId,
+    this.clientId,
     required this.type,
     required this.payload,
     required this.source,
@@ -151,10 +173,12 @@ class HealthIndicatorEntry {
     required this.updatedAt,
     this.version = 0,
     this.isDirty = 1,
+    this.syncAt = 0,
   });
 
   final int? id;
   final String userId;
+  final String? clientId;
   final String type;
   final Map<String, dynamic> payload;
   final String source;
@@ -163,6 +187,7 @@ class HealthIndicatorEntry {
   final int updatedAt;
   final int version;
   final int isDirty;
+  final int syncAt;
 
   DateTime get measuredTime => DateTime.fromMillisecondsSinceEpoch(measuredAt);
 
@@ -173,6 +198,12 @@ class HealthIndicatorEntry {
       'glucose' => '血糖',
       'lipid' => '血脂',
       'heart_rate' => '心率',
+      'body_fat' => '体脂率',
+      'waist' => '腰围',
+      'spo2' => '血氧',
+      'sleep' => '睡眠',
+      'steps' => '步数',
+      'bmi' => 'BMI',
       _ => '健康指标',
     };
   }
@@ -182,9 +213,14 @@ class HealthIndicatorEntry {
       'bp' => '${_fmt(payload['systolic'])}/${_fmt(payload['diastolic'])} mmHg',
       'weight' => '${_fmt(payload['weightKg'], digits: 1)} kg',
       'glucose' => '${_fmt(payload['glucoseMmol'], digits: 1)} mmol/L',
-      'lipid' =>
-        'TC ${_fmt(payload['tc'], digits: 1)} / LDL ${_fmt(payload['ldl'], digits: 1)}',
+      'lipid' => 'TC ${_fmt(payload['tc'], digits: 1)} / LDL ${_fmt(payload['ldl'], digits: 1)}',
       'heart_rate' => '${_fmt(payload['bpm'])} bpm',
+      'body_fat' => '${_fmt(payload['bodyFatPct'], digits: 1)} %',
+      'waist' => '${_fmt(payload['waistCm'], digits: 1)} cm',
+      'spo2' => '${_fmt(payload['spo2Pct'])} %',
+      'sleep' => '${_fmt(payload['sleepHours'], digits: 1)} h',
+      'steps' => '${_fmt(payload['steps'])} 步',
+      'bmi' => _fmt(payload['bmiValue'], digits: 1),
       _ => payload.values.map((e) => '$e').join(' / '),
     };
   }
@@ -195,6 +231,12 @@ class HealthIndicatorEntry {
       'bp' => _asDoubleOrNull(payload['systolic']),
       'glucose' => _asDoubleOrNull(payload['glucoseMmol']),
       'heart_rate' => _asDoubleOrNull(payload['bpm']),
+      'body_fat' => _asDoubleOrNull(payload['bodyFatPct']),
+      'waist' => _asDoubleOrNull(payload['waistCm']),
+      'spo2' => _asDoubleOrNull(payload['spo2Pct']),
+      'sleep' => _asDoubleOrNull(payload['sleepHours']),
+      'steps' => _asDoubleOrNull(payload['steps']),
+      'bmi' => _asDoubleOrNull(payload['bmiValue']),
       _ => null,
     };
   }
@@ -203,6 +245,7 @@ class HealthIndicatorEntry {
     return HealthIndicatorEntry(
       id: _asInt(row['id']),
       userId: row['user_id'] as String? ?? kLocalUserId,
+      clientId: row['client_id'] as String?,
       type: row['type'] as String? ?? 'weight',
       payload: decodeJson(row['payload_json'] as String? ?? '{}'),
       source: row['source'] as String? ?? 'manual',
@@ -211,12 +254,14 @@ class HealthIndicatorEntry {
       updatedAt: _asInt(row['updated_at']) ?? 0,
       version: _asInt(row['version']) ?? 0,
       isDirty: _asInt(row['is_dirty']) ?? 1,
+      syncAt: _asInt(row['sync_at']) ?? 0,
     );
   }
 
   Map<String, Object?> toRow() {
     return {
       'user_id': userId,
+      if (clientId != null) 'client_id': clientId,
       'type': type,
       'payload_json': jsonEncode(payload),
       'source': source,
@@ -225,6 +270,7 @@ class HealthIndicatorEntry {
       'updated_at': updatedAt,
       'version': version,
       'is_dirty': isDirty,
+      'sync_at': syncAt,
     };
   }
 }
@@ -494,6 +540,38 @@ class HealthDashboardData {
         .reversed
         .toList();
   }
+}
+
+class ClockStats {
+  const ClockStats({
+    required this.today,
+    required this.week,
+    required this.month,
+    required this.todayDays,
+    required this.weekDays,
+    required this.monthDays,
+  });
+
+  final Map<String, int> today;
+  final Map<String, int> week;
+  final Map<String, int> month;
+  final int todayDays;
+  final int weekDays;
+  final int monthDays;
+
+  static const List<String> allTypes = ['meal', 'exercise', 'medicine', 'weight', 'water'];
+  static const int dailyTarget = 4; // meal + exercise + medicine + weight
+
+  double rateForPeriod(Map<String, int> counts, int days) {
+    final total = allTypes.fold(0, (sum, t) => sum + (counts[t] ?? 0));
+    final expected = dailyTarget * days;
+    if (expected == 0) return 0;
+    return (total / expected).clamp(0.0, 1.0);
+  }
+
+  double get todayRate => rateForPeriod(today, todayDays);
+  double get weekRate => rateForPeriod(week, weekDays);
+  double get monthRate => rateForPeriod(month, monthDays);
 }
 
 Map<String, dynamic> decodeJson(String raw) {

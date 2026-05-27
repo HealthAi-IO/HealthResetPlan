@@ -1,11 +1,13 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
-import '../../core/crypto/key_vault.dart';
 import '../../core/di/service_locator.dart';
 
 class HomePage extends StatefulWidget {
@@ -17,445 +19,441 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final HealthRepository _repo = sl<HealthRepository>();
-  final KeyVault _vault = sl<KeyVault>();
 
   HealthDashboardData? _data;
+  List<HealthIndicatorEntry> _recentIndicators = const [];
   bool _loading = true;
-  bool _syncReady = false;
 
   @override
   void initState() {
     super.initState();
-    _repo.addListener(_onRepoChanged);
+    _repo.addListener(_onChanged);
     _load();
-    _loadSyncState();
   }
 
   @override
   void dispose() {
-    _repo.removeListener(_onRepoChanged);
+    _repo.removeListener(_onChanged);
     super.dispose();
   }
 
-  void _onRepoChanged() {
-    _load(silent: true);
-    _loadSyncState();
-  }
+  void _onChanged() => _load(silent: true);
 
   Future<void> _load({bool silent = false}) async {
     if (!mounted) return;
-    if (!silent) {
-      setState(() => _loading = true);
-    }
-    final data = await _repo.loadDashboard();
+    if (!silent) setState(() => _loading = true);
+    final cutoff = DateTime.now().subtract(const Duration(days: 3));
+    final results = await Future.wait([
+      _repo.loadDashboard(),
+      _repo.loadIndicatorsSince(cutoff),
+    ]);
     if (!mounted) return;
     setState(() {
-      _data = data;
+      _data = results[0] as HealthDashboardData;
+      _recentIndicators = results[1] as List<HealthIndicatorEntry>;
       _loading = false;
     });
   }
 
-  Future<void> _loadSyncState() async {
-    final backedUp = await _vault.isBackedUp();
-    if (!mounted) return;
-    setState(() => _syncReady = backedUp);
-  }
-
   @override
   Widget build(BuildContext context) {
+    if (_loading && _data == null) return const Center(child: CircularProgressIndicator());
     final data = _data;
     final profile = data?.profile;
-    final bottomPadding =
-        MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
-    if (_loading && data == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+    final now = DateTime.now();
+    final todayLabel = DateFormat('MM月dd日 EEEE', 'zh_CN').format(now);
+
+    // 今日计划
+    final todayPlans = (data?.plans ?? []).where((p) {
+      final d = p.date;
+      return d.year == now.year && d.month == now.month && d.day == now.day;
+    }).toList();
+    final todayMeal = todayPlans.where((p) => p.type == 'meal').firstOrNull;
+    final todayExercise = todayPlans.where((p) => p.type == 'exercise').firstOrNull;
+
+    // 今日打卡
+    final todayClocks = (data?.clockRecords ?? []).where((r) {
+      final t = r.clockTime;
+      return t.year == now.year && t.month == now.month && t.day == now.day;
+    }).toList();
+    final doneTypes = todayClocks.where((r) => r.status == 'done').map((r) => r.type).toSet();
+    final completion = data?.todayCompletion ?? 0;
 
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         children: [
-          _HeroCard(
+          // 顶部仪表盘 Hero
+          _DashboardHero(
             profile: profile,
-            syncReady: _syncReady,
-            completion: data?.todayCompletion ?? 0,
+            completion: completion,
+            doneTypes: doneTypes,
+            todayLabel: todayLabel,
+            onClockTap: () => context.go('/clock'),
           ),
-          const SizedBox(height: 16),
-          _SectionHeader(
+          const SizedBox(height: 14),
+
+          // 今日关键指标
+          _TodayMetricsRow(data: data, onAddIndicator: () {
+            context.push('/indicators/input').then((_) {
+              if (mounted) _load(silent: true);
+            });
+          }),
+          const SizedBox(height: 14),
+
+          // 今日计划摘要
+          _TodayPlanCard(
+            meal: todayMeal,
+            exercise: todayExercise,
+            onGenerate: () async {
+              try {
+                await _repo.generateWeeklyPlan();
+                if (!mounted) return;
+                ScaffoldMessenger.of(context) // ignore: use_build_context_synchronously
+                    .showSnackBar(const SnackBar(content: Text('已生成 7 天本地计划')));
+              } catch (_) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context) // ignore: use_build_context_synchronously
+                    .showSnackBar(const SnackBar(content: Text('计划生成失败，请重试')));
+              }
+            },
+            onViewAll: () => context.go('/plan'),
+          ),
+          const SizedBox(height: 14),
+
+          // 快捷入口
+          _Panel(
             title: '快捷入口',
-            actionLabel: '生成计划',
-            onAction: () async {
-              await _repo.generateWeeklyPlan();
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('已生成 7 天本地计划')),
-              );
-              context.go('/plan');
-            },
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 900 ? 5 : 2;
+            child: LayoutBuilder(builder: (_, c) {
+              final cols = c.maxWidth >= 600 ? 5 : 3;
               return GridView.count(
-                crossAxisCount: columns,
+                crossAxisCount: cols,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: columns >= 4 ? 1.55 : 1.08,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 0.95,
                 children: [
-                  _ShortcutCard(
-                    icon: Icons.assignment_ind,
-                    title: '健康档案',
-                    subtitle: '完善身高体重病史',
-                    onTap: () => context.go('/profile'),
-                  ),
-                  _ShortcutCard(
-                    icon: Icons.document_scanner_outlined,
-                    title: '报告识别',
-                    subtitle: '录入体检关键指标',
-                    onTap: () => context.push('/report'),
-                  ),
-                  _ShortcutCard(
-                    icon: Icons.event_note,
-                    title: 'AI 计划',
-                    subtitle: '生成饮食与运动方案',
-                    onTap: () => context.go('/plan'),
-                  ),
-                  _ShortcutCard(
-                    icon: Icons.check_circle,
-                    title: '打卡记录',
-                    subtitle: '饮食 / 运动 / 用药 / 称重',
-                    onTap: () => context.go('/clock'),
-                  ),
-                  _ShortcutCard(
-                    icon: Icons.lock_outline,
-                    title: '云同步',
-                    subtitle: _syncReady ? '已完成备份' : '尚未备份主密钥',
-                    onTap: () => context.push('/sync/key-setup'),
-                  ),
+                  _QuickEntry(icon: Icons.assignment_ind_outlined, label: '健康档案', color: Colors.teal, onTap: () => context.go('/profile')),
+                  _QuickEntry(icon: Icons.scale_outlined, label: '录入指标', color: AppTheme.deepBlue, onTap: () {
+                    context.push('/indicators/input').then((_) {
+                      if (mounted) _load(silent: true);
+                    });
+                  }),
+                  _QuickEntry(icon: Icons.list_alt_outlined, label: '指标历史', color: Colors.indigo, onTap: () {
+                    context.push('/indicators').then((_) {
+                      if (mounted) _load(silent: true);
+                    });
+                  }),
+                  _QuickEntry(icon: Icons.event_note_outlined, label: '7天计划', color: Colors.green, onTap: () => context.go('/plan')),
+                  _QuickEntry(icon: Icons.insights_outlined, label: '趋势统计', color: Colors.orange, onTap: () => context.go('/stats')),
                 ],
               );
-            },
+            }),
           ),
+          const SizedBox(height: 14),
+
+          // 最近指标（近 3 天）
+          _RecentIndicatorsPanel(
+            indicators: _recentIndicators,
+            onAdd: () {
+              context.push('/indicators/input').then((_) {
+                if (mounted) _load(silent: true);
+              });
+            },
+            onViewAll: () => context.push('/indicators'),
+          ),
+          const SizedBox(height: 14),
+
+          // 最近打卡 + 提醒规则
+          LayoutBuilder(builder: (_, c) {
+            final wide = c.maxWidth >= 960;
+            final clockPanel = _Panel(
+              title: '最近打卡',
+              action: TextButton(onPressed: () => context.go('/clock'), child: const Text('全部')),
+              child: _RecentClockList(records: todayClocks.isNotEmpty ? todayClocks : (data?.clockRecords ?? [])),
+            );
+            final reminderPanel = _Panel(
+              title: '提醒规则',
+              action: TextButton(onPressed: () => context.go('/clock'), child: const Text('管理')),
+              child: _ReminderPreview(reminders: data?.reminders ?? []),
+            );
+            if (wide) {
+              return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: clockPanel),
+                const SizedBox(width: 12),
+                Expanded(child: reminderPanel),
+              ]);
+            }
+            return Column(children: [clockPanel, const SizedBox(height: 12), reminderPanel]);
+          }),
           const SizedBox(height: 20),
-          _SectionHeader(title: '今日概览'),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 900 ? 4 : 2;
-              final latestBp = data?.latestIndicator('bp');
-              final latestWeight = data?.latestIndicator('weight');
-              return GridView.count(
-                crossAxisCount: columns,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: columns >= 4 ? 1.65 : 1.55,
-                children: [
-                  _MetricCard(
-                    title: 'BMI',
-                    value:
-                        profile == null ? '--' : profile.bmi.toStringAsFixed(1),
-                    caption: profile?.bmiLevel ?? '待完善',
-                    icon: Icons.monitor_weight_outlined,
-                  ),
-                  _MetricCard(
-                    title: '最新血压',
-                    value: latestBp?.displayValue ?? '未录入',
-                    caption: latestBp == null
-                        ? '可从报告或手动录入'
-                        : _formatTime(latestBp.measuredTime),
-                    icon: Icons.favorite_outline,
-                  ),
-                  _MetricCard(
-                    title: '当前体重',
-                    value: latestWeight?.displayValue ?? '--',
-                    caption: latestWeight == null
-                        ? '暂无体重记录'
-                        : _formatTime(latestWeight.measuredTime),
-                    icon: Icons.scale_outlined,
-                  ),
-                  _MetricCard(
-                    title: '今日打卡',
-                    value: '${data?.todayClockCount ?? 0}/4',
-                    caption:
-                        '完成率 ${((data?.todayCompletion ?? 0) * 100).round()}%',
-                    icon: Icons.checklist_rtl_outlined,
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 20),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 960;
-              return wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: _Panel(
-                            title: '体重趋势',
-                            subtitle: '最近记录',
-                            child: _WeightTrendChart(
-                                values:
-                                    data?.weightTrend(limit: 8) ?? const []),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          flex: 4,
-                          child: _Panel(
-                            title: '最近计划',
-                            subtitle: '本地生成内容',
-                            child:
-                                _RecentPlanList(plans: data?.plans ?? const []),
-                          ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        _Panel(
-                          title: '体重趋势',
-                          subtitle: '最近记录',
-                          child: _WeightTrendChart(
-                              values: data?.weightTrend(limit: 8) ?? const []),
-                        ),
-                        const SizedBox(height: 16),
-                        _Panel(
-                          title: '最近计划',
-                          subtitle: '本地生成内容',
-                          child:
-                              _RecentPlanList(plans: data?.plans ?? const []),
-                        ),
-                      ],
-                    );
-            },
-          ),
-          const SizedBox(height: 20),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 960;
-              return wide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: _Panel(
-                            title: '最近打卡',
-                            subtitle: '饮食、运动、用药、称重',
-                            child: _RecentClockList(
-                                records: data?.clockRecords ?? const []),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: _Panel(
-                            title: '提醒',
-                            subtitle: '本地提醒规则',
-                            child: _ReminderList(
-                                reminders: data?.reminders ?? const []),
-                          ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        _Panel(
-                          title: '最近打卡',
-                          subtitle: '饮食、运动、用药、称重',
-                          child: _RecentClockList(
-                              records: data?.clockRecords ?? const []),
-                        ),
-                        const SizedBox(height: 16),
-                        _Panel(
-                          title: '提醒',
-                          subtitle: '本地提醒规则',
-                          child: _ReminderList(
-                              reminders: data?.reminders ?? const []),
-                        ),
-                      ],
-                    );
-            },
-          ),
-          const SizedBox(height: 24),
         ],
       ),
     );
   }
 }
 
-class _HeroCard extends StatelessWidget {
-  const _HeroCard({
+// ── 仪表盘 Hero（进度环 + 今日打卡状态） ────────────────────────
+class _DashboardHero extends StatelessWidget {
+  const _DashboardHero({
     required this.profile,
-    required this.syncReady,
     required this.completion,
+    required this.doneTypes,
+    required this.todayLabel,
+    required this.onClockTap,
   });
 
   final UserProfileData? profile;
-  final bool syncReady;
   final double completion;
+  final Set<String> doneTypes;
+  final String todayLabel;
+  final VoidCallback onClockTap;
+
+  static const _clockItems = [
+    ('meal', '饮食', Icons.restaurant_outlined, Colors.orange),
+    ('exercise', '运动', Icons.directions_run_outlined, Colors.green),
+    ('medicine', '用药', Icons.medication_outlined, Colors.redAccent),
+    ('weight', '称重', Icons.scale_outlined, AppTheme.deepBlue),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    final name = profile?.nickname ?? '';
-    final hasName = name.isNotEmpty;
+    final name = (profile?.nickname.isNotEmpty == true)
+        ? profile!.nickname
+        : UserSession.instance.name;
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            primary.withValues(alpha: 0.12),
-            Colors.white,
-          ],
+          colors: [AppTheme.deepBlue.withValues(alpha: 0.92), const Color(0xFF0288D1)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name.isEmpty ? '健康重启计划' : '你好，$name',
+                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text(todayLabel, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 12),
+            Text(
+              profile == null ? '请先完善健康档案，开始个性化计划' : '继续保持，稳定打卡是最好的健康投资',
+              style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+            ),
+          ])),
+          const SizedBox(width: 16),
+          // 进度环
+          GestureDetector(
+            onTap: onClockTap,
+            child: _ProgressRing(value: completion, size: 80),
+          ),
+        ]),
+        const SizedBox(height: 16),
+        // 今日打卡四项
+        Row(children: [
+          for (final item in _clockItems) ...[
+            _ClockStatusDot(
+              icon: item.$3,
+              label: item.$2,
+              done: doneTypes.contains(item.$1),
+              color: item.$4,
+            ),
+            if (item != _clockItems.last) const SizedBox(width: 10),
+          ],
+          const Spacer(),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white70),
+            onPressed: onClockTap,
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('去打卡', style: TextStyle(fontSize: 13)),
+              Icon(Icons.chevron_right, size: 16),
+            ]),
+          ),
+        ]),
+      ]),
+    );
+  }
+}
+
+// ── 圆形进度环 ────────────────────────────────────────────────
+class _ProgressRing extends StatelessWidget {
+  const _ProgressRing({required this.value, required this.size});
+  final double value;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (value * 100).round();
+    return SizedBox(
+      width: size, height: size,
+      child: Stack(alignment: Alignment.center, children: [
+        CustomPaint(
+          size: Size(size, size),
+          painter: _RingPainter(value: value),
+        ),
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('$pct%', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 18)),
+          const Text('完成', style: TextStyle(color: Colors.white70, fontSize: 10)),
+        ]),
+      ]),
+    );
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  const _RingPainter({required this.value});
+  final double value;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 5;
+    final bgPaint = Paint()
+      ..color = Colors.white24
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6
+      ..strokeCap = StrokeCap.round;
+    final fgPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawCircle(center, radius, bgPaint);
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -pi / 2,
+      2 * pi * value,
+      false,
+      fgPaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RingPainter old) => old.value != value;
+}
+
+// ── 打卡状态点 ────────────────────────────────────────────────
+class _ClockStatusDot extends StatelessWidget {
+  const _ClockStatusDot({required this.icon, required this.label, required this.done, required this.color});
+  final IconData icon;
+  final String label;
+  final bool done;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 36, height: 36,
+        decoration: BoxDecoration(
+          color: done ? Colors.white : Colors.white24,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(done ? Icons.check : icon, color: done ? color : Colors.white54, size: 18),
+      ),
+      const SizedBox(height: 4),
+      Text(label, style: TextStyle(color: done ? Colors.white : Colors.white60, fontSize: 11, fontWeight: FontWeight.w600)),
+    ]);
+  }
+}
+
+// ── 今日关键指标行 ─────────────────────────────────────────────
+class _TodayMetricsRow extends StatelessWidget {
+  const _TodayMetricsRow({required this.data, required this.onAddIndicator});
+  final HealthDashboardData? data;
+  final VoidCallback onAddIndicator;
+
+  @override
+  Widget build(BuildContext context) {
+    final profile = data?.profile;
+    final bmi = profile?.bmi ?? 0;
+    final latestBp = data?.latestIndicator('bp');
+    final latestWeight = data?.latestIndicator('weight');
+    final latestGlucose = data?.latestIndicator('glucose');
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.cardBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Expanded(child: Text('今日数据', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15))),
+          TextButton.icon(
+            onPressed: onAddIndicator,
+            icon: const Icon(Icons.add, size: 15),
+            label: const Text('录入', style: TextStyle(fontSize: 13)),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        LayoutBuilder(builder: (_, c) {
+          final cols = c.maxWidth >= 500 ? 4 : 2;
+          return GridView.count(
+            crossAxisCount: cols,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: cols == 4 ? 1.7 : 1.5,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(hasName ? '欢迎，$name' : '欢迎回来',
-                        style: const TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 8),
-                    Text(
-                      profile == null
-                          ? '请先完善健康档案，系统会自动给出本地计划与提醒。'
-                          : '根据当前档案和最近记录，系统正在持续优化您的日常健康节奏。',
-                      style:
-                          const TextStyle(color: AppTheme.muted, height: 1.5),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _StatusChip(
-                    text: syncReady ? '已备份主密钥' : '未完成备份',
-                    color: syncReady ? Colors.green : Colors.orange,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${(completion * 100).round()}% 今日完成',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, color: AppTheme.deepBlue),
-                  ),
-                ],
-              ),
+              _MetricTile(label: 'BMI', value: bmi == 0 ? '--' : bmi.toStringAsFixed(1), sub: profile?.bmiLevel ?? '待完善', icon: Icons.monitor_weight_outlined, color: Colors.teal),
+              _MetricTile(label: '血压', value: latestBp?.displayValue ?? '--', sub: latestBp == null ? '未录入' : DateFormat('MM/dd').format(latestBp.measuredTime), icon: Icons.favorite_outline, color: Colors.redAccent),
+              _MetricTile(label: '体重', value: latestWeight?.displayValue ?? '--', sub: latestWeight == null ? '未录入' : DateFormat('MM/dd').format(latestWeight.measuredTime), icon: Icons.scale_outlined, color: AppTheme.deepBlue),
+              _MetricTile(label: '血糖', value: latestGlucose?.displayValue ?? '--', sub: latestGlucose == null ? '未录入' : DateFormat('MM/dd').format(latestGlucose.measuredTime), icon: Icons.water_drop_outlined, color: Colors.orange),
             ],
-          ),
-          const SizedBox(height: 16),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              minHeight: 10,
-              value: completion,
-              backgroundColor: primary.withValues(alpha: 0.08),
-              valueColor: AlwaysStoppedAnimation<Color>(primary),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            syncReady ? '云同步已可用，敏感字段会在客户端加密后再上传。' : '开通云同步前，请先完成主密钥备份。',
-            style: const TextStyle(color: AppTheme.muted),
-          ),
-        ],
-      ),
+          );
+        }),
+      ]),
     );
   }
 }
 
-class _ShortcutCard extends StatelessWidget {
-  const _ShortcutCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: AppTheme.cardBorder),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryBlue.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: AppTheme.deepBlue),
-            ),
-            const SizedBox(height: 12),
-            Text(title,
-                style:
-                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppTheme.muted, height: 1.3),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.title,
-    required this.value,
-    required this.caption,
-    required this.icon,
-  });
-
-  final String title;
+class _MetricTile extends StatelessWidget {
+  const _MetricTile({required this.label, required this.value, required this.sub, required this.icon, required this.color});
+  final String label;
   final String value;
-  final String caption;
+  final String sub;
   final IconData icon;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.15)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(height: 6),
+        Text(value, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: color), maxLines: 1, overflow: TextOverflow.ellipsis),
+        Text(sub, style: const TextStyle(color: AppTheme.muted, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+      ]),
+    );
+  }
+}
+
+// ── 今日计划摘要卡片 ──────────────────────────────────────────
+class _TodayPlanCard extends StatelessWidget {
+  const _TodayPlanCard({required this.meal, required this.exercise, required this.onGenerate, required this.onViewAll});
+  final PlanRecordData? meal;
+  final PlanRecordData? exercise;
+  final VoidCallback onGenerate;
+  final VoidCallback onViewAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPlan = meal != null || exercise != null;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -463,466 +461,290 @@ class _MetricCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.cardBorder),
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppTheme.primaryBlue.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: AppTheme.deepBlue),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(title,
-                    style:
-                        const TextStyle(color: AppTheme.muted, fontSize: 12)),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  caption,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-                ),
-              ],
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Expanded(child: Text('今日计划', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15))),
+          TextButton(onPressed: onViewAll, child: const Text('全部计划')),
+        ]),
+        const SizedBox(height: 8),
+        if (!hasPlan) ...[
+          const Text('暂无今日计划，点击下方按钮生成 7 天方案',
+              style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onGenerate,
+              icon: const Icon(Icons.auto_awesome_outlined, size: 16),
+              label: const Text('生成 7 天计划'),
             ),
           ),
+        ] else ...[
+          if (meal != null)
+            _PlanSummaryRow(type: '饮食', icon: Icons.restaurant_outlined, color: Colors.orange, summary: meal!.summary),
+          if (meal != null && exercise != null) const SizedBox(height: 8),
+          if (exercise != null)
+            _PlanSummaryRow(type: '运动', icon: Icons.directions_run_outlined, color: Colors.green, summary: exercise!.summary),
         ],
-      ),
+      ]),
     );
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  final String title;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            title,
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-          ),
-        ),
-        if (actionLabel != null && onAction != null)
-          TextButton(
-            onPressed: onAction,
-            child: Text(actionLabel!),
-          ),
-      ],
-    );
-  }
-}
-
-class _Panel extends StatelessWidget {
-  const _Panel({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text(subtitle,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
-          const SizedBox(height: 16),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.text, required this.color});
-
-  final String text;
+class _PlanSummaryRow extends StatelessWidget {
+  const _PlanSummaryRow({required this.type, required this.icon, required this.color, required this.summary});
+  final String type;
+  final IconData icon;
   final Color color;
+  final String summary;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(
-        text,
-        style:
-            TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700),
-      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          width: 32, height: 32,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('今日$type', style: TextStyle(fontWeight: FontWeight.w700, color: color, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text(summary, style: const TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4), maxLines: 2, overflow: TextOverflow.ellipsis),
+        ])),
+      ]),
     );
   }
 }
 
-class _RecentPlanList extends StatelessWidget {
-  const _RecentPlanList({required this.plans});
-
-  final List<PlanRecordData> plans;
+// ── 快捷入口按钮 ──────────────────────────────────────────────
+class _QuickEntry extends StatelessWidget {
+  const _QuickEntry({required this.icon, required this.label, required this.color, required this.onTap});
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    if (plans.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.event_note_outlined,
-        text: '暂无本地计划，点击“生成计划”即可创建 7 天饮食与运动方案。',
-      );
-    }
-
-    return Column(
-      children: [
-        for (final plan in plans.take(6))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppTheme.pageBg,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      plan.type == 'meal'
-                          ? Icons.restaurant_outlined
-                          : Icons.directions_run_outlined,
-                      color: AppTheme.deepBlue,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${plan.label} · ${DateFormat('MM月dd日').format(plan.date)}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          plan.summary,
-                          style: const TextStyle(
-                              color: AppTheme.muted, height: 1.4),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            width: 38, height: 38,
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, color: color, size: 19),
           ),
-      ],
+          const SizedBox(height: 6),
+          Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color), textAlign: TextAlign.center),
+        ]),
+      ),
     );
   }
 }
 
+// ── 最近打卡列表 ──────────────────────────────────────────────
 class _RecentClockList extends StatelessWidget {
   const _RecentClockList({required this.records});
-
   final List<ClockRecordData> records;
 
   @override
   Widget build(BuildContext context) {
     if (records.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.check_circle_outline,
-        text: '暂无打卡记录，完成一次饮食、运动或称重后会显示在这里。',
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text('今日暂无打卡，点击"打卡"标签开始记录。', style: TextStyle(color: AppTheme.muted, fontSize: 13)),
       );
     }
-
-    return Column(
-      children: [
-        for (final record in records.take(6))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    record.type == 'meal'
-                        ? Icons.restaurant_outlined
-                        : record.type == 'exercise'
-                            ? Icons.directions_run_outlined
-                            : record.type == 'medicine'
-                                ? Icons.medication_outlined
-                                : Icons.scale_outlined,
-                    color: AppTheme.deepBlue,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${record.label} · ${DateFormat('MM月dd日 HH:mm').format(record.clockTime)}',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        record.note.isEmpty ? '已完成' : record.note,
-                        style: const TextStyle(color: AppTheme.muted),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+    final typeIcon = {
+      'meal': Icons.restaurant_outlined,
+      'exercise': Icons.directions_run_outlined,
+      'medicine': Icons.medication_outlined,
+      'weight': Icons.scale_outlined,
+      'water': Icons.water_drop_outlined,
+    };
+    return Column(children: [
+      for (final r in records.take(5))
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(children: [
+            Container(
+              width: 34, height: 34,
+              decoration: BoxDecoration(
+                color: AppTheme.primaryBlue.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: Icon(typeIcon[r.type] ?? Icons.check_circle_outline, color: AppTheme.deepBlue, size: 17),
             ),
-          ),
-      ],
-    );
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(r.label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+              if (r.note.isNotEmpty)
+                Text(r.note, style: const TextStyle(color: AppTheme.muted, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+            ])),
+            Text(DateFormat('HH:mm').format(r.clockTime),
+                style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+          ]),
+        ),
+    ]);
   }
 }
 
-class _ReminderList extends StatelessWidget {
-  const _ReminderList({required this.reminders});
-
+// ── 提醒预览 ──────────────────────────────────────────────────
+class _ReminderPreview extends StatelessWidget {
+  const _ReminderPreview({required this.reminders});
   final List<ReminderData> reminders;
 
   @override
   Widget build(BuildContext context) {
     if (reminders.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.notifications_none_outlined,
-        text: '暂无提醒规则，可以在打卡页快速添加。',
-      );
+      return const Text('暂无提醒，在打卡页添加。', style: TextStyle(color: AppTheme.muted, fontSize: 13));
     }
-
-    return Column(
-      children: [
-        for (final reminder in reminders.take(6))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Container(
-              padding: const EdgeInsets.all(14),
+    return Column(children: [
+      for (final r in reminders.take(5))
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(children: [
+            Container(
+              width: 34, height: 34,
               decoration: BoxDecoration(
-                color: AppTheme.pageBg,
-                borderRadius: BorderRadius.circular(16),
+                color: AppTheme.primaryBlue.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(9),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(Icons.notifications_active_outlined,
-                        color: AppTheme.deepBlue, size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${reminder.label} · ${reminder.timeText}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          reminder.payload['note'] as String? ?? '本地提醒',
-                          style: const TextStyle(color: AppTheme.muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+              child: const Icon(Icons.notifications_active_outlined, color: AppTheme.deepBlue, size: 17),
             ),
-          ),
-      ],
+            const SizedBox(width: 10),
+            Expanded(child: Text(r.label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13))),
+            Text(r.timeText, style: const TextStyle(color: AppTheme.deepBlue, fontWeight: FontWeight.w700, fontSize: 13)),
+          ]),
+        ),
+    ]);
+  }
+}
+
+// ── 最近指标（近 3 天） ────────────────────────────────────────
+class _RecentIndicatorsPanel extends StatelessWidget {
+  const _RecentIndicatorsPanel({
+    required this.indicators,
+    required this.onAdd,
+    required this.onViewAll,
+  });
+
+  final List<HealthIndicatorEntry> indicators;
+  final VoidCallback onAdd;
+  final VoidCallback onViewAll;
+
+  static const _typeIcon = {
+    'weight':    (Icons.scale_outlined,           Colors.blue),
+    'bp':        (Icons.favorite_outline,          Colors.redAccent),
+    'glucose':   (Icons.water_drop_outlined,       Colors.orange),
+    'heart_rate':(Icons.monitor_heart_outlined,    Colors.pink),
+    'lipid':     (Icons.science_outlined,          Colors.purple),
+    'body_fat':  (Icons.person_outlined,           Colors.teal),
+    'waist':     (Icons.straighten_outlined,       Colors.brown),
+    'spo2':      (Icons.air_outlined,              Colors.lightBlue),
+    'sleep':     (Icons.bedtime_outlined,          Colors.indigo),
+    'steps':     (Icons.directions_walk_outlined,  Colors.green),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      title: '最近指标',
+      action: Row(mainAxisSize: MainAxisSize.min, children: [
+        TextButton(onPressed: onViewAll, child: const Text('全部')),
+        IconButton(onPressed: onAdd, icon: const Icon(Icons.add), iconSize: 18, visualDensity: VisualDensity.compact),
+      ]),
+      child: indicators.isEmpty
+          ? Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                const Expanded(
+                  child: Text('近 3 天暂无指标记录', style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+                ),
+                TextButton.icon(
+                  onPressed: onAdd,
+                  icon: const Icon(Icons.add, size: 15),
+                  label: const Text('录入', style: TextStyle(fontSize: 13)),
+                ),
+              ]),
+            )
+          : Column(children: [
+              for (final e in indicators)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(children: [
+                    Container(
+                      width: 34, height: 34,
+                      decoration: BoxDecoration(
+                        color: (_typeIcon[e.type]?.$2 ?? Colors.grey).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Icon(
+                        _typeIcon[e.type]?.$1 ?? Icons.monitor_heart_outlined,
+                        color: _typeIcon[e.type]?.$2 ?? Colors.grey,
+                        size: 17,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(e.label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      Text(e.displayValue, style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                    ])),
+                    Text(
+                      DateFormat('MM/dd HH:mm').format(e.measuredTime),
+                      style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                    ),
+                  ]),
+                ),
+            ]),
     );
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
+// ── 面板容器 ──────────────────────────────────────────────────
+class _Panel extends StatelessWidget {
+  const _Panel({required this.title, required this.child, this.action});
+  final String title;
+  final Widget child;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppTheme.pageBg,
-        borderRadius: BorderRadius.circular(16),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
       ),
-      child: Column(
-        children: [
-          Icon(icon, size: 32, color: AppTheme.deepBlue),
-          const SizedBox(height: 10),
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppTheme.muted, height: 1.5),
-          ),
-        ],
-      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800))),
+          if (action != null) action!,
+        ]),
+        const SizedBox(height: 12),
+        child,
+      ]),
     );
   }
 }
 
-class _WeightTrendChart extends StatelessWidget {
-  const _WeightTrendChart({required this.values});
-
-  final List<double> values;
-
-  @override
-  Widget build(BuildContext context) {
-    if (values.length < 2) {
-      return const _EmptyState(
-        icon: Icons.show_chart_outlined,
-        text: '体重趋势需要至少两条记录。继续记录体重后，这里会自动显示折线图。',
-      );
-    }
-
-    return SizedBox(
-      height: 180,
-      child: CustomPaint(
-        painter: _TrendPainter(values),
-        child: const SizedBox.expand(),
-      ),
-    );
-  }
-}
-
-class _TrendPainter extends CustomPainter {
-  _TrendPainter(this.values);
-
-  final List<double> values;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final padding = 20.0;
-    final chartWidth = size.width - padding * 2;
-    final chartHeight = size.height - padding * 2;
-    if (chartWidth <= 0 || chartHeight <= 0) return;
-
-    final minValue = values.reduce((a, b) => a < b ? a : b);
-    final maxValue = values.reduce((a, b) => a > b ? a : b);
-    final span = (maxValue - minValue).abs() < 0.2 ? 0.6 : maxValue - minValue;
-
-    final gridPaint = Paint()
-      ..color = AppTheme.cardBorder
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    final linePaint = Paint()
-      ..color = AppTheme.deepBlue
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final dotPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.fill;
-    final dotStrokePaint = Paint()
-      ..color = AppTheme.deepBlue
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-
-    for (var i = 0; i < 3; i++) {
-      final dy = padding + chartHeight * i / 2;
-      canvas.drawLine(
-        Offset(padding, dy),
-        Offset(size.width - padding, dy),
-        gridPaint,
-      );
-    }
-
-    final points = <Offset>[];
-    for (var i = 0; i < values.length; i++) {
-      final dx = padding +
-          chartWidth * (values.length == 1 ? 0 : i / (values.length - 1));
-      final normalized = (values[i] - minValue) / span;
-      final dy = padding + chartHeight - normalized * chartHeight;
-      points.add(Offset(dx, dy));
-    }
-
-    if (points.isNotEmpty) {
-      final path = Path()..moveTo(points.first.dx, points.first.dy);
-      for (final point in points.skip(1)) {
-        path.lineTo(point.dx, point.dy);
-      }
-      canvas.drawPath(path, linePaint);
-
-      for (final point in points) {
-        canvas.drawCircle(point, 5.5, dotPaint);
-        canvas.drawCircle(point, 5.5, dotStrokePaint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrendPainter oldDelegate) =>
-      oldDelegate.values != values;
-}
-
-String _formatTime(DateTime time) {
-  return DateFormat('MM月dd日 HH:mm').format(time);
+extension _IterableX<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

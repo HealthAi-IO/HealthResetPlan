@@ -13,10 +13,8 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
 
-  # 路由 / 状态管理 / DI
+  # 路由 / DI
   go_router: ^14.6.2
-  flutter_bloc: ^9.0.0
-  equatable: ^2.0.5
   get_it: ^8.0.3
 
   # 网络
@@ -25,34 +23,27 @@ dependencies:
   # 本地存储 + 同步
   sqflite: ^2.4.1
   sqflite_common_ffi: ^2.3.4+4
+  shared_preferences: ^2.3.3
   path_provider: ^2.1.4
   path: ^1.9.0
-  shared_preferences: ^2.3.3
 
   # 安全存储 + 加密
   flutter_secure_storage: ^9.2.4
   cryptography: ^2.7.0
   bip39: ^1.0.6
 
+  # 本地通知
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.10.0
+  flutter_timezone: ^5.0.0
+
+  # 系统闹钟集成（Android ACTION_SET_ALARM）
+  android_intent_plus: ^5.1.0
+
   # UI / 工具
-  flutter_svg: ^2.0.10+1
-  cached_network_image: ^3.4.1
-  image_picker: ^1.1.2
-  intl: ^0.19.0
+  intl: ^0.20.2
   logger: ^2.4.0
   uuid: ^4.5.1
-  json_annotation: ^4.9.0
-  freezed_annotation: ^2.4.4
-
-  # 通知
-  flutter_local_notifications: ^17.2.4
-  timezone: ^0.9.4
-
-  # 蓝牙 / 设备
-  flutter_blue_plus: ^1.32.0
-  permission_handler: ^11.3.1
-  device_info_plus: ^11.2.0
-  package_info_plus: ^8.1.1
 
 dev_dependencies:
   flutter_test:
@@ -60,9 +51,6 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-  build_runner: ^2.4.13
-  freezed: ^2.5.7
-  json_serializable: ^6.8.0
 
 flutter:
   uses-material-design: true

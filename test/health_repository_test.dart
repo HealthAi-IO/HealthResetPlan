@@ -23,7 +23,6 @@ void main() {
     await repo.addIndicator(
       type: 'weight',
       payload: {'weightKg': 72.3},
-      measuredAt: DateTime(2026, 5, 13, 7),
     );
 
     final profile = await repo.loadProfile();
@@ -43,7 +42,6 @@ void main() {
     await repo.addIndicator(
       type: 'bp',
       payload: {'systolic': 150, 'diastolic': 95},
-      measuredAt: DateTime(2026, 5, 13, 8),
     );
     await repo.generateWeeklyPlan();
 
@@ -186,17 +184,30 @@ class _MemoryAppDatabase implements AppDatabase {
     final clauses = where.split(RegExp(r'\s+AND\s+', caseSensitive: false));
     var argIndex = 0;
     for (final clause in clauses) {
-      final match =
-          RegExp(r'^\s*([a-zA-Z0-9_]+)\s*=\s*\?\s*$').firstMatch(clause);
+      final match = RegExp(r'^\s*([a-zA-Z0-9_]+)\s*(>=|<=|!=|>|<|=)\s*\?\s*$')
+          .firstMatch(clause);
       if (match == null || args == null || argIndex >= args.length) {
         return false;
       }
       final column = match.group(1)!;
-      if (!_valueEquals(row[column], args[argIndex++])) {
-        return false;
-      }
+      final op = match.group(2)!;
+      final argVal = args[argIndex++];
+      if (!_applyOp(row[column], op, argVal)) return false;
     }
     return true;
+  }
+
+  bool _applyOp(Object? rowVal, String op, Object? argVal) {
+    if (op == '=') return _valueEquals(rowVal, argVal);
+    if (op == '!=') return !_valueEquals(rowVal, argVal);
+    final cmp = _compareValues(rowVal, argVal);
+    return switch (op) {
+      '>=' => cmp >= 0,
+      '<=' => cmp <= 0,
+      '>' => cmp > 0,
+      '<' => cmp < 0,
+      _ => false,
+    };
   }
 
   List<Map<String, Object?>> _sortRows(

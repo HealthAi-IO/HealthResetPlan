@@ -1,7 +1,4 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
@@ -18,7 +15,6 @@ class ReportPage extends StatefulWidget {
 
 class _ReportPageState extends State<ReportPage> {
   final HealthRepository _repo = sl<HealthRepository>();
-  final _picker = ImagePicker();
   final _formKey = GlobalKey<FormState>();
 
   final _systolicController = TextEditingController(text: '132');
@@ -31,7 +27,6 @@ class _ReportPageState extends State<ReportPage> {
     text: '血压轻度偏高，建议低盐饮食、增加步行并关注体重趋势。',
   );
 
-  Uint8List? _imageBytes;
   String? _imageName;
   DateTime _reportDate = DateTime.now();
   bool _saving = false;
@@ -75,15 +70,10 @@ class _ReportPageState extends State<ReportPage> {
     });
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final file = await _picker.pickImage(source: source, imageQuality: 90);
-    if (file == null) return;
-    final bytes = await file.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _imageBytes = bytes;
-      _imageName = file.name;
-    });
+  void _pickImagePlaceholder() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('图片选择功能后续接入，当前可先手动录入指标')),
+    );
   }
 
   void _fillSample() {
@@ -176,10 +166,9 @@ class _ReportPageState extends State<ReportPage> {
           padding: const EdgeInsets.all(20),
           children: [
             _IntroCard(
-              imageBytes: _imageBytes,
               imageName: _imageName,
-              onPickGallery: () => _pickImage(ImageSource.gallery),
-              onPickCamera: () => _pickImage(ImageSource.camera),
+              onPickGallery: _pickImagePlaceholder,
+              onPickCamera: _pickImagePlaceholder,
               onFillSample: _fillSample,
             ),
             const SizedBox(height: 16),
@@ -343,14 +332,12 @@ class _ReportPageState extends State<ReportPage> {
 
 class _IntroCard extends StatelessWidget {
   const _IntroCard({
-    required this.imageBytes,
     required this.imageName,
     required this.onPickGallery,
     required this.onPickCamera,
     required this.onFillSample,
   });
 
-  final Uint8List? imageBytes;
   final String? imageName;
   final VoidCallback onPickGallery;
   final VoidCallback onPickCamera;
@@ -379,21 +366,12 @@ class _IntroCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: AppTheme.cardBorder),
             ),
-            child: imageBytes == null
-                ? const Center(
-                    child: Text(
-                      '请选择体检报告图片后开始录入',
-                      style: TextStyle(color: AppTheme.muted),
-                    ),
-                  )
-                : ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Image.memory(
-                      imageBytes!,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                    ),
-                  ),
+            child: const Center(
+              child: Text(
+                '当前版本先支持手动录入报告指标',
+                style: TextStyle(color: AppTheme.muted),
+              ),
+            ),
           );
 
           final actions = Column(

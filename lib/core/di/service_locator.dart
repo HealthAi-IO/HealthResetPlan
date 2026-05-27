@@ -5,7 +5,10 @@ import 'package:logger/logger.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
 import '../data/health_repository.dart';
+import '../network/api_client.dart';
+import '../notification/reminder_scheduler.dart';
 import '../storage/app_database.dart';
+import '../sync/sync_service.dart';
 
 final GetIt sl = GetIt.instance;
 
@@ -36,4 +39,17 @@ Future<void> setupServiceLocator() async {
   final healthRepository = HealthRepository(database: appDatabase);
   await healthRepository.initialize();
   sl.registerSingleton<HealthRepository>(healthRepository);
+
+  final scheduler = ReminderScheduler(repository: healthRepository);
+  sl.registerSingleton<ReminderScheduler>(scheduler);
+
+  final apiClient = ApiClient();
+  sl.registerSingleton<ApiClient>(apiClient);
+
+  sl.registerSingleton<SyncService>(SyncService(
+    apiClient: apiClient,
+    cryptoService: sl<CryptoService>(),
+    database: appDatabase,
+    repository: healthRepository,
+  ));
 }

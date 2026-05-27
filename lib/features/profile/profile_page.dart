@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
@@ -24,16 +26,31 @@ class _ProfilePageState extends State<ProfilePage> {
   final _medicationsController = TextEditingController();
 
   String _gender = 'female';
+  String _goal = 'maintain';
+  String _exerciseBase = 'none';
+  String _dietPreference = 'normal';
   bool _loading = true;
   bool _saving = false;
+  bool _dirty = false; // 用户已手动修改表单但尚未保存
   UserProfileData? _profile;
   List<HealthIndicatorEntry> _indicators = const [];
+
+  void _markDirty() {
+    if (!_dirty && mounted) setState(() => _dirty = true);
+  }
 
   @override
   void initState() {
     super.initState();
     _repo.addListener(_onRepoChanged);
     _load();
+    // 任意字段变化则标记"有未保存改动"，防止后台 repo 变更覆盖用户编辑
+    for (final ctrl in [
+      _nicknameController, _birthYearController, _heightController,
+      _weightController, _medicalHistoryController, _medicationsController,
+    ]) {
+      ctrl.addListener(_markDirty);
+    }
   }
 
   @override
@@ -49,10 +66,11 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _onRepoChanged() {
-    _load(silent: true);
+    // 无未保存改动时（如刚打开档案页），允许同步表单以反映最新数据
+    _load(silent: true, syncForm: !_dirty);
   }
 
-  Future<void> _load({bool silent = false}) async {
+  Future<void> _load({bool silent = false, bool syncForm = true}) async {
     if (!mounted) return;
     if (!silent) {
       setState(() => _loading = true);
@@ -62,12 +80,14 @@ class _ProfilePageState extends State<ProfilePage> {
     if (!mounted) return;
     _profile = profile;
     _indicators = indicators;
-    _syncControllers(profile);
+    if (syncForm) _syncControllers(profile);
     setState(() => _loading = false);
   }
 
   void _syncControllers(UserProfileData? profile) {
     if (profile == null) return;
+    // 同步时暂停 dirty 监听，避免赋值本身触发 _markDirty
+    _dirty = false;
     _nicknameController.text = profile.nickname;
     _birthYearController.text =
         profile.birthYear == 0 ? '' : profile.birthYear.toString();
@@ -78,33 +98,47 @@ class _ProfilePageState extends State<ProfilePage> {
     _medicalHistoryController.text = profile.medicalHistory;
     _medicationsController.text = profile.medications;
     _gender = profile.gender.isEmpty ? 'female' : profile.gender;
+    _goal = profile.goal;
+    _exerciseBase = profile.exerciseBase;
+    _dietPreference = profile.dietPreference;
+    // 同步完成后 dirty 保持 false，下一帧用户操作再触发
   }
 
   Future<void> _saveProfile() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await _repo.saveProfile(
-      UserProfileData(
-        id: _profile?.id,
-        userId: kLocalUserId,
-        nickname: _nicknameController.text.trim(),
-        gender: _gender,
-        birthYear: int.parse(_birthYearController.text.trim()),
-        heightCm: double.parse(_heightController.text.trim()),
-        weightKg: double.parse(_weightController.text.trim()),
-        medicalHistory: _medicalHistoryController.text.trim(),
-        medications: _medicationsController.text.trim(),
-        createdAt: _profile?.createdAt ?? now,
-        updatedAt: now,
-        version: _profile?.version ?? 0,
-        isDirty: 1,
-      ),
-    );
-    if (!mounted) return;
-    setState(() => _saving = false);
-    messenger.showSnackBar(const SnackBar(content: Text('健康档案已保存到本地')));
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _repo.saveProfile(
+        UserProfileData(
+          id: _profile?.id,
+          userId: kLocalUserId,
+          nickname: _nicknameController.text.trim(),
+          gender: _gender,
+          birthYear: int.parse(_birthYearController.text.trim()),
+          heightCm: double.parse(_heightController.text.trim()),
+          weightKg: double.parse(_weightController.text.trim()),
+          medicalHistory: _medicalHistoryController.text.trim(),
+          medications: _medicationsController.text.trim(),
+          createdAt: _profile?.createdAt ?? now,
+          updatedAt: now,
+          goal: _goal,
+          exerciseBase: _exerciseBase,
+          dietPreference: _dietPreference,
+          version: _profile?.version ?? 0,
+          isDirty: 1,
+        ),
+      );
+      if (!mounted) return;
+      _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
+      messenger.showSnackBar(const SnackBar(content: Text('健康档案已保存到本地')));
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _addIndicatorDialog(String type) async {
@@ -114,14 +148,19 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (_) => _IndicatorDialog(type: type),
     );
     if (result == null) return;
-    await _repo.addIndicator(
-      type: type,
-      payload: result.payload,
-      source: result.source,
-      measuredAt: result.measuredAt,
-    );
-    if (!mounted) return;
-    messenger.showSnackBar(const SnackBar(content: Text('已保存健康指标')));
+    try {
+      await _repo.addIndicator(
+        type: type,
+        payload: result.payload,
+        source: result.source,
+        measuredAt: result.measuredAt,
+      );
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('已保存健康指标')));
+    } catch (_) {
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
+    }
   }
 
   @override
@@ -159,6 +198,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
+                      // ignore: deprecated_member_use
                       value: _gender,
                       decoration: const InputDecoration(labelText: '性别'),
                       items: const [
@@ -230,6 +270,53 @@ class _ProfilePageState extends State<ProfilePage> {
                       controller: _medicationsController,
                       maxLines: 3,
                       decoration: const InputDecoration(labelText: '用药记录'),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      // ignore: deprecated_member_use
+                      value: _goal,
+                      decoration: const InputDecoration(labelText: '健康目标'),
+                      items: const [
+                        DropdownMenuItem(value: 'maintain', child: Text('保持健康')),
+                        DropdownMenuItem(value: 'fat_loss', child: Text('减脂')),
+                        DropdownMenuItem(value: 'glucose_control', child: Text('控糖')),
+                        DropdownMenuItem(value: 'bp_control', child: Text('控压')),
+                      ],
+                      onChanged: (value) => setState(() {
+                        _goal = value ?? 'maintain';
+                        _dirty = true;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      // ignore: deprecated_member_use
+                      value: _exerciseBase,
+                      decoration: const InputDecoration(labelText: '运动基础'),
+                      items: const [
+                        DropdownMenuItem(value: 'none', child: Text('无（久坐为主）')),
+                        DropdownMenuItem(value: 'light', child: Text('轻度（每周 1-2 次）')),
+                        DropdownMenuItem(value: 'moderate', child: Text('中等（每周 3-5 次）')),
+                      ],
+                      onChanged: (value) => setState(() {
+                        _exerciseBase = value ?? 'none';
+                        _dirty = true;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      // ignore: deprecated_member_use
+                      value: _dietPreference,
+                      decoration: const InputDecoration(labelText: '饮食偏好'),
+                      items: const [
+                        DropdownMenuItem(value: 'normal', child: Text('普通（荤素搭配）')),
+                        DropdownMenuItem(value: 'light', child: Text('清淡（少盐少油）')),
+                        DropdownMenuItem(value: 'vegetarian', child: Text('素食')),
+                        DropdownMenuItem(value: 'custom', child: Text('自定义（参考病史）')),
+                      ],
+                      onChanged: (value) => setState(() {
+                        _dietPreference = value ?? 'normal';
+                        _dirty = true;
+                      }),
                     ),
                     const SizedBox(height: 16),
                     FilledButton.icon(
@@ -320,9 +407,39 @@ class _ProfilePageState extends State<ProfilePage> {
             },
           ),
           const SizedBox(height: 20),
+          _DangerZone(onClearAll: _clearAllData),
+          const SizedBox(height: 20),
         ],
       ),
     );
+  }
+
+  Future<void> _clearAllData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空全部数据'),
+        content: const Text(
+          '此操作将删除本地所有健康档案、指标记录、计划和打卡数据，且不可恢复。\n\n确认要继续吗？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _repo.clearAllData();
+    await UserSession.instance.clear();
+    if (!mounted) return;
+    context.go('/login');
   }
 }
 
@@ -346,31 +463,68 @@ class _OverviewCard extends StatelessWidget {
 
     final latestWeight = latestByType('weight');
     final latestBp = latestByType('bp');
+
+    final goalLabel = switch (profile.goal) {
+      'fat_loss' => '减脂',
+      'glucose_control' => '控糖',
+      'bp_control' => '控压',
+      _ => '保持健康',
+    };
+    final exerciseLabel = switch (profile.exerciseBase) {
+      'light' => '轻度',
+      'moderate' => '中等',
+      _ => '无',
+    };
+    final dietLabel = switch (profile.dietPreference) {
+      'light' => '清淡',
+      'vegetarian' => '素食',
+      'custom' => '自定义',
+      _ => '普通',
+    };
+
     return _Panel(
       title: '档案概览',
       subtitle: '本地资料与最近记录',
       child: LayoutBuilder(
         builder: (context, constraints) {
           final columns = constraints.maxWidth >= 900 ? 4 : 2;
-          return GridView.count(
-            crossAxisCount: columns,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: columns >= 4 ? 1.65 : 1.28,
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _SmallMetric(
-                  title: '年龄',
-                  value: profile.age == 0 ? '--' : '${profile.age}岁'),
-              _SmallMetric(
-                  title: 'BMI',
-                  value:
-                      profile.bmi == 0 ? '--' : profile.bmi.toStringAsFixed(1)),
-              _SmallMetric(
-                  title: '最新体重', value: latestWeight?.displayValue ?? '--'),
-              _SmallMetric(
-                  title: '最新血压', value: latestBp?.displayValue ?? '--'),
+              GridView.count(
+                crossAxisCount: columns,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: columns >= 4 ? 1.65 : 1.28,
+                children: [
+                  _SmallMetric(
+                      title: '年龄',
+                      value: profile.age == 0 ? '--' : '${profile.age}岁'),
+                  _SmallMetric(
+                      title: 'BMI',
+                      value: profile.bmi == 0
+                          ? '--'
+                          : profile.bmi.toStringAsFixed(1)),
+                  _SmallMetric(
+                      title: '最新体重',
+                      value: latestWeight?.displayValue ?? '--'),
+                  _SmallMetric(
+                      title: '最新血压',
+                      value: latestBp?.displayValue ?? '--'),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _SettingTag(icon: Icons.flag_outlined, label: '目标', value: goalLabel),
+                  _SettingTag(icon: Icons.directions_run_outlined, label: '运动', value: exerciseLabel),
+                  _SettingTag(icon: Icons.restaurant_outlined, label: '饮食', value: dietLabel),
+                ],
+              ),
             ],
           );
         },
@@ -403,6 +557,34 @@ class _SmallMetric extends StatelessWidget {
           Text(value,
               style:
                   const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingTag extends StatelessWidget {
+  const _SettingTag({required this.icon, required this.label, required this.value});
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.pageBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.deepBlue),
+          const SizedBox(width: 5),
+          Text('$label  ', style: const TextStyle(fontSize: 12, color: AppTheme.muted)),
+          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
         ],
       ),
     );
@@ -549,11 +731,62 @@ IconData _iconFor(String type) {
   return switch (type) {
     'bp' => Icons.favorite_outline,
     'weight' => Icons.scale_outlined,
-    'glucose' => Icons.monitor_heart_outlined,
+    'glucose' => Icons.water_drop_outlined,
     'lipid' => Icons.science_outlined,
-    'heart_rate' => Icons.favorite_border,
+    'heart_rate' => Icons.monitor_heart_outlined,
+    'body_fat' => Icons.person_outlined,
+    'waist' => Icons.straighten_outlined,
+    'spo2' => Icons.air_outlined,
+    'sleep' => Icons.bedtime_outlined,
+    'steps' => Icons.directions_walk_outlined,
     _ => Icons.fiber_manual_record_outlined,
   };
+}
+
+class _DangerZone extends StatelessWidget {
+  const _DangerZone({required this.onClearAll});
+  final VoidCallback onClearAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.red.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.warning_amber_outlined, size: 18, color: Colors.red.shade400),
+            const SizedBox(width: 8),
+            Text('危险操作', style: TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w800, color: Colors.red.shade400)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('以下操作不可撤销，请谨慎使用',
+              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onClearAll,
+              icon: const Icon(Icons.delete_forever_outlined, color: Colors.red),
+              label: const Text('清空全部本地数据',
+                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700)),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.red),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _IndicatorDialog extends StatefulWidget {

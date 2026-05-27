@@ -19,6 +19,7 @@ class _PlanPageState extends State<PlanPage> {
   bool _loading = true;
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
+  PlanRecordData? _riskPlan;
   String _filter = 'all';
 
   @override
@@ -44,11 +45,13 @@ class _PlanPageState extends State<PlanPage> {
       setState(() => _loading = true);
     }
     final profile = await _repo.loadProfile();
-    final plans = await _repo.loadPlans(limit: 30);
+    final plans = await _repo.loadPlans(limit: 40);
     if (!mounted) return;
     setState(() {
       _profile = profile;
-      _plans = plans;
+      final riskList = plans.where((p) => p.type == 'risk').toList();
+      _riskPlan = riskList.isEmpty ? null : riskList.first;
+      _plans = plans.where((p) => p.type != 'risk').toList();
       _loading = false;
     });
   }
@@ -67,12 +70,8 @@ class _PlanPageState extends State<PlanPage> {
     }
 
     final grouped = _groupPlans();
-    final bmi = _profile?.bmi ?? 0;
-    final calories = bmi >= 28
-        ? 1500
-        : bmi >= 24
-            ? 1700
-            : 1900;
+    final riskPayload = _riskPlan?.payload;
+    final targetKcal = riskPayload?['targetKcal'] as int? ?? 0;
     final bottomPadding =
         MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
@@ -83,14 +82,18 @@ class _PlanPageState extends State<PlanPage> {
         children: [
           _PlanHero(
             profile: _profile,
-            calories: calories,
-            bmi: bmi,
+            riskPlan: _riskPlan,
+            targetKcal: targetKcal,
             onGenerate: _generate,
           ),
           const SizedBox(height: 16),
+          if (_riskPlan != null) ...[
+            _RiskCard(plan: _riskPlan!),
+            const SizedBox(height: 16),
+          ],
           _Panel(
             title: '计划筛选',
-            subtitle: '按类型查看当前 7 天游程',
+            subtitle: '按类型查看当前 7 天规划',
             child: Wrap(
               spacing: 10,
               runSpacing: 10,
@@ -109,6 +112,11 @@ class _PlanPageState extends State<PlanPage> {
                   label: '运动',
                   selected: _filter == 'exercise',
                   onTap: () => setState(() => _filter = 'exercise'),
+                ),
+                _FilterChip(
+                  label: '测量',
+                  selected: _filter == 'measurement',
+                  onTap: () => setState(() => _filter = 'measurement'),
                 ),
               ],
             ),
@@ -150,19 +158,21 @@ class _PlanPageState extends State<PlanPage> {
 class _PlanHero extends StatelessWidget {
   const _PlanHero({
     required this.profile,
-    required this.calories,
-    required this.bmi,
+    required this.riskPlan,
+    required this.targetKcal,
     required this.onGenerate,
   });
 
   final UserProfileData? profile;
-  final int calories;
-  final double bmi;
+  final PlanRecordData? riskPlan;
+  final int targetKcal;
   final VoidCallback onGenerate;
 
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
+    final bmi = profile?.bmi ?? 0;
+    final goalNote = riskPlan?.payload['goalNote'] as String? ?? '';
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -180,13 +190,15 @@ class _PlanHero extends StatelessWidget {
           final summary = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('本地 7 天游程',
+              const Text('7 天健康规划',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
               Text(
                 profile == null
-                    ? '先完善档案，系统会基于 BMI 和最近指标生成建议。'
-                    : '当前建议热量约 $calories kcal / 天，重点保持低盐、低脂、高纤维。',
+                    ? '先完善档案，系统会基于 BMI、指标和目标生成个性化建议。'
+                    : (goalNote.isNotEmpty
+                        ? goalNote
+                        : '基于档案生成，每日约 $targetKcal kcal，低盐低脂高纤维。'),
                 style: const TextStyle(color: AppTheme.muted, height: 1.5),
               ),
               const SizedBox(height: 14),
@@ -197,7 +209,9 @@ class _PlanHero extends StatelessWidget {
                   _InfoPill(
                       label: 'BMI',
                       value: bmi == 0 ? '--' : bmi.toStringAsFixed(1)),
-                  _InfoPill(label: '热量', value: '$calories kcal'),
+                  _InfoPill(
+                      label: '热量',
+                      value: targetKcal == 0 ? '--' : '$targetKcal kcal'),
                   _InfoPill(label: '状态', value: profile?.bmiLevel ?? '待完善'),
                 ],
               ),
@@ -210,7 +224,7 @@ class _PlanHero extends StatelessWidget {
             ],
           );
 
-          final guidance = Container(
+          final rulesBox = Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: AppTheme.pageBg,
@@ -219,13 +233,13 @@ class _PlanHero extends StatelessWidget {
             child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('本地生成规则', style: TextStyle(fontWeight: FontWeight.w800)),
+                Text('生成规则', style: TextStyle(fontWeight: FontWeight.w800)),
                 SizedBox(height: 10),
-                Text('· 饮食优先低盐低脂，补充优质蛋白。',
+                Text('· 风险评估 → 确定热量 → 饮食原则',
                     style: TextStyle(color: AppTheme.muted, height: 1.5)),
-                Text('· 运动安排有氧 + 力量 + 恢复，避免过载。',
+                Text('· 运动强度：有氧 + 力量 + 恢复轮替',
                     style: TextStyle(color: AppTheme.muted, height: 1.5)),
-                Text('· 用药和称重可在打卡页同步配置。',
+                Text('· 7 天饮食 / 运动 / 测量计划全覆盖',
                     style: TextStyle(color: AppTheme.muted, height: 1.5)),
               ],
             ),
@@ -237,7 +251,7 @@ class _PlanHero extends StatelessWidget {
                   children: [
                     Expanded(flex: 3, child: summary),
                     const SizedBox(width: 16),
-                    Expanded(flex: 2, child: guidance),
+                    Expanded(flex: 2, child: rulesBox),
                   ],
                 )
               : Column(
@@ -245,10 +259,82 @@ class _PlanHero extends StatelessWidget {
                   children: [
                     summary,
                     const SizedBox(height: 16),
-                    guidance,
+                    rulesBox,
                   ],
                 );
         },
+      ),
+    );
+  }
+}
+
+class _RiskCard extends StatelessWidget {
+  const _RiskCard({required this.plan});
+
+  final PlanRecordData plan;
+
+  @override
+  Widget build(BuildContext context) {
+    final risks = (plan.payload['risks'] as List?)?.cast<String>() ?? [];
+    final summary = plan.payload['summary'] as String? ?? '';
+    final dietNote = plan.payload['dietNote'] as String? ?? '';
+    final hasRisk = risks.isNotEmpty;
+    final color = hasRisk ? const Color(0xFFFFF3CD) : const Color(0xFFD4EDDA);
+    final borderColor = hasRisk ? const Color(0xFFFFD700) : const Color(0xFF28A745);
+    final icon = hasRisk ? Icons.warning_amber_outlined : Icons.check_circle_outline;
+    final iconColor = hasRisk ? const Color(0xFF856404) : const Color(0xFF155724);
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor.withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 20, color: iconColor),
+              const SizedBox(width: 8),
+              Text('风险评估',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800, color: iconColor)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(summary,
+              style: TextStyle(color: iconColor, height: 1.5)),
+          if (risks.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: risks
+                  .map((r) => Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(r,
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: iconColor,
+                                fontWeight: FontWeight.w600)),
+                      ))
+                  .toList(),
+            ),
+          ],
+          if (dietNote.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text('饮食建议：$dietNote',
+                style: TextStyle(
+                    fontSize: 12, color: iconColor, height: 1.5)),
+          ],
+        ],
       ),
     );
   }
@@ -271,6 +357,15 @@ class _DayPlanCard extends StatelessWidget {
         DateFormat('MM月dd日').format(DateFormat('yyyy-MM-dd').parse(date));
     final meals = plans.where((item) => item.type == 'meal').toList();
     final exercises = plans.where((item) => item.type == 'exercise').toList();
+    final measurements = plans.where((item) => item.type == 'measurement').toList();
+
+    final showMeal = filter == 'all' || filter == 'meal';
+    final showExercise = filter == 'all' || filter == 'exercise';
+    final showMeasure = filter == 'all' || filter == 'measurement';
+
+    final visibleCount = (showMeal ? meals.length : 0) +
+        (showExercise ? exercises.length : 0) +
+        (showMeasure ? measurements.length : 0);
 
     return Container(
       decoration: BoxDecoration(
@@ -283,21 +378,19 @@ class _DayPlanCard extends StatelessWidget {
         childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
         title: Text(displayDate,
             style: const TextStyle(fontWeight: FontWeight.w800)),
-        subtitle: Text('${plans.length} 条计划',
+        subtitle: Text('$visibleCount 条计划',
             style: const TextStyle(color: AppTheme.muted)),
         children: [
-          if (filter != 'exercise')
-            _PlanSection(
-              title: '饮食计划',
-              icon: Icons.restaurant_outlined,
-              items: meals,
-            ),
-          if (filter != 'meal')
+          if (showMeal)
+            _MealDetailSection(items: meals),
+          if (showExercise)
             _PlanSection(
               title: '运动计划',
               icon: Icons.directions_run_outlined,
               items: exercises,
             ),
+          if (showMeasure)
+            _MeasurementSection(items: measurements),
         ],
       ),
     );
@@ -348,6 +441,178 @@ class _PlanSection extends StatelessWidget {
               ),
               const SizedBox(height: 8),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MealDetailSection extends StatelessWidget {
+  const _MealDetailSection({required this.items});
+
+  final List<PlanRecordData> items;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.pageBg,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.restaurant_outlined, size: 18, color: AppTheme.deepBlue),
+                SizedBox(width: 8),
+                Text('饮食计划', style: TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            for (final item in items) ...[
+              if (item.summary.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryBlue.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(item.summary,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppTheme.deepBlue, height: 1.4)),
+                ),
+              _MealRow(
+                icon: Icons.wb_sunny_outlined,
+                label: '早餐',
+                items: _castList(item.payload['breakfast']),
+              ),
+              _MealRow(
+                icon: Icons.lunch_dining_outlined,
+                label: '午餐',
+                items: _castList(item.payload['lunch']),
+              ),
+              _MealRow(
+                icon: Icons.nightlight_outlined,
+                label: '晚餐',
+                items: _castList(item.payload['dinner']),
+              ),
+              _MealRow(
+                icon: Icons.apple_outlined,
+                label: '加餐',
+                items: _castList(item.payload['snack']),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<String> _castList(Object? raw) {
+    if (raw is List) return raw.cast<String>();
+    return const [];
+  }
+}
+
+class _MealRow extends StatelessWidget {
+  const _MealRow({
+    required this.icon,
+    required this.label,
+    required this.items,
+  });
+
+  final IconData icon;
+  final String label;
+  final List<String> items;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.muted),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 34,
+            child: Text(label,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.muted,
+                    fontWeight: FontWeight.w600)),
+          ),
+          Expanded(
+            child: Text(items.join('  /  '),
+                style: const TextStyle(fontSize: 13, height: 1.5)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MeasurementSection extends StatelessWidget {
+  const _MeasurementSection({required this.items});
+
+  final List<PlanRecordData> items;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final allItems = <String>[];
+    for (final plan in items) {
+      final list = plan.payload['items'];
+      if (list is List) allItems.addAll(list.cast<String>());
+    }
+    if (allItems.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTheme.pageBg,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.monitor_heart_outlined, size: 18, color: AppTheme.deepBlue),
+                SizedBox(width: 8),
+                Text('每日测量', style: TextStyle(fontWeight: FontWeight.w700)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            for (final text in allItems)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('·  ',
+                        style: TextStyle(
+                            color: AppTheme.deepBlue,
+                            fontWeight: FontWeight.w700)),
+                    Expanded(
+                      child: Text(text,
+                          style: const TextStyle(
+                              color: AppTheme.muted, height: 1.5)),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

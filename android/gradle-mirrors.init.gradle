@@ -1,0 +1,23 @@
+gradle.beforeProject { project ->
+    if (project.name == "gradle") {
+        return
+    }
+
+    project.buildscript.repositories {
+        maven { url "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/" }
+        maven { url "https://maven.aliyun.com/repository/google" }
+        maven { url "https://maven.aliyun.com/repository/central" }
+        maven { url "https://maven.aliyun.com/repository/gradle-plugin" }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+
+    project.repositories {
+        maven { url "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/" }
+        maven { url "https://maven.aliyun.com/repository/google" }
+        maven { url "https://maven.aliyun.com/repository/central" }
+        google()
+        mavenCentral()
+    }
+}

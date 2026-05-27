@@ -45,11 +45,11 @@ class AppShell extends StatelessWidget {
       selectedIcon: Icons.check_circle,
     ),
     _TabItem(
-      label: '统计',
-      title: '健康统计',
+      label: '我的',
+      title: '我的',
       path: '/stats',
-      icon: Icons.insights_outlined,
-      selectedIcon: Icons.insights,
+      icon: Icons.person_outline,
+      selectedIcon: Icons.person,
     ),
   ];
 
@@ -70,6 +70,8 @@ class AppShell extends StatelessWidget {
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 960;
         return Scaffold(
+          backgroundColor: AppTheme.pageBg,
+          resizeToAvoidBottomInset: false,
           appBar: AppBar(
             title: Text(current.title),
             actions: [
@@ -78,16 +80,13 @@ class AppShell extends StatelessWidget {
                 icon: const Icon(Icons.document_scanner_outlined),
                 onPressed: () => context.push('/report'),
               ),
-              IconButton(
-                tooltip: '云同步与密钥',
-                icon: const Icon(Icons.lock_outline),
-                onPressed: () => context.push('/sync/key-setup'),
-              ),
               PopupMenuButton<String>(
                 tooltip: '更多操作',
                 onSelected: (value) async {
                   if (value == 'onboarding') {
                     context.push('/onboarding');
+                  } else if (value == 'security') {
+                    context.push('/sync');
                   } else if (value == 'reset') {
                     await sl<HealthRepository>().resetDemoData();
                     if (!context.mounted) return;
@@ -97,7 +96,8 @@ class AppShell extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'onboarding', child: Text('查看引导')),
+                  PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
+                  PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
                   PopupMenuItem(value: 'reset', child: Text('恢复示例数据')),
                 ],
               ),

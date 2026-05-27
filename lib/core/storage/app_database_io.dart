@@ -53,7 +53,7 @@ class _SqfliteAppDatabase extends AppDatabase {
 
   sqflite.Database? _db;
   static const String _fileName = 'health_reset_plan.sqlite';
-  static const int _schemaVersion = 1;
+  static const int _schemaVersion = 3;
 
   Future<sqflite.Database> _ensureDb() async {
     if (_db != null) return _db!;
@@ -190,7 +190,19 @@ class _SqfliteAppDatabase extends AppDatabase {
 
   Future<void> _onUpgrade(
       sqflite.Database db, int oldVersion, int newVersion) async {
-    // 后续版本迁移在此追加。
+    if (oldVersion < 2) {
+      // v2：为可同步表加 client_id（UUID，云端幂等键）和 sync_at（上次成功同步时间）
+      for (final t in ['health_indicator', 'plan', 'clock_record', 'reminder']) {
+        await db.execute('ALTER TABLE $t ADD COLUMN client_id TEXT');
+        await db.execute('ALTER TABLE $t ADD COLUMN sync_at INTEGER NOT NULL DEFAULT 0');
+      }
+    }
+    if (oldVersion < 3) {
+      // v3：user_profile 新增目标、运动基础、饮食偏好字段
+      await db.execute("ALTER TABLE user_profile ADD COLUMN goal TEXT NOT NULL DEFAULT 'maintain'");
+      await db.execute("ALTER TABLE user_profile ADD COLUMN exercise_base TEXT NOT NULL DEFAULT 'none'");
+      await db.execute("ALTER TABLE user_profile ADD COLUMN diet_preference TEXT NOT NULL DEFAULT 'normal'");
+    }
   }
 }
 
@@ -299,6 +311,9 @@ const String _ddlUserProfile = '''
       medications     TEXT    NOT NULL DEFAULT '',
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL,
+      goal            TEXT    NOT NULL DEFAULT 'maintain',
+      exercise_base   TEXT    NOT NULL DEFAULT 'none',
+      diet_preference TEXT    NOT NULL DEFAULT 'normal',
       version         INTEGER NOT NULL DEFAULT 0,
       is_dirty        INTEGER NOT NULL DEFAULT 1
     );
@@ -308,6 +323,7 @@ const String _ddlHealthIndicator = '''
     CREATE TABLE IF NOT EXISTS health_indicator (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id      TEXT    NOT NULL,
+      client_id    TEXT,
       type         TEXT    NOT NULL,
       payload_json TEXT    NOT NULL,
       source       TEXT    NOT NULL DEFAULT 'manual',
@@ -315,7 +331,8 @@ const String _ddlHealthIndicator = '''
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL,
       version      INTEGER NOT NULL DEFAULT 0,
-      is_dirty     INTEGER NOT NULL DEFAULT 1
+      is_dirty     INTEGER NOT NULL DEFAULT 1,
+      sync_at      INTEGER NOT NULL DEFAULT 0
     );
 ''';
 
@@ -323,6 +340,7 @@ const String _ddlPlan = '''
     CREATE TABLE IF NOT EXISTS plan (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id      TEXT    NOT NULL,
+      client_id    TEXT,
       type         TEXT    NOT NULL,
       plan_date    INTEGER NOT NULL,
       payload_json TEXT    NOT NULL,
@@ -331,7 +349,8 @@ const String _ddlPlan = '''
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL,
       version      INTEGER NOT NULL DEFAULT 0,
-      is_dirty     INTEGER NOT NULL DEFAULT 1
+      is_dirty     INTEGER NOT NULL DEFAULT 1,
+      sync_at      INTEGER NOT NULL DEFAULT 0
     );
 ''';
 
