@@ -40,6 +40,10 @@ dependencies:
   # 系统闹钟集成（Android ACTION_SET_ALARM）
   android_intent_plus: ^5.1.0
 
+  # 数据导出与导入
+  share_plus: ^10.0.3
+  file_picker: ^8.1.6
+
   # UI / 工具
   intl: ^0.20.2
   logger: ^2.4.0

@@ -643,6 +643,152 @@ class HealthRepository extends ChangeNotifier {
 
   void signalChanged() => notifyListeners();
 
+  // ── 数据导出 ─────────────────────────────────────────────────────
+
+  /// 全量 JSON 备份，包含档案/指标/提醒/打卡记录
+  Future<Map<String, dynamic>> exportJson() async {
+    final db = await database.open();
+    final profileRows = await db.query('user_profile',
+        where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final indicatorRows = await db.query('health_indicator',
+        where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final reminderRows = await db.query('reminder',
+        where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final clockRows = await db.query('clock_record',
+        where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    return {
+      'version': '1.0',
+      'exportedAt': DateTime.now().toIso8601String(),
+      'data': {
+        'userProfile': profileRows,
+        'indicators': indicatorRows,
+        'reminders': reminderRows,
+        'clockRecords': clockRows,
+      },
+    };
+  }
+
+  /// CSV 导出（仅健康指标，适合用 Excel/Numbers 分析）
+  Future<String> exportCsv() async {
+    final indicators = await loadIndicators(limit: 5000);
+    final buf = StringBuffer('日期,时间,指标类型,数值,单位,备注\n');
+    String p2(int n) => n.toString().padLeft(2, '0');
+    for (final e in indicators) {
+      final dt = e.measuredTime;
+      final date = '${dt.year}-${p2(dt.month)}-${p2(dt.day)}';
+      final time = '${p2(dt.hour)}:${p2(dt.minute)}';
+      switch (e.type) {
+        case 'bp':
+          buf.writeln('$date,$time,收缩压,${e.payload['systolic'] ?? ''},mmHg,');
+          buf.writeln('$date,$time,舒张压,${e.payload['diastolic'] ?? ''},mmHg,');
+          if (e.payload['heartRate'] != null) {
+            buf.writeln('$date,$time,心率（测压时）,${e.payload['heartRate']},bpm,');
+          }
+        case 'weight':
+          buf.writeln('$date,$time,体重,${e.payload['weightKg'] ?? ''},kg,');
+        case 'glucose':
+          final mt = switch (e.payload['mealType']) {
+            'fasting' => '空腹', 'postmeal' => '餐后2h', _ => '随机'
+          };
+          buf.writeln('$date,$time,血糖,${e.payload['glucoseMmol'] ?? ''},mmol/L,$mt');
+        case 'heart_rate':
+          buf.writeln('$date,$time,心率,${e.payload['bpm'] ?? ''},bpm,');
+        case 'lipid':
+          if (e.payload['tc'] != null) buf.writeln('$date,$time,总胆固醇 TC,${e.payload['tc']},mmol/L,');
+          if (e.payload['ldl'] != null) buf.writeln('$date,$time,LDL 低密度,${e.payload['ldl']},mmol/L,');
+          if (e.payload['hdl'] != null) buf.writeln('$date,$time,HDL 高密度,${e.payload['hdl']},mmol/L,');
+          if (e.payload['tg'] != null) buf.writeln('$date,$time,甘油三酯 TG,${e.payload['tg']},mmol/L,');
+        case 'body_fat':
+          buf.writeln('$date,$time,体脂率,${e.payload['bodyFatPct'] ?? ''},%,');
+        case 'waist':
+          buf.writeln('$date,$time,腰围,${e.payload['waistCm'] ?? ''},cm,');
+        case 'spo2':
+          buf.writeln('$date,$time,血氧饱和度,${e.payload['spo2Pct'] ?? ''},%,');
+        case 'sleep':
+          final q = switch (e.payload['quality']) {
+            'good' => '好', 'fair' => '一般', _ => '差'
+          };
+          buf.writeln('$date,$time,睡眠时长,${e.payload['sleepHours'] ?? ''},h,$q');
+        case 'steps':
+          buf.writeln('$date,$time,步数,${e.payload['steps'] ?? ''},步,');
+        case 'bmi':
+          buf.writeln('$date,$time,BMI,${e.payload['bmiValue'] ?? ''},,自动计算');
+      }
+    }
+    return buf.toString();
+  }
+
+  // ── 数据导入（恢复） ─────────────────────────────────────────────
+
+  /// 从 JSON 备份文件恢复数据，返回导入的指标条数
+  Future<int> importJson(Map<String, dynamic> data) async {
+    final exportData = data['data'] as Map<String, dynamic>?;
+    if (exportData == null) throw const FormatException('文件格式不正确，缺少 data 字段');
+    final db = await database.open();
+    int indicatorCount = 0;
+
+    await db.transaction((txn) async {
+      // 清除现有记录（保留 plan，恢复后可重新生成）
+      await txn.delete('health_indicator', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn.delete('reminder', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn.delete('clock_record', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+
+      // 导入指标
+      final indicators = exportData['indicators'] as List?;
+      if (indicators != null) {
+        for (final row in indicators) {
+          final map = Map<String, Object?>.from(row as Map);
+          map['user_id'] = kLocalUserId;
+          map.remove('id');
+          await txn.insert('health_indicator', map);
+          indicatorCount++;
+        }
+      }
+
+      // 导入提醒
+      final reminders = exportData['reminders'] as List?;
+      if (reminders != null) {
+        for (final row in reminders) {
+          final map = Map<String, Object?>.from(row as Map);
+          map['user_id'] = kLocalUserId;
+          map.remove('id');
+          await txn.insert('reminder', map);
+        }
+      }
+
+      // 导入打卡记录
+      final clockRecords = exportData['clockRecords'] as List?;
+      if (clockRecords != null) {
+        for (final row in clockRecords) {
+          final map = Map<String, Object?>.from(row as Map);
+          map['user_id'] = kLocalUserId;
+          map.remove('id');
+          await txn.insert('clock_record', map);
+        }
+      }
+
+      // 导入档案（合并：有则更新，无则插入）
+      final profileList = exportData['userProfile'] as List?;
+      if (profileList != null && profileList.isNotEmpty) {
+        final profileMap = Map<String, Object?>.from(profileList.first as Map);
+        profileMap['user_id'] = kLocalUserId;
+        profileMap.remove('id');
+        profileMap['updated_at'] = DateTime.now().millisecondsSinceEpoch;
+        final existing = await txn.query('user_profile',
+            where: 'user_id = ?', whereArgs: [kLocalUserId]);
+        if (existing.isEmpty) {
+          await txn.insert('user_profile', profileMap);
+        } else {
+          await txn.update('user_profile', profileMap,
+              where: 'user_id = ?', whereArgs: [kLocalUserId]);
+        }
+      }
+    });
+
+    notifyListeners();
+    return indicatorCount;
+  }
+
   Future<void> _seedIfEmpty({bool force = false}) async {
     final db = await database.open();
     final count = await db.count('user_profile');

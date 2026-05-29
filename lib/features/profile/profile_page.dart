@@ -1,6 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
@@ -407,6 +413,8 @@ class _ProfilePageState extends State<ProfilePage> {
             },
           ),
           const SizedBox(height: 20),
+          _BackupRestoreSection(repo: _repo),
+          const SizedBox(height: 16),
           _DangerZone(onClearAll: _clearAllData),
           const SizedBox(height: 20),
         ],
@@ -742,6 +750,189 @@ IconData _iconFor(String type) {
     _ => Icons.fiber_manual_record_outlined,
   };
 }
+
+// ── 数据备份与恢复 ─────────────────────────────────────────────────
+
+class _BackupRestoreSection extends StatefulWidget {
+  const _BackupRestoreSection({required this.repo});
+  final HealthRepository repo;
+
+  @override
+  State<_BackupRestoreSection> createState() => _BackupRestoreSectionState();
+}
+
+class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
+  bool _busy = false;
+
+  void _setBusy(bool v) { if (mounted) setState(() => _busy = v); }
+
+  Future<void> _exportJson() async {
+    _setBusy(true);
+    try {
+      final data = await widget.repo.exportJson();
+      final json = const JsonEncoder.withIndent('  ').convert(data);
+      final dir = await getApplicationDocumentsDirectory();
+      final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+      final file = File('${dir.path}/health_backup_$ts.json');
+      await file.writeAsString(json, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/json')],
+        subject: '健康数据备份 $ts',
+      );
+    } catch (e) {
+      if (mounted) _showError('导出失败：$e');
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<void> _exportCsv() async {
+    _setBusy(true);
+    try {
+      final csv = await widget.repo.exportCsv();
+      final dir = await getApplicationDocumentsDirectory();
+      final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+      final file = File('${dir.path}/health_indicators_$ts.csv');
+      await file.writeAsString(csv, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'text/csv')],
+        subject: '健康指标 CSV $ts',
+      );
+    } catch (e) {
+      if (mounted) _showError('导出失败：$e');
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<void> _importJson() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.first.path;
+    if (path == null) { _showError('无法读取文件路径'); return; }
+
+    _setBusy(true);
+    try {
+      final content = await File(path).readAsString();
+      final data = jsonDecode(content) as Map<String, dynamic>;
+
+      final exportData = data['data'] as Map<String, dynamic>?;
+      if (exportData == null) { _showError('文件格式不正确'); return; }
+
+      final indicatorCount = (exportData['indicators'] as List?)?.length ?? 0;
+      final reminderCount  = (exportData['reminders']  as List?)?.length ?? 0;
+      final clockCount     = (exportData['clockRecords'] as List?)?.length ?? 0;
+      final exportedAt     = data['exportedAt'] as String? ?? '未知时间';
+
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('确认导入数据'),
+          content: Text(
+            '备份时间：$exportedAt\n\n'
+            '将恢复：\n'
+            '  • $indicatorCount 条健康指标\n'
+            '  • $reminderCount 条提醒规则\n'
+            '  • $clockCount 条打卡记录\n\n'
+            '现有指标、提醒、打卡记录将被覆盖，是否继续？',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确认恢复'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      final imported = await widget.repo.importJson(data);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已成功恢复 $imported 条健康指标记录')),
+      );
+    } on FormatException catch (e) {
+      if (mounted) _showError('文件解析失败：${e.message}');
+    } catch (e) {
+      if (mounted) _showError('导入失败：$e');
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: Colors.red.shade600),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            const Icon(Icons.backup_outlined, size: 18, color: AppTheme.deepBlue),
+            const SizedBox(width: 8),
+            const Text('数据备份与恢复',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('换机前先导出备份，换机后导入恢复',
+              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+          const SizedBox(height: 14),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _exportJson,
+                icon: const Icon(Icons.download_outlined, size: 18),
+                label: const Text('导出 JSON'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _busy ? null : _exportCsv,
+                icon: const Icon(Icons.table_chart_outlined, size: 18),
+                label: const Text('导出 CSV'),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _importJson,
+              icon: _busy
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.upload_file_outlined, size: 18),
+              label: const Text('从 JSON 文件恢复',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── 危险操作区 ─────────────────────────────────────────────────────
 
 class _DangerZone extends StatelessWidget {
   const _DangerZone({required this.onClearAll});
