@@ -5,6 +5,8 @@ import 'package:logger/logger.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
 import '../data/health_repository.dart';
+import '../membership/membership_service.dart';
+import '../network/ai_api.dart';
 import '../network/api_client.dart';
 import '../notification/reminder_scheduler.dart';
 import '../storage/app_database.dart';
@@ -52,4 +54,8 @@ Future<void> setupServiceLocator() async {
     database: appDatabase,
     repository: healthRepository,
   ));
+
+  sl.registerLazySingleton<MembershipService>(() => MembershipService());
+
+  sl.registerSingleton<AiApi>(AiApi(client: apiClient));
 }

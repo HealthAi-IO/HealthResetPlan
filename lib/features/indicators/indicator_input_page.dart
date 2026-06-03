@@ -293,16 +293,16 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         )),
       'bp' => _Card(
           child: Column(children: [
-            _NumField(controller: _systolicCtrl, label: '收缩压（高压）', unit: 'mmHg', hint: '例如 120', min: 60, max: 250, required: true),
+            _NumField(controller: _systolicCtrl, label: '收缩压（高压）', unit: 'mmHg', hint: '例如 115', min: 60, max: 250, required: true),
             const SizedBox(height: 14),
-            _NumField(controller: _diastolicCtrl, label: '舒张压（低压）', unit: 'mmHg', hint: '例如 80', min: 40, max: 160, required: true),
+            _NumField(controller: _diastolicCtrl, label: '舒张压（低压）', unit: 'mmHg', hint: '例如 75', min: 40, max: 160, required: true),
             const SizedBox(height: 14),
             _NumField(controller: _bpmCtrl, label: '同测心率（选填）', unit: 'bpm', hint: '例如 72', min: 30, max: 220),
           ]),
         ),
       'glucose' => _Card(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _NumField(controller: _glucoseCtrl, label: '血糖', unit: 'mmol/L', hint: '例如 5.6', min: 1, max: 40, decimal: true, required: true),
+            _NumField(controller: _glucoseCtrl, label: '血糖', unit: 'mmol/L', hint: '例如 5.0', min: 1, max: 40, decimal: true, required: true),
             const SizedBox(height: 14),
             const Text('测量类型', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
             const SizedBox(height: 8),
@@ -330,13 +330,13 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         )),
       'lipid' => _Card(
           child: Column(children: [
-            _NumField(controller: _tcCtrl, label: '总胆固醇 TC', unit: 'mmol/L', hint: '例如 5.2', min: 1, max: 20, decimal: true),
+            _NumField(controller: _tcCtrl, label: '总胆固醇 TC', unit: 'mmol/L', hint: '例如 4.8', min: 1, max: 20, decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _ldlCtrl, label: 'LDL 低密度脂蛋白', unit: 'mmol/L', hint: '例如 3.4', min: 0.5, max: 15, decimal: true),
+            _NumField(controller: _ldlCtrl, label: 'LDL 低密度脂蛋白', unit: 'mmol/L', hint: '例如 2.8', min: 0.5, max: 15, decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _hdlCtrl, label: 'HDL 高密度脂蛋白', unit: 'mmol/L', hint: '例如 1.2', min: 0.3, max: 5, decimal: true),
+            _NumField(controller: _hdlCtrl, label: 'HDL 高密度脂蛋白', unit: 'mmol/L', hint: '例如 1.4', min: 0.3, max: 5, decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _tgCtrl, label: '甘油三酯 TG', unit: 'mmol/L', hint: '例如 1.5', min: 0.2, max: 20, decimal: true),
+            _NumField(controller: _tgCtrl, label: '甘油三酯 TG', unit: 'mmol/L', hint: '例如 1.3', min: 0.2, max: 20, decimal: true),
             const SizedBox(height: 8),
             const Text('血脂各项均为选填，录入已有检查报告结果即可。',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),

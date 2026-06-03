@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import '../../app/app_theme.dart';
 import '../../core/crypto/key_vault.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/membership_service.dart';
+import '../../core/membership/paywall.dart';
 import '../../core/sync/sync_service.dart';
 
 class CloudSyncPage extends StatefulWidget {
@@ -17,6 +19,7 @@ class CloudSyncPage extends StatefulWidget {
 class _CloudSyncPageState extends State<CloudSyncPage> {
   final SyncService _syncService = sl<SyncService>();
   final KeyVault _vault = sl<KeyVault>();
+  final MembershipService _membership = sl<MembershipService>();
 
   bool _syncEnabled = false;
   bool _backedUp = false;
@@ -44,6 +47,14 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
 
   Future<void> _toggleSync(bool value) async {
     if (value) {
+      // 检查会员资格 — 统一付费墙
+      final isMember = await _membership.isActive();
+      if (!isMember && mounted) {
+        await showPaywall(context, PaywallFeature.cloudSync);
+        await _load();
+        return;
+      }
+
       final backed = await _vault.isBackedUp();
       if (!backed && mounted) {
         final goSetup = await showDialog<bool>(
@@ -331,7 +342,7 @@ class _E2eeNote extends StatelessWidget {
               Icon(Icons.shield_outlined, size: 16, color: AppTheme.deepBlue),
               SizedBox(width: 6),
               Text(
-                '端到端加密说明',
+                '客户端加密说明',
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 13,

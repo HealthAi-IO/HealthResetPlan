@@ -68,7 +68,7 @@ class OnboardingPage extends StatelessWidget {
                   runSpacing: 10,
                   children: const [
                     _Pill(text: '本地优先'),
-                    _Pill(text: '端到端加密'),
+                    _Pill(text: '客户端加密'),
                     _Pill(text: '浅蓝主题'),
                   ],
                 ),

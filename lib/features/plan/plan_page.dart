@@ -1,10 +1,16 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/membership_service.dart';
+import '../../core/membership/paywall.dart';
+import '../../core/network/ai_api.dart';
 
 class PlanPage extends StatefulWidget {
   const PlanPage({super.key});
@@ -15,8 +21,12 @@ class PlanPage extends StatefulWidget {
 
 class _PlanPageState extends State<PlanPage> {
   final HealthRepository _repo = sl<HealthRepository>();
+  final MembershipService _membership = sl<MembershipService>();
+  final AiApi _aiApi = sl<AiApi>();
 
   bool _loading = true;
+  bool _aiGenerating = false;
+  String _selectedProvider = 'deepseek';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
   PlanRecordData? _riskPlan;
@@ -63,6 +73,272 @@ class _PlanPageState extends State<PlanPage> {
     messenger.showSnackBar(const SnackBar(content: Text('本地计划已更新')));
   }
 
+  Future<void> _generateWithAi() async {
+    // 1. 会员校验
+    final isMember = await _membership.isActive();
+    if (!mounted) return;
+    if (!isMember) {
+      await showPaywall(context, PaywallFeature.aiPlan);
+      return;
+    }
+
+    // 2. 弹出模型选择对话框
+    final provider = await _showProviderPicker();
+    if (provider == null || !mounted) return;
+    setState(() { _aiGenerating = true; _selectedProvider = provider; });
+
+    try {
+      // 3. 拉取最近指标
+      final indicators = await _repo.loadIndicators(limit: 20);
+
+      // 4. 调用 AI
+      final result = await _aiApi.generatePlan(
+        profile: _profile ?? UserProfileData.empty(),
+        recentIndicators: indicators,
+        goal: _profile?.goal ?? 'general',
+      );
+
+      if (!mounted) return;
+
+      // 5. 展示 AI 方案（底部弹窗）
+      await _showAiPlanSheet(result);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('AI 生成失败：${_friendlyError(e)}'),
+          backgroundColor: Colors.red.shade600,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _aiGenerating = false);
+    }
+  }
+
+  Future<String?> _showProviderPicker() {
+    return showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('选择 AI 模型',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            const Text('方案质量因模型而异，可切换尝试',
+                style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+            const SizedBox(height: 16),
+            for (final p in [
+              ('deepseek', '🤖', 'DeepSeek', '推理能力强，方案逻辑严密'),
+              ('doubao', '🫘', '豆包（火山方舟）', '中文表达自然，建议贴近生活'),
+              ('qwen', '🌟', '通义千问', '医疗健康垂直训练，参考价值高'),
+            ])
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Text(p.$2, style: const TextStyle(fontSize: 24)),
+                title: Text(p.$3,
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                subtitle: Text(p.$4,
+                    style: const TextStyle(
+                        color: AppTheme.muted, fontSize: 12)),
+                trailing: _selectedProvider == p.$1
+                    ? const Icon(Icons.check_circle,
+                        color: AppTheme.deepBlue, size: 20)
+                    : null,
+                onTap: () => Navigator.pop(context, p.$1),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAiPlanSheet(AiPlanResult result) async {
+    Map<String, dynamic> parsed = {};
+    try {
+      parsed = jsonDecode(result.rawJson) as Map<String, dynamic>;
+    } catch (_) {
+      // JSON 解析失败时显示原文
+    }
+
+    final summary = parsed['summary'] as String? ?? '方案已生成';
+    final keyFocus = parsed['keyFocus'] as String? ?? '';
+    final riskAlert = parsed['riskAlert'] as String?;
+    final targetCal = parsed['targetCalories'] as int?;
+    final days = (parsed['days'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (_, ctrl) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              // 把手
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // 标题行
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(children: [
+                  const Icon(Icons.psychology_outlined,
+                      color: AppTheme.deepBlue, size: 22),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('AI 健康方案',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w800)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.pageBg,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppTheme.cardBorder),
+                    ),
+                    child: Text(result.provider,
+                        style: const TextStyle(
+                            fontSize: 11, color: AppTheme.muted)),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: 4),
+              // 概要
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(summary,
+                        style: const TextStyle(
+                            color: AppTheme.muted, fontSize: 13)),
+                    if (keyFocus.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(children: [
+                        const Icon(Icons.flag_outlined,
+                            size: 14, color: AppTheme.deepBlue),
+                        const SizedBox(width: 4),
+                        Text('本周重点：$keyFocus',
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.deepBlue,
+                                fontWeight: FontWeight.w600)),
+                        if (targetCal != null) ...[
+                          const SizedBox(width: 12),
+                          Text('目标 $targetCal kcal/天',
+                              style: const TextStyle(
+                                  fontSize: 12, color: AppTheme.muted)),
+                        ],
+                      ]),
+                    ],
+                    if (riskAlert != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: Colors.orange.shade200),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.warning_amber_outlined,
+                              size: 14,
+                              color: Colors.orange.shade700),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(riskAlert,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.orange.shade700)),
+                          ),
+                        ]),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const Divider(height: 20),
+              // 7天内容
+              Expanded(
+                child: ListView.separated(
+                  controller: ctrl,
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 80),
+                  itemCount: days.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (_, i) => _AiDayCard(day: days[i]),
+                ),
+              ),
+              // 底部按钮
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                child: Row(children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        context.push('/chat');
+                      },
+                      icon: const Icon(Icons.chat_outlined, size: 16),
+                      label: const Text('继续对话'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(context);
+                        await _repo.generateWeeklyPlan();
+                        if (mounted) {
+                          _load(silent: true);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('已同步到本地计划')),
+                          );
+                        }
+                      },
+                      icon: const Icon(Icons.sync, size: 16),
+                      label: const Text('应用到计划'),
+                    ),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _friendlyError(Object e) {
+    final s = e.toString();
+    if (s.contains('40301')) return '会员权益已过期，请续费';
+    if (s.contains('50301')) return 'AI 服务响应超时，请重试';
+    if (s.contains('Connection') || s.contains('Socket')) return '网络连接失败';
+    return e.toString().substring(0, e.toString().length.clamp(0, 60));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -85,6 +361,8 @@ class _PlanPageState extends State<PlanPage> {
             riskPlan: _riskPlan,
             targetKcal: targetKcal,
             onGenerate: _generate,
+            onAiGenerate: _generateWithAi,
+            aiGenerating: _aiGenerating,
           ),
           const SizedBox(height: 16),
           if (_riskPlan != null) ...[
@@ -161,12 +439,16 @@ class _PlanHero extends StatelessWidget {
     required this.riskPlan,
     required this.targetKcal,
     required this.onGenerate,
+    this.onAiGenerate,
+    this.aiGenerating = false,
   });
 
   final UserProfileData? profile;
   final PlanRecordData? riskPlan;
   final int targetKcal;
   final VoidCallback onGenerate;
+  final VoidCallback? onAiGenerate;
+  final bool aiGenerating;
 
   @override
   Widget build(BuildContext context) {
@@ -216,10 +498,35 @@ class _PlanHero extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: onGenerate,
-                icon: const Icon(Icons.auto_awesome_outlined),
-                label: const Text('生成 / 刷新计划'),
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: onGenerate,
+                    icon: const Icon(Icons.auto_awesome_outlined, size: 16),
+                    label: const Text('本地生成'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.deepBlue.withValues(alpha: 0.15),
+                      foregroundColor: AppTheme.deepBlue,
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: aiGenerating ? null : onAiGenerate,
+                    icon: aiGenerating
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.psychology_outlined, size: 16),
+                    label: Text(aiGenerating ? 'AI 生成中…' : 'AI 智能生成 ⚜'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF0277BD),
+                    ),
+                  ),
+                ],
               ),
             ],
           );
@@ -279,55 +586,89 @@ class _RiskCard extends StatelessWidget {
     final summary = plan.payload['summary'] as String? ?? '';
     final dietNote = plan.payload['dietNote'] as String? ?? '';
     final hasRisk = risks.isNotEmpty;
-    final color = hasRisk ? const Color(0xFFFFF3CD) : const Color(0xFFD4EDDA);
-    final borderColor = hasRisk ? const Color(0xFFFFD700) : const Color(0xFF28A745);
-    final icon = hasRisk ? Icons.warning_amber_outlined : Icons.check_circle_outline;
-    final iconColor = hasRisk ? const Color(0xFF856404) : const Color(0xFF155724);
+
+    // 零风险：轻量摘要条
+    if (!hasRisk) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0FFF4),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFF86EFAC)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle_outline,
+                size: 16, color: Color(0xFF16A34A)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                summary.isNotEmpty ? summary : '各项已录入指标均在正常范围。',
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF15803D),
+                    height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 有风险：醒目卡片
+    final hasSevere = risks.any((r) =>
+        r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'));
+    final cardColor =
+        hasSevere ? const Color(0xFFFEE2E2) : const Color(0xFFFFFBEB);
+    final borderColor =
+        hasSevere ? const Color(0xFFFCA5A5) : const Color(0xFFFCD34D);
+    final iconColor =
+        hasSevere ? const Color(0xFFB91C1C) : const Color(0xFF92400E);
+    final icon = hasSevere ? Icons.error_outline : Icons.warning_amber_outlined;
 
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: borderColor.withValues(alpha: 0.5)),
+        color: cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 20, color: iconColor),
-              const SizedBox(width: 8),
-              Text('风险评估',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w800, color: iconColor)),
-            ],
-          ),
-          const SizedBox(height: 10),
+          Row(children: [
+            Icon(icon, size: 18, color: iconColor),
+            const SizedBox(width: 7),
+            Text('指标提示',
+                style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: iconColor)),
+          ]),
+          const SizedBox(height: 8),
           Text(summary,
-              style: TextStyle(color: iconColor, height: 1.5)),
-          if (risks.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: risks
-                  .map((r) => Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(r,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: iconColor,
-                                fontWeight: FontWeight.w600)),
-                      ))
-                  .toList(),
-            ),
-          ],
+              style: TextStyle(
+                  fontSize: 13, color: iconColor, height: 1.5)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 7,
+            runSpacing: 6,
+            children: risks
+                .map((r) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.75),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(r,
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: iconColor,
+                              fontWeight: FontWeight.w600)),
+                    ))
+                .toList(),
+          ),
           if (dietNote.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text('饮食建议：$dietNote',
@@ -735,5 +1076,136 @@ class _EmptyState extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── AI 方案每日卡片 ───────────────────────────────────────────
+
+class _AiDayCard extends StatelessWidget {
+  const _AiDayCard({required this.day});
+  final Map<String, dynamic> day;
+
+  @override
+  Widget build(BuildContext context) {
+    final weekDay = day['weekDay'] as String? ?? '';
+    final diet = day['diet'] as Map<String, dynamic>? ?? {};
+    final exercise = day['exercise'] as Map<String, dynamic>? ?? {};
+    final reminders = (day['reminders'] as List?)?.cast<String>() ?? [];
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0277BD),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(weekDay,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+            ),
+          ]),
+          const SizedBox(height: 10),
+          if (diet.isNotEmpty) ...[
+            const _SectionRow(Icons.restaurant_outlined, '饮食',
+                Color(0xFF0277BD)),
+            const SizedBox(height: 6),
+            for (final label in ['早餐', '午餐', '晚餐', '加餐'])
+              if (diet[_dietKey(label)] != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 36,
+                          child: Text(label,
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppTheme.muted,
+                                  fontWeight: FontWeight.w600)),
+                        ),
+                        Expanded(
+                          child: Text('${diet[_dietKey(label)]}',
+                              style: const TextStyle(fontSize: 13)),
+                        ),
+                      ]),
+                ),
+          ],
+          if (exercise.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const _SectionRow(Icons.directions_run_outlined, '运动',
+                Colors.green),
+            const SizedBox(height: 6),
+            Text(
+              '${exercise['type'] ?? ''} · '
+              '${exercise['durationMinutes'] ?? 0}分钟 · '
+              '${exercise['intensity'] ?? ''}',
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.muted,
+                  fontWeight: FontWeight.w600),
+            ),
+            if (exercise['description'] != null) ...[
+              const SizedBox(height: 4),
+              Text('${exercise['description']}',
+                  style: const TextStyle(fontSize: 13)),
+            ],
+          ],
+          if (reminders.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const _SectionRow(
+                Icons.notifications_outlined, '提醒', Colors.orange),
+            const SizedBox(height: 6),
+            for (final r in reminders)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Row(children: [
+                  const Icon(Icons.circle, size: 5, color: AppTheme.muted),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: Text(r, style: const TextStyle(fontSize: 13))),
+                ]),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _dietKey(String label) => switch (label) {
+        '早餐' => 'breakfast',
+        '午餐' => 'lunch',
+        '晚餐' => 'dinner',
+        _ => 'snack',
+      };
+}
+
+class _SectionRow extends StatelessWidget {
+  const _SectionRow(this.icon, this.label, this.color);
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 14, color: color),
+      const SizedBox(width: 5),
+      Text(label,
+          style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+    ]);
   }
 }

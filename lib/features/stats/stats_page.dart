@@ -10,6 +10,7 @@ import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/membership_service.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -20,11 +21,13 @@ class StatsPage extends StatefulWidget {
 
 class _StatsPageState extends State<StatsPage> {
   final HealthRepository _repo = sl<HealthRepository>();
+  final MembershipService _membership = sl<MembershipService>();
 
   bool _loading = true;
   HealthDashboardData? _data;
   ClockStats? _clockStats;
   String? _error;
+  MembershipStatus _memberStatus = MembershipStatus.free;
 
   List<HealthIndicatorEntry> _weightEntries = const [];
   List<HealthIndicatorEntry> _bpEntries = const [];
@@ -54,6 +57,7 @@ class _StatsPageState extends State<StatsPage> {
       final weightList = await _repo.loadIndicators(type: 'weight', limit: 20);
       final bpList = await _repo.loadIndicators(type: 'bp', limit: 20);
       final glucoseList = await _repo.loadIndicators(type: 'glucose', limit: 20);
+      final memberStatus = await _membership.getStatus();
       if (!mounted) return;
       setState(() {
         _data = data;
@@ -61,6 +65,7 @@ class _StatsPageState extends State<StatsPage> {
         _weightEntries = weightList.reversed.toList();
         _bpEntries = bpList.reversed.toList();
         _glucoseEntries = glucoseList.reversed.toList();
+        _memberStatus = memberStatus;
         _loading = false;
       });
     } catch (e) {
@@ -107,6 +112,13 @@ class _StatsPageState extends State<StatsPage> {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         children: [
           _UserCard(profile: profile, onEditProfile: () => context.go('/profile')),
+          const SizedBox(height: 10),
+          _MembershipBanner(
+            status: _memberStatus,
+            onTap: () => context.push('/membership').then((_) {
+              if (mounted) _load(silent: true);
+            }),
+          ),
           const SizedBox(height: 14),
 
           _SummaryRow(profile: profile, data: data),
@@ -156,7 +168,7 @@ class _StatsPageState extends State<StatsPage> {
 
           _Panel(
             title: '最近指标',
-            subtitle: '本地全部健康数据',
+            subtitle: '最新 6 项，点全部查看完整记录',
             trailing: TextButton.icon(
               onPressed: () => context.push('/indicators').then((_) {
                 if (mounted) _load(silent: true);
@@ -802,7 +814,7 @@ class _RecentIndicators extends StatelessWidget {
       ]);
     }
     return Column(children: [
-      for (final item in items.take(8))
+      for (final item in items.take(6))
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Container(
@@ -886,3 +898,70 @@ IconData _iconFor(String type) => switch (type) {
   'heart_rate' => Icons.monitor_heart_outlined,
   _ => Icons.fiber_manual_record_outlined,
 };
+
+// ── 会员横幅 ──────────────────────────────────────────────────
+class _MembershipBanner extends StatelessWidget {
+  const _MembershipBanner({required this.status, required this.onTap});
+  final MembershipStatus status;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (status.isActive) {
+      final expiry = DateFormat('yyyy/MM/dd').format(status.expiresAt!);
+      return GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0277BD), Color(0xFF0288D1)],
+            ),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(children: [
+            const Icon(Icons.workspace_premium, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${status.planName ?? '会员版'} · 有效至 $expiry',
+                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.white70, size: 18),
+          ]),
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.cardBorder),
+        ),
+        child: Row(children: [
+          const Icon(Icons.workspace_premium_outlined, color: AppTheme.deepBlue, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              '开通会员 · 解锁云同步、AI无限次等权益',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.ink),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.deepBlue,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: const Text('升级', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+      ),
+    );
+  }
+}

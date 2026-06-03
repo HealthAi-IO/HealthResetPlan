@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/app_theme.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/membership_service.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({
@@ -80,10 +81,22 @@ class AppShell extends StatelessWidget {
                 icon: const Icon(Icons.document_scanner_outlined),
                 onPressed: () => context.push('/report'),
               ),
+              IconButton(
+                tooltip: 'AI 健康顾问',
+                icon: const Icon(Icons.psychology_outlined),
+                onPressed: () => context.push('/chat'),
+              ),
+              IconButton(
+                tooltip: '会员中心',
+                icon: const Icon(Icons.workspace_premium_outlined),
+                onPressed: () => context.push('/membership'),
+              ),
               PopupMenuButton<String>(
                 tooltip: '更多操作',
                 onSelected: (value) async {
-                  if (value == 'onboarding') {
+                  if (value == 'membership') {
+                    context.push('/membership');
+                  } else if (value == 'onboarding') {
                     context.push('/onboarding');
                   } else if (value == 'security') {
                     context.push('/sync');
@@ -93,12 +106,20 @@ class AppShell extends StatelessWidget {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('已恢复本地示例数据')),
                     );
+                  } else if (value == 'dev_reset_member') {
+                    await sl<MembershipService>().deactivate();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('[测试] 会员状态已重置为免费版')),
+                    );
                   }
                 },
                 itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'membership', child: Text('会员中心')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
                   PopupMenuItem(value: 'reset', child: Text('恢复示例数据')),
+                  PopupMenuItem(value: 'dev_reset_member', child: Text('[测试] 重置为免费版')),
                 ],
               ),
               const SizedBox(width: 8),

@@ -374,7 +374,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
               final recent = _Panel(
                 title: '最近指标',
-                subtitle: '本地记录会优先用于计划生成',
+                subtitle: '最新 6 项，点全部查看完整记录',
+                trailing: TextButton(
+                  onPressed: () => context.push('/indicators'),
+                  child: const Text('全部'),
+                ),
                 child: _IndicatorList(indicators: _indicators),
               );
 
@@ -639,11 +643,13 @@ class _Panel extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.trailing,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -658,12 +664,17 @@ class _Panel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text(subtitle,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+          Row(children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title,
+                  style:
+                      const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              Text(subtitle,
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+            ])),
+            if (trailing != null) trailing!,
+          ]),
           const SizedBox(height: 16),
           child,
         ],

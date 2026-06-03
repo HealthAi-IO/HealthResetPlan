@@ -23,7 +23,7 @@ class _TableConfig {
   final List<String> metaKeys;
 }
 
-/// 端到端加密增量同步服务。
+/// 客户端加密增量同步服务。
 ///
 /// push：将本地 is_dirty=1 的记录加密后上传；成功后清除 dirty 标记。
 /// pull：增量拉取服务端新数据，解密后按 last-write-wins 合并到本地。

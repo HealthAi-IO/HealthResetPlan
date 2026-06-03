@@ -335,6 +335,13 @@ class HealthRepository extends ChangeNotifier {
       lowSteps: lowSteps,
       targetKcal: targetKcal, bmr: bmr,
       goalNote: goalNote, dietNote: dietNote,
+      // 实际数值，用于生成个性化摘要
+      systolic: systolic, diastolic: diastolic,
+      glucoseMmol: glucoseMmol,
+      tc: tc, ldl: ldl,
+      bmi: bmi,
+      steps: steps,
+      spo2: spo2,
     );
   }
 
@@ -798,56 +805,104 @@ class HealthRepository extends ChangeNotifier {
     final midnight = DateTime(now.year, now.month, now.day);
     final timestamp = now.millisecondsSinceEpoch;
 
+    // ── 国际标准参考值档案 ──────────────────────────────────────
+    // 身高 175 cm，体重 70.0 kg → BMI 22.9（WHO 正常范围 18.5–24.9）
     await db.insert(
       'user_profile',
       UserProfileData(
-        nickname: '本地用户',
-        gender: 'female',
-        birthYear: 1988,
-        heightCm: 168,
-        weightKg: 74.5,
-        medicalHistory: '血压偏高，近期关注体重管理',
-        medications: '按医嘱记录用药，未填写具体药物',
+        nickname: '演示用户',
+        gender: 'male',
+        birthYear: 1985,           // 约 41 岁
+        heightCm: 175,
+        weightKg: 70.0,
+        medicalHistory: '各项指标处于正常参考范围，定期监测维持健康状态',
+        medications: '暂无长期用药',
         createdAt: timestamp,
         updatedAt: timestamp,
       ).toRow(),
     );
 
+    // ── 7 天血压趋势（正常范围：收缩压 < 120 且舒张压 < 80，ACC/AHA 2017） ──
+    // 注意：舒张压 = 80 即触发 Stage 1，故示例值全部 < 80
+    final bpReadings = [
+      (116, 74), // 6天前
+      (114, 73), // 5天前
+      (117, 75), // 4天前
+      (115, 74), // 3天前
+      (118, 76), // 2天前
+      (115, 75), // 昨天
+      (116, 75), // 今天（正常范围内）
+    ];
+
+    // ── 7 天体重趋势（BMI 22.9，每日自然波动 ±0.3 kg） ───────────
+    final weightReadings = [70.4, 70.2, 70.5, 70.1, 70.3, 70.0, 70.0];
+
     final samples = [
-      HealthIndicatorEntry(
-        type: 'bp',
-        payload: {'systolic': 136, 'diastolic': 86},
-        source: 'manual',
-        measuredAt:
-            midnight.subtract(const Duration(hours: 1)).millisecondsSinceEpoch,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ),
-      for (var i = 6; i >= 0; i--)
+      for (var i = 0; i < 7; i++) ...[
         HealthIndicatorEntry(
-          type: 'weight',
-          payload: {'weightKg': 74.5 + i * 0.18 + Random(i).nextDouble() * 0.2},
+          type: 'bp',
+          payload: {
+            'systolic': bpReadings[i].$1,
+            'diastolic': bpReadings[i].$2,
+            'heartRate': 68 + (i % 3), // 心率 68–70 bpm（正常静息心率）
+          },
           source: 'manual',
           measuredAt:
-              midnight.subtract(Duration(days: i)).millisecondsSinceEpoch,
+              midnight.subtract(Duration(days: 6 - i)).millisecondsSinceEpoch,
           createdAt: timestamp,
           updatedAt: timestamp,
         ),
+        HealthIndicatorEntry(
+          type: 'weight',
+          payload: {'weightKg': weightReadings[i]},
+          source: 'manual',
+          measuredAt:
+              midnight.subtract(Duration(days: 6 - i)).millisecondsSinceEpoch,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        ),
+      ],
+      // 空腹血糖：5.0 mmol/L（正常；ADA 糖前期起点为 5.6，故示例取 5.0）
       HealthIndicatorEntry(
         type: 'glucose',
-        payload: {'glucoseMmol': 5.8},
+        payload: {'glucoseMmol': 5.0, 'mealType': 'fasting'},
         source: 'report',
         measuredAt:
-            midnight.subtract(const Duration(days: 2)).millisecondsSinceEpoch,
+            midnight.subtract(const Duration(days: 3)).millisecondsSinceEpoch,
         createdAt: timestamp,
         updatedAt: timestamp,
       ),
+      // 血脂四项（NCEP ATP III，均低于边界高值阈值）
+      //   TC  4.8 mmol/L（< 5.18 合适值，阈值以内）
+      //   LDL 2.8 mmol/L（< 3.37 近优值，阈值以内）
+      //   HDL 1.4 mmol/L（> 1.30 对男女均安全）
+      //   TG  1.3 mmol/L（< 2.26 正常）
       HealthIndicatorEntry(
         type: 'lipid',
-        payload: {'tc': 5.4, 'ldl': 3.4},
+        payload: {'tc': 4.8, 'ldl': 2.8, 'hdl': 1.4, 'tg': 1.3},
         source: 'report',
         measuredAt:
-            midnight.subtract(const Duration(days: 4)).millisecondsSinceEpoch,
+            midnight.subtract(const Duration(days: 5)).millisecondsSinceEpoch,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      ),
+      // 血氧：98%（正常 95–100%）
+      HealthIndicatorEntry(
+        type: 'spo2',
+        payload: {'spo2Pct': 98},
+        source: 'manual',
+        measuredAt:
+            midnight.subtract(const Duration(days: 1)).millisecondsSinceEpoch,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      ),
+      // 昨日步数：8000 步（WHO 推荐目标 ≥ 10000 步）
+      HealthIndicatorEntry(
+        type: 'steps',
+        payload: {'steps': 8000},
+        source: 'manual',
+        measuredAt:
+            midnight.subtract(const Duration(days: 1)).millisecondsSinceEpoch,
         createdAt: timestamp,
         updatedAt: timestamp,
       ),
@@ -1106,6 +1161,15 @@ class _RiskResult {
     this.dangerSpo2 = false,
     this.shortSleep = false,
     this.lowSteps = false,
+    // 实际指标数值（用于生成个性化摘要）
+    this.systolic = 0,
+    this.diastolic = 0,
+    this.glucoseMmol = 0,
+    this.tc = 0,
+    this.ldl = 0,
+    this.bmi = 0,
+    this.steps = 0,
+    this.spo2 = 0,
   });
 
   final List<String> risks;
@@ -1119,17 +1183,68 @@ class _RiskResult {
   final bool lowSteps;
   final int targetKcal, bmr;
   final String goalNote, dietNote;
+  // 实际值
+  final int systolic, diastolic, spo2, steps;
+  final double glucoseMmol, tc, ldl, bmi;
 
-  Map<String, dynamic> toPayload() => {
-        'summary': risks.isEmpty
-            ? '各项指标均在国际标准正常范围内，继续保持健康生活方式。'
-            : '检测到 ${risks.length} 项风险，请结合国际标准和医生建议执行计划。',
-        'risks': risks,
-        'targetKcal': targetKcal,
-        'bmr': bmr,
-        'goalNote': goalNote,
-        'dietNote': dietNote,
-      };
+  Map<String, dynamic> toPayload() {
+    return {
+      'summary': _buildSummary(),
+      'risks': risks,
+      'targetKcal': targetKcal,
+      'bmr': bmr,
+      'goalNote': goalNote,
+      'dietNote': dietNote,
+    };
+  }
+
+  String _buildSummary() {
+    if (risks.isEmpty) return _buildHealthySummary();
+
+    // 有风险：按严重程度描述主要问题
+    final severe = risks.where((r) =>
+        r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低')).toList();
+    if (severe.isNotEmpty) {
+      return '检测到 ${severe.length} 项需立即关注的指标，请尽快就医确认，同时参考以下计划调整生活方式。';
+    }
+    return '检测到 ${risks.length} 项指标偏离正常范围，本次计划已针对性调整，建议同时咨询医生。';
+  }
+
+  String _buildHealthySummary() {
+    // 个性化展示已测指标数值
+    final parts = <String>[];
+    if (systolic > 0 && diastolic > 0) {
+      parts.add('血压 $systolic/$diastolic mmHg');
+    }
+    if (glucoseMmol > 0) {
+      parts.add('血糖 ${glucoseMmol.toStringAsFixed(1)} mmol/L');
+    }
+    if (tc > 0) {
+      parts.add('TC ${tc.toStringAsFixed(1)} mmol/L');
+    }
+    if (bmi > 0) {
+      parts.add('BMI ${bmi.toStringAsFixed(1)}');
+    }
+
+    // 生成维持建议
+    final tips = <String>[];
+    if (steps > 0 && steps < 10000) {
+      tips.add('步数可进一步提升至 10000 步');
+    }
+    if (spo2 > 0 && spo2 < 98) {
+      tips.add('保持深呼吸与适量有氧运动');
+    }
+    if (tips.isEmpty) {
+      tips.add('继续规律监测，保持现有生活习惯');
+    }
+
+    if (parts.isEmpty) {
+      return '已录入的指标暂未发现异常。${tips.first}。';
+    }
+
+    final valueText = parts.join('、');
+    return '$valueText 均在正常范围。${tips.first}。';
+  }
 }
 
 class TimeOfDayValue {

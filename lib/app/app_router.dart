@@ -13,6 +13,8 @@ import '../features/profile/profile_page.dart';
 import '../features/report/report_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/stats_page.dart';
+import '../features/chat/chat_page.dart';
+import '../features/membership/membership_page.dart';
 import '../features/sync/cloud_sync_page.dart';
 import '../features/sync/key_setup_page.dart';
 
@@ -65,6 +67,8 @@ class AppRouter {
       GoRoute(path: '/sync', builder: (_, __) => const CloudSyncPage()),
       GoRoute(path: '/sync/key-setup', builder: (_, __) => const KeySetupPage()),
       GoRoute(path: '/report', builder: (_, __) => const ReportPage()),
+      GoRoute(path: '/membership', builder: (_, __) => const MembershipPage()),
+      GoRoute(path: '/chat', builder: (_, __) => const ChatPage()),
     ],
   );
 }

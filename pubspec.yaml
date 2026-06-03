@@ -40,6 +40,9 @@ dependencies:
   # 系统闹钟集成（Android ACTION_SET_ALARM）
   android_intent_plus: ^5.1.0
 
+  # 图片选择（相机/相册）
+  image_picker: ^1.1.2
+
   # 数据导出与导入
   share_plus: ^10.0.3
   file_picker: ^8.1.6
