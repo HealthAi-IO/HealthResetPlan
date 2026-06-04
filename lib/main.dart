@@ -10,7 +10,6 @@ import 'core/notification/reminder_scheduler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // 立即 runApp，避免初始化耗时导致白屏；真正的初始化在 _AppLoader 内异步完成
   runApp(const _AppLoader());
 }
 
@@ -34,17 +33,17 @@ class _AppLoaderState extends State<_AppLoader> {
   Future<void> _init() async {
     if (mounted) setState(() => _initError = null);
     try {
-      await setupServiceLocator();
       await UserSession.instance.load();
-      // 兼容已有用户：若本地无名称但 profile 已有 nickname，同步过来
+      await setupServiceLocator();
+
       if (!UserSession.instance.hasName) {
         final profile = await sl<HealthRepository>().loadProfile();
         if (profile != null && profile.nickname.isNotEmpty) {
           await UserSession.instance.setName(profile.nickname);
         }
       }
+
       if (mounted) setState(() => _ready = true);
-      // 通知初始化不阻塞启动：EMUI / HarmonyOS 等设备的 platform channel 可能延迟
       _initNotificationsInBackground();
     } catch (e) {
       if (mounted) setState(() => _initError = e.toString());
@@ -57,7 +56,7 @@ class _AppLoaderState extends State<_AppLoader> {
         .initialize()
         .then((_) => scheduler.requestPermission())
         .then((_) => scheduler.syncAll())
-        .catchError((_) {}); // 失败静默忽略，不影响核心功能
+        .catchError((_) {});
   }
 
   @override
@@ -96,6 +95,7 @@ class _AppLoaderState extends State<_AppLoader> {
         ),
       );
     }
+
     if (!_ready) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -107,6 +107,7 @@ class _AppLoaderState extends State<_AppLoader> {
         ),
       );
     }
+
     return const HealthResetPlanApp();
   }
 }

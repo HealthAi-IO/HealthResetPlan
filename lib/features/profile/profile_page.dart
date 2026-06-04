@@ -13,6 +13,7 @@ import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/network/api_client.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -450,6 +451,7 @@ class _ProfilePageState extends State<ProfilePage> {
     if (confirmed != true || !mounted) return;
     await _repo.clearAllData();
     await UserSession.instance.clear();
+    sl<ApiClient>().setAccessToken(null);
     if (!mounted) return;
     context.go('/login');
   }

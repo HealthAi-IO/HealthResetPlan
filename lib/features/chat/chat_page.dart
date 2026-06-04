@@ -5,7 +5,6 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 
@@ -19,8 +18,6 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final AiApi _aiApi = sl<AiApi>();
   final HealthRepository _repo = sl<HealthRepository>();
-  final MembershipService _membership = sl<MembershipService>();
-
   final TextEditingController _inputCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
@@ -62,10 +59,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _checkMemberAndLoad() async {
-    final isMember = await _membership.isActive();
-    if (!isMember && mounted) {
-      await showPaywall(context, PaywallFeature.aiPlan);
+    if (mounted) {
+      // 进入页面时校验登录 + 会员（未满足会弹窗引导，不阻断页面展示）
+      await requireAccountAndMember(context, PaywallFeature.aiPlan);
     }
+    if (!mounted) return;
     setState(() => _memberChecked = true);
     _profile = await _repo.loadProfile();
     if (mounted) setState(() {});
@@ -77,18 +75,16 @@ class _ChatPageState extends State<ChatPage> {
     final age = p.birthYear > 0 ? '${DateTime.now().year - p.birthYear}岁' : '';
     final gender = p.gender == 'male' ? '男' : p.gender == 'female' ? '女' : '';
     final bmi = p.bmi > 0 ? '，BMI ${p.bmi.toStringAsFixed(1)}' : '';
-    return '${gender}${age}，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
+    return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
   }
 
   Future<void> _sendMessage(String content) async {
     if (content.trim().isEmpty || _sending) return;
 
-    // 会员检查
-    final isMember = await _membership.isActive();
-    if (!isMember && mounted) {
-      await showPaywall(context, PaywallFeature.aiPlan);
-      return;
-    }
+    // 必须先登录账号 + 已开通会员才能用 AI
+    if (!mounted) return;
+    final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
+    if (!ok) return;
 
     final userMsg = {'role': 'user', 'content': content.trim()};
     setState(() {
@@ -157,14 +153,6 @@ class _ChatPageState extends State<ChatPage> {
         });
       },
     );
-  }
-
-  String _friendlyError(Object e) {
-    final s = e.toString();
-    if (s.contains('40301')) return '（会员权益已过期，请续费）';
-    if (s.contains('50301')) return '（AI 服务响应超时，请重试）';
-    if (s.contains('SocketException') || s.contains('Connection')) return '（网络连接失败）';
-    return '';
   }
 
   void _scrollToBottom() {

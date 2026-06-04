@@ -13,7 +13,6 @@ import '../../core/crypto/key_vault.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
 
@@ -102,7 +101,6 @@ class ReportPage extends StatefulWidget {
 
 class _ReportPageState extends State<ReportPage> {
   final HealthRepository _repo = sl<HealthRepository>();
-  final MembershipService _membership = sl<MembershipService>();
   final ApiClient _apiClient = sl<ApiClient>();
   final KeyVault _keyVault = sl<KeyVault>();
   final _picker = ImagePicker();
@@ -144,12 +142,10 @@ class _ReportPageState extends State<ReportPage> {
   // ── 1. 选取图片 ───────────────────────────────────────────────
 
   Future<void> _pickImage(ImageSource source) async {
-    // 会员校验
-    final isMember = await _membership.isActive();
-    if (!isMember && mounted) {
-      await showPaywall(context, PaywallFeature.reportOcr);
-      return;
-    }
+    // 必须先登录账号 + 已开通会员
+    if (!mounted) return;
+    final ok = await requireAccountAndMember(context, PaywallFeature.reportOcr);
+    if (!ok) return;
 
     XFile? file;
     try {
@@ -264,7 +260,12 @@ class _ReportPageState extends State<ReportPage> {
       String? imageOssKey;
       String? wrappedDek, wrapIv, wrapTag;
 
-      final kFile = await _keyVault.deriveFileKey().catchError((_) => null as Uint8List?);
+      Uint8List? kFile;
+      try {
+        kFile = await _keyVault.deriveFileKey();
+      } catch (_) {
+        kFile = null;
+      }
 
       if (kFile != null) {
         final wrapped = await KeyVault.wrapDek(dek, kFile);
@@ -866,43 +867,6 @@ class _OcrReviewSheet extends StatelessWidget {
             ),
           ]),
         ),
-      ]),
-    );
-  }
-}
-
-// ── 通用面板 ──────────────────────────────────────────────────
-
-class _Panel extends StatelessWidget {
-  const _Panel({
-    required this.title,
-    required this.subtitle,
-    required this.child,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title,
-            style:
-                const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        Text(subtitle,
-            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
-        const SizedBox(height: 16),
-        child,
       ]),
     );
   }

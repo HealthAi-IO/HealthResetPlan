@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
+import '../auth/user_session.dart';
+import '../di/service_locator.dart';
 import 'membership_service.dart';
 
 // ── 可付费墙功能枚举 ──────────────────────────────────────────
@@ -53,6 +55,58 @@ Future<bool> showPaywall(
     builder: (_) => _PaywallSheet(feature: feature),
   );
   return result == true;
+}
+
+/// 服务端能力的统一守卫：必须先登录账号 + 已开通会员。
+///
+/// 调用方在执行 AI 对话 / 云同步 / OCR 等服务端能力前调用此方法。
+/// - 未登录账号：弹引导窗口，引导跳转登录页
+/// - 已登录但未开通：弹付费墙
+/// - 都满足：返回 true，可继续后续操作
+///
+/// 任意条件未满足时返回 false。
+Future<bool> requireAccountAndMember(
+  BuildContext context,
+  PaywallFeature feature,
+) async {
+  // ── 1. 必须先用账号登录 ────────────────────────────────────
+  if (!UserSession.instance.isAccountLogin) {
+    if (!context.mounted) return false;
+    final goLogin = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('需要登录账号'),
+        content: const Text(
+          '该功能需要服务端能力支持。\n请先使用手机号或邮箱登录，再开通会员。',
+          style: TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('去登录'),
+          ),
+        ],
+      ),
+    );
+    if (goLogin != true || !context.mounted) return false;
+    context.push('/login?account=1');
+    return false;
+  }
+
+  // ── 2. 必须开通会员 ───────────────────────────────────────
+  final membership = sl<MembershipService>();
+  final isActive = await membership.isActive();
+  if (isActive) return true;
+
+  if (!context.mounted) return false;
+  await showPaywall(context, feature);
+  // 付费墙关闭后再次检查
+  return await membership.isActive();
 }
 
 // ── 付费墙底部弹窗 ────────────────────────────────────────────

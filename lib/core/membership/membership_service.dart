@@ -1,4 +1,7 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dio/dio.dart';
+
+import '../auth/user_session.dart';
+import '../network/api_client.dart';
 
 class MembershipStatus {
   const MembershipStatus({
@@ -14,91 +17,79 @@ class MembershipStatus {
   final DateTime? expiresAt;
 
   static const MembershipStatus free = MembershipStatus(isActive: false);
+
+  factory MembershipStatus.fromJson(Map<String, dynamic> json) {
+    final expiresText = json['expiresAt'] as String?;
+    return MembershipStatus(
+      isActive: json['active'] == true,
+      planCode: json['planCode'] as String?,
+      planName: json['planName'] as String?,
+      expiresAt: expiresText == null ? null : DateTime.tryParse(expiresText),
+    );
+  }
 }
 
-/// 本地会员状态管理服务。
-///
-/// 数据存储在 SharedPreferences；激活码兑换或未来对接支付成功后调用 [activate]。
 class MembershipService {
-  static const _kActive = 'member_active';
-  static const _kPlanCode = 'member_plan_code';
-  static const _kPlanName = 'member_plan_name';
-  static const _kExpiresAtMs = 'member_expires_at_ms';
+  MembershipService({ApiClient? client}) : _client = client;
 
-  // 激活码 → 有效天数（用于测试和管理员开通）
-  static const Map<String, int> _promoCodes = {
-    'HEALTH30': 30,
-    'HEALTH365': 365,
-    'VIP30': 30,
-    'VIP365': 365,
-    'TRIAL7': 7,
-  };
+  final ApiClient? _client;
 
   Future<MembershipStatus> getStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    final active = prefs.getBool(_kActive) ?? false;
-    if (!active) return MembershipStatus.free;
-
-    final expiresMs = prefs.getInt(_kExpiresAtMs) ?? 0;
-    final expiresAt = DateTime.fromMillisecondsSinceEpoch(expiresMs);
-    if (expiresAt.isBefore(DateTime.now())) {
-      await _clear(prefs);
-      return MembershipStatus.free;
+    // 仅账号登录后才查询会员状态；本地模式始终视为免费版
+    if (UserSession.instance.isAccountLogin && _client != null) {
+      try {
+        final resp = await _client.dio.get('/membership/status');
+        return MembershipStatus.fromJson(_unwrapData(resp.data));
+      } on DioException {
+        // 网络异常时不报错，按"未开通"处理
+        return MembershipStatus.free;
+      }
     }
-
-    return MembershipStatus(
-      isActive: true,
-      planCode: prefs.getString(_kPlanCode),
-      planName: prefs.getString(_kPlanName),
-      expiresAt: expiresAt,
-    );
+    return MembershipStatus.free;
   }
 
   Future<bool> isActive() async {
-    final s = await getStatus();
-    return s.isActive;
+    final status = await getStatus();
+    return status.isActive;
   }
 
-  /// 用激活码兑换，返回 false 表示无效码。
+  /// 激活码兑换。
+  ///
+  /// 必须先登录账号才能兑换 — 会员权益与账号绑定，
+  /// 服务端记录订阅状态，多端同步可用。
   Future<bool> activateWithCode(String code) async {
-    final days = _promoCodes[code.toUpperCase().trim()];
-    if (days == null) return false;
-    final planCode = days >= 300 ? 'yearly' : days >= 25 ? 'monthly' : 'trial';
-    final planName = days >= 300 ? '年度会员' : days >= 25 ? '月度会员' : '体验会员';
-    await activate(planCode: planCode, planName: planName, days: days);
-    return true;
+    final normalized = code.toUpperCase().trim();
+    if (!UserSession.instance.isAccountLogin || _client == null) {
+      throw StateError('请先登录账号后再兑换激活码');
+    }
+    try {
+      final resp = await _client.dio.post(
+        '/membership/redeem',
+        data: {'code': normalized},
+      );
+      return (resp.data is Map && resp.data['code'] == 0);
+    } on DioException {
+      rethrow;
+    }
   }
 
-  Future<void> activate({
-    required String planCode,
-    required String planName,
-    required int days,
-  }) async {
-    final prefs = await SharedPreferences.getInstance();
-    // 若当前已是会员且未过期，从当前到期日累加
-    final current = await getStatus();
-    final base = (current.isActive && current.expiresAt != null)
-        ? current.expiresAt!
-        : DateTime.now();
-    final expires = base.add(Duration(days: days));
-
-    await prefs.setBool(_kActive, true);
-    await prefs.setString(_kPlanCode, planCode);
-    await prefs.setString(_kPlanName, planName);
-    await prefs.setInt(_kExpiresAtMs, expires.millisecondsSinceEpoch);
-  }
-
+  /// 调试：清空本地状态。会员状态实际由服务端管理，此方法主要为测试用。
   Future<void> deactivate() async {
-    final prefs = await SharedPreferences.getInstance();
-    await _clear(prefs);
+    // 当前会员状态完全来自服务端，本地无需清理
   }
 
-  Future<void> _clear(SharedPreferences prefs) async {
-    await Future.wait([
-      prefs.remove(_kActive),
-      prefs.remove(_kPlanCode),
-      prefs.remove(_kPlanName),
-      prefs.remove(_kExpiresAtMs),
-    ]);
+  Map<String, dynamic> _unwrapData(dynamic body) {
+    if (body is! Map) return <String, dynamic>{};
+    final code = body['code'];
+    if (code != null && code != 0) {
+      final options = RequestOptions(path: '/membership/status');
+      throw DioException(
+        requestOptions: options,
+        response: Response(requestOptions: options, data: body),
+        message: body['message']?.toString() ?? '会员状态获取失败',
+      );
+    }
+    final data = body['data'];
+    return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
   }
 }

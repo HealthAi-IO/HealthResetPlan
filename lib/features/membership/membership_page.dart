@@ -233,17 +233,27 @@ class _MembershipPageState extends State<MembershipPage> {
                 _PromoCodeEntry(
                   onActivate: (code) async {
                     final messenger = ScaffoldMessenger.of(context);
-                    final ok = await _service.activateWithCode(code);
-                    if (!mounted) return;
-                    if (ok) {
-                      await _load();
+                    try {
+                      final ok = await _service.activateWithCode(code);
+                      if (!mounted) return;
+                      if (ok) {
+                        await _load();
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('激活成功，会员权益已开通！')),
+                        );
+                      } else {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text('激活码无效或已使用'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (!mounted) return;
                       messenger.showSnackBar(
-                        const SnackBar(content: Text('激活成功，会员权益已开通！')),
-                      );
-                    } else {
-                      messenger.showSnackBar(
-                        const SnackBar(
-                          content: Text('激活码无效或已使用'),
+                        SnackBar(
+                          content: Text('激活失败：$e'),
                           backgroundColor: Colors.red,
                         ),
                       );

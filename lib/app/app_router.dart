@@ -62,7 +62,14 @@ class AppRouter {
         },
       ),
       // 其他
-      GoRoute(path: '/login', builder: (_, __) => const LoginPage()),
+      GoRoute(
+        path: '/login',
+        builder: (_, state) {
+          // 通过 query 参数 ?account=1 直接打开账号登录模式
+          final account = state.uri.queryParameters['account'] == '1';
+          return LoginPage(initialAccountMode: account);
+        },
+      ),
       GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingPage()),
       GoRoute(path: '/sync', builder: (_, __) => const CloudSyncPage()),
       GoRoute(path: '/sync/key-setup', builder: (_, __) => const KeySetupPage()),

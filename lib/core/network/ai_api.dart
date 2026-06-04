@@ -29,7 +29,7 @@ class AiApi {
     );
 
     final resp = await _client.dio.post('/ai/plan/generate', data: body);
-    final data = resp.data['data'] as Map<String, dynamic>;
+    final data = _unwrapData(resp.data);
 
     return AiPlanResult(
       provider: data['provider'] as String? ?? 'oneapi',
@@ -47,7 +47,7 @@ class AiApi {
       'messages': messages,
       if (profileSummary != null) 'profileSummary': profileSummary,
     });
-    final data = resp.data['data'] as Map<String, dynamic>;
+    final data = _unwrapData(resp.data);
 
     return AiChatReply(
       provider: data['provider'] as String? ?? 'oneapi',
@@ -112,9 +112,47 @@ class AiApi {
       // 流结束但没收到 [DONE]
       onDone();
     } on DioException catch (e) {
-      onError(_friendlyDioError(e));
+      await _fallbackToNormalChat(
+        messages: messages,
+        profileSummary: profileSummary,
+        onToken: onToken,
+        onDone: onDone,
+        onError: onError,
+        fallbackReason: _friendlyDioError(e),
+      );
     } catch (e) {
-      onError('网络异常：$e');
+      await _fallbackToNormalChat(
+        messages: messages,
+        profileSummary: profileSummary,
+        onToken: onToken,
+        onDone: onDone,
+        onError: onError,
+        fallbackReason: '网络异常：$e',
+      );
+    }
+  }
+
+  Future<void> _fallbackToNormalChat({
+    required List<Map<String, String>> messages,
+    required String? profileSummary,
+    required void Function(String token) onToken,
+    required void Function() onDone,
+    required void Function(String error) onError,
+    required String fallbackReason,
+  }) async {
+    try {
+      final reply = await sendChatMessage(
+        messages: messages,
+        profileSummary: profileSummary,
+      );
+      if (reply.content.isNotEmpty) {
+        onToken(reply.content);
+      }
+      onDone();
+    } on DioException catch (e) {
+      onError(_friendlyDioError(e));
+    } catch (_) {
+      onError(fallbackReason);
     }
   }
 
@@ -155,11 +193,34 @@ class AiApi {
   }
 
   String _friendlyDioError(DioException e) {
+    final body = e.response?.data;
+    if (body is Map) {
+      final code = (body['code'] as num?)?.toInt() ?? 0;
+      final message = (body['message'] ?? body['msg'])?.toString();
+      if (code != 0 || message != null) {
+        return _friendlyCode(code, message ?? 'AI 服务异常');
+      }
+    }
     final status = e.response?.statusCode;
     if (status == 429) return '请求过于频繁，请稍后重试';
     if (status == 401) return 'AI 服务未授权，请检查配置';
     if (e.type == DioExceptionType.receiveTimeout) return 'AI 响应超时，请重试';
     return '网络错误：${e.message ?? e.type.name}';
+  }
+
+  Map<String, dynamic> _unwrapData(dynamic body) {
+    if (body is! Map) return <String, dynamic>{};
+    final code = (body['code'] as num?)?.toInt() ?? 0;
+    if (code != 0) {
+      final options = RequestOptions(path: '');
+      throw DioException(
+        requestOptions: options,
+        response: Response(requestOptions: options, data: body),
+        message: (body['message'] ?? body['msg'])?.toString() ?? 'AI 服务异常',
+      );
+    }
+    final data = body['data'];
+    return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
   }
 
   // ── 内部：构建计划请求体 ───────────────────────────────────────

@@ -8,7 +8,6 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 
@@ -21,7 +20,6 @@ class PlanPage extends StatefulWidget {
 
 class _PlanPageState extends State<PlanPage> {
   final HealthRepository _repo = sl<HealthRepository>();
-  final MembershipService _membership = sl<MembershipService>();
   final AiApi _aiApi = sl<AiApi>();
 
   bool _loading = true;
@@ -74,13 +72,10 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   Future<void> _generateWithAi() async {
-    // 1. 会员校验
-    final isMember = await _membership.isActive();
+    // 1. 账号 + 会员校验
     if (!mounted) return;
-    if (!isMember) {
-      await showPaywall(context, PaywallFeature.aiPlan);
-      return;
-    }
+    final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
+    if (!ok) return;
 
     // 2. 弹出模型选择对话框
     final provider = await _showProviderPicker();

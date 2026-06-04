@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import '../../app/app_theme.dart';
 import '../../core/crypto/key_vault.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/sync/sync_service.dart';
 
@@ -19,7 +18,6 @@ class CloudSyncPage extends StatefulWidget {
 class _CloudSyncPageState extends State<CloudSyncPage> {
   final SyncService _syncService = sl<SyncService>();
   final KeyVault _vault = sl<KeyVault>();
-  final MembershipService _membership = sl<MembershipService>();
 
   bool _syncEnabled = false;
   bool _backedUp = false;
@@ -47,10 +45,10 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
 
   Future<void> _toggleSync(bool value) async {
     if (value) {
-      // 检查会员资格 — 统一付费墙
-      final isMember = await _membership.isActive();
-      if (!isMember && mounted) {
-        await showPaywall(context, PaywallFeature.cloudSync);
+      // 必须先登录账号 + 已开通会员
+      if (!mounted) return;
+      final ok = await requireAccountAndMember(context, PaywallFeature.cloudSync);
+      if (!ok) {
         await _load();
         return;
       }
