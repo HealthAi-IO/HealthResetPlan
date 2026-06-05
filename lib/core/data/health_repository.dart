@@ -153,6 +153,48 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<int> ingestSystemHealthSnapshot({
+    required int? steps,
+    required int? heartRateBpm,
+    required double? sleepHours,
+    DateTime? recordedAt,
+  }) async {
+    var inserted = 0;
+    final time = recordedAt ?? DateTime.now();
+
+    if (steps != null && steps > 0) {
+      await addIndicator(
+        type: 'steps',
+        payload: {'steps': steps},
+        source: 'system_health',
+        measuredAt: time,
+      );
+      inserted++;
+    }
+
+    if (heartRateBpm != null && heartRateBpm > 0) {
+      await addIndicator(
+        type: 'heart_rate',
+        payload: {'bpm': heartRateBpm},
+        source: 'system_health',
+        measuredAt: time,
+      );
+      inserted++;
+    }
+
+    if (sleepHours != null && sleepHours > 0) {
+      await addIndicator(
+        type: 'sleep',
+        payload: {'sleepHours': double.parse(sleepHours.toStringAsFixed(1)), 'quality': 'good'},
+        source: 'system_health',
+        measuredAt: time,
+      );
+      inserted++;
+    }
+
+    return inserted;
+  }
+
   Future<List<PlanRecordData>> loadPlans({int limit = 30}) async {
     final db = await database.open();
     final rows = await db.query(

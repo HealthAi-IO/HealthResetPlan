@@ -60,6 +60,25 @@ class AuthApi {
       // 注销失败不阻断本地清理
     }
   }
+
+  /// 获取当前登录用户的账号信息（需 JWT 认证）
+  Future<AccountInfo?> fetchAccountInfo() async {
+    try {
+      final resp = await _client.dio.get('/users/me');
+      if (resp.data is Map && resp.data['code'] == 0) {
+        final data = resp.data['data'] as Map<String, dynamic>?;
+        if (data == null) return null;
+        return AccountInfo(
+          userId: data['userId'] as String? ?? '',
+          nickname: data['nickname'] as String? ?? '',
+          hasCloudSync: data['hasCloudSync'] == true,
+        );
+      }
+      return null;
+    } on DioException {
+      return null;
+    }
+  }
 }
 
 class AuthResult {
@@ -81,6 +100,18 @@ class AuthResult {
         refreshToken: j['refreshToken'] as String,
         accessExpiresIn: (j['accessExpiresIn'] as num).toInt(),
       );
+}
+
+class AccountInfo {
+  const AccountInfo({
+    required this.userId,
+    required this.nickname,
+    required this.hasCloudSync,
+  });
+
+  final String userId;
+  final String nickname;
+  final bool hasCloudSync;
 }
 
 /// 把 DioException 转成用户友好的错误文本

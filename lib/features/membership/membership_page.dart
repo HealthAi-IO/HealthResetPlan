@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -39,114 +40,30 @@ class _MembershipPageState extends State<MembershipPage> {
     required int days,
     required String priceLabel,
   }) async {
-    final codeCtrl = TextEditingController();
-    String? errorText;
-
-    final confirmed = await showDialog<bool>(
+    // codeCtrl 由 _ActivationSheet 内部 dispose，避免外部提前释放引发 widget 错误
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text('开通$planName'),
-          content: SizedBox(
-            width: 340,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _BenefitRow(icon: Icons.cloud_sync_outlined, text: '加密云同步，多端数据安全备份'),
-                const SizedBox(height: 8),
-                _BenefitRow(icon: Icons.document_scanner_outlined, text: '体检报告 OCR 智能识别'),
-                const SizedBox(height: 8),
-                _BenefitRow(icon: Icons.psychology_outlined, text: 'AI 健康方案无限次生成'),
-                if (planCode == 'yearly') ...[
-                  const SizedBox(height: 8),
-                  _BenefitRow(icon: Icons.support_agent_outlined, text: '年度专属优先客服响应'),
-                ],
-                const SizedBox(height: 20),
-                Text('价格：$priceLabel',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 18,
-                        color: AppTheme.deepBlue)),
-                const SizedBox(height: 20),
-                const Divider(),
-                const SizedBox(height: 12),
-                const Text('已有激活码？',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: codeCtrl,
-                  textCapitalization: TextCapitalization.characters,
-                  decoration: InputDecoration(
-                    hintText: '输入激活码（如 HEALTH30）',
-                    errorText: errorText,
-                    prefixIcon: const Icon(Icons.vpn_key_outlined),
-                  ),
-                  onChanged: (_) {
-                    if (errorText != null) setS(() => errorText = null);
-                  },
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () async {
-                      final code = codeCtrl.text.trim();
-                      if (code.isEmpty) {
-                        setS(() => errorText = '请输入激活码');
-                        return;
-                      }
-                      final navigator = Navigator.of(ctx);
-                      final ok = await _service.activateWithCode(code);
-                      if (ok) {
-                        navigator.pop(true);
-                      } else {
-                        setS(() => errorText = '激活码无效或已使用');
-                      }
-                    },
-                    child: const Text('兑换激活码'),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppTheme.pageBg,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.cardBorder),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text('在线支付开通（即将上线）',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 13)),
-                      SizedBox(height: 4),
-                      Text(
-                        '支付宝 / 微信支付 / Apple Pay 即将开放。\n'
-                        '现阶段可联系客服获取激活码开通会员。',
-                        style: TextStyle(
-                            color: AppTheme.muted, fontSize: 12, height: 1.5),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消'),
-            ),
-          ],
-        ),
+      isScrollControlled: true, // 关键：允许超过半屏 + 跟随键盘
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      builder: (ctx) => _ActivationSheet(
+        planCode: planCode,
+        planName: planName,
+        priceLabel: priceLabel,
+        onRedeem: (code) async {
+          if (code.isEmpty) return '请输入激活码';
+          try {
+            await _service.activateWithCode(code);
+            return null;
+          } on StateError catch (e) {
+            return e.message;
+          } catch (e) {
+            return _friendly(e);
+          }
+        },
       ),
     );
 
-    codeCtrl.dispose();
     if (confirmed == true) {
       await _load();
       if (mounted) {
@@ -234,26 +151,25 @@ class _MembershipPageState extends State<MembershipPage> {
                   onActivate: (code) async {
                     final messenger = ScaffoldMessenger.of(context);
                     try {
-                      final ok = await _service.activateWithCode(code);
+                      await _service.activateWithCode(code);
                       if (!mounted) return;
-                      if (ok) {
-                        await _load();
-                        messenger.showSnackBar(
-                          const SnackBar(content: Text('激活成功，会员权益已开通！')),
-                        );
-                      } else {
-                        messenger.showSnackBar(
-                          const SnackBar(
-                            content: Text('激活码无效或已使用'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                      }
+                      await _load();
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('激活成功，会员权益已开通！')),
+                      );
+                    } on StateError catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(e.message),
+                          backgroundColor: Colors.orange.shade700,
+                        ),
+                      );
                     } catch (e) {
                       if (!mounted) return;
                       messenger.showSnackBar(
                         SnackBar(
-                          content: Text('激活失败：$e'),
+                          content: Text(_friendly(e)),
                           backgroundColor: Colors.red,
                         ),
                       );
@@ -263,6 +179,41 @@ class _MembershipPageState extends State<MembershipPage> {
               ],
             ),
     );
+  }
+
+  String _friendly(Object e) {
+    // 优先解析 DioException 的 response.data 取后端业务码和 message
+    if (e is DioException) {
+      final status = e.response?.statusCode;
+      final body = e.response?.data;
+      if (body is Map) {
+        final code = (body['code'] as num?)?.toInt() ?? 0;
+        final msg = body['message']?.toString();
+        if (code == 40002) return '激活码无效或已使用';
+        if (code == 40301) return '请先开通会员';
+        if (code == 40101 || status == 401) return '登录已过期，请重新登录';
+        if (msg != null && msg.isNotEmpty) return msg;
+      }
+      if (status == 401) return '登录已过期，请重新登录';
+      if (status == 403) return '没有权限，请先登录账号';
+      if (status == 404) return '后端接口不存在，请检查版本';
+      if (status != null && status >= 500) return '服务器错误（$status）';
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.connectionError:
+          return '无法连接服务器，请检查后端是否启动';
+        case DioExceptionType.receiveTimeout:
+        case DioExceptionType.sendTimeout:
+          return '请求超时，请重试';
+        default:
+          return '网络错误：${e.type.name}';
+      }
+    }
+    final s = e.toString();
+    if (s.contains('Connection') || s.contains('Socket')) {
+      return '无法连接服务器';
+    }
+    return s.length > 50 ? '${s.substring(0, 50)}…' : s;
   }
 }
 
@@ -646,5 +597,223 @@ class _BenefitRow extends StatelessWidget {
       const SizedBox(width: 8),
       Text(text, style: const TextStyle(fontSize: 13)),
     ]);
+  }
+}
+
+// ── 激活码兑换底部弹窗 ────────────────────────────────────────
+
+class _ActivationSheet extends StatefulWidget {
+  const _ActivationSheet({
+    required this.planCode,
+    required this.planName,
+    required this.priceLabel,
+    required this.onRedeem,
+  });
+
+  final String planCode;
+  final String planName;
+  final String priceLabel;
+  /// 返回错误文本；null 表示成功
+  final Future<String?> Function(String code) onRedeem;
+
+  @override
+  State<_ActivationSheet> createState() => _ActivationSheetState();
+}
+
+class _ActivationSheetState extends State<_ActivationSheet> {
+  // controller 由本组件自己创建 + dispose，避免被外部提前释放
+  final TextEditingController _codeCtrl = TextEditingController();
+  String? _errorText;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _codeCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _doRedeem() async {
+    if (_busy) return;
+    final code = _codeCtrl.text.trim();
+    setState(() {
+      _busy = true;
+      _errorText = null;
+    });
+    final err = await widget.onRedeem(code);
+    if (!mounted) return;
+    if (err == null) {
+      Navigator.of(context).pop(true);
+    } else {
+      setState(() {
+        _errorText = err;
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      // 键盘弹出时，整个 Sheet 上推（避开输入框）
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 把手条
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+
+                // 标题
+                Row(children: [
+                  Expanded(
+                    child: Text(
+                      '开通${widget.planName}',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => Navigator.pop(context, false),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ]),
+                const SizedBox(height: 8),
+
+                // 权益清单
+                _BenefitRow(
+                    icon: Icons.cloud_sync_outlined,
+                    text: '加密云同步，多端数据安全备份'),
+                const SizedBox(height: 8),
+                _BenefitRow(
+                    icon: Icons.document_scanner_outlined,
+                    text: '体检报告 OCR 智能识别'),
+                const SizedBox(height: 8),
+                _BenefitRow(
+                    icon: Icons.psychology_outlined,
+                    text: 'AI 健康方案无限次生成'),
+                if (widget.planCode == 'yearly') ...[
+                  const SizedBox(height: 8),
+                  _BenefitRow(
+                      icon: Icons.support_agent_outlined,
+                      text: '年度专属优先客服响应'),
+                ],
+                const SizedBox(height: 16),
+
+                // 价格
+                Text(
+                  '价格：${widget.priceLabel}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      color: AppTheme.deepBlue),
+                ),
+
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 12),
+
+                // 激活码输入
+                const Text('已有激活码？',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _codeCtrl,
+                  textCapitalization: TextCapitalization.characters,
+                  textInputAction: TextInputAction.done,
+                  onChanged: (_) {
+                    if (_errorText != null) setState(() => _errorText = null);
+                  },
+                  onSubmitted: (_) => _doRedeem(),
+                  decoration: InputDecoration(
+                    hintText: widget.planCode == 'yearly'
+                        ? '输入激活码（如 HEALTH365）'
+                        : '输入激活码（如 HEALTH30）',
+                    errorText: _errorText,
+                    prefixIcon: const Icon(Icons.vpn_key_outlined),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '提示：激活码决定实际开通的套餐类型（月度/年度）',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 11),
+                ),
+                const SizedBox(height: 12),
+
+                // 兑换按钮
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: _busy ? null : _doRedeem,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: _busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white))
+                        : const Text('兑换激活码',
+                            style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700)),
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+                // 在线支付占位
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.pageBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.cardBorder),
+                  ),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('在线支付开通（即将上线）',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 13)),
+                      SizedBox(height: 4),
+                      Text(
+                        '支付宝 / 微信支付 / Apple Pay 即将开放。\n'
+                        '现阶段可联系客服获取激活码开通会员。',
+                        style: TextStyle(
+                            color: AppTheme.muted, fontSize: 12, height: 1.5),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

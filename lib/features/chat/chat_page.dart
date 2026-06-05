@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/data/chat_repository.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
@@ -18,17 +20,19 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final AiApi _aiApi = sl<AiApi>();
   final HealthRepository _repo = sl<HealthRepository>();
+  final ChatRepository _chatRepo = sl<ChatRepository>();
   final TextEditingController _inputCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   final FocusNode _focusNode = FocusNode();
 
-  // 消息列表：{'role': 'user'/'assistant', 'content': '...', 'provider': '...'}
-  final List<Map<String, String>> _messages = [];
+  // 当前会话与消息（内存中编辑、定期写库）
+  ChatSession? _currentSession;
+  List<_UiMessage> _messages = [];
 
   String _selectedProvider = 'deepseek';
   bool _sending = false;
+  bool _loadingHistory = true;
   UserProfileData? _profile;
-  bool _memberChecked = false; // ignore: unused_field
 
   static const _providers = [
     _ProviderOption('deepseek', 'DeepSeek', '🤖'),
@@ -47,7 +51,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
-    _checkMemberAndLoad();
+    _bootstrap();
   }
 
   @override
@@ -58,15 +62,33 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  Future<void> _checkMemberAndLoad() async {
-    if (mounted) {
-      // 进入页面时校验登录 + 会员（未满足会弹窗引导，不阻断页面展示）
-      await requireAccountAndMember(context, PaywallFeature.aiPlan);
-    }
+  // ── 初始化：校验会员 + 加载档案 + 加载最近会话 ───────────────────
+
+  Future<void> _bootstrap() async {
+    // 等待首帧渲染完成，确保 showDialog 有可用的 InheritedWidget
+    await Future.delayed(Duration.zero);
     if (!mounted) return;
-    setState(() => _memberChecked = true);
+    await requireAccountAndMember(context, PaywallFeature.aiPlan);
+    if (!mounted) return;
+
     _profile = await _repo.loadProfile();
-    if (mounted) setState(() {});
+    final sessions = await _chatRepo.listSessions();
+
+    if (sessions.isEmpty) {
+      // 无历史：暂不创建空会话，等发第一条消息时再建
+      _currentSession = null;
+      _messages = [];
+    } else {
+      // 默认打开最近的会话
+      _currentSession = sessions.first;
+      final history = await _chatRepo.loadMessages(_currentSession!.id);
+      _messages = history.map(_UiMessage.fromDb).toList();
+      _selectedProvider = _currentSession!.provider;
+    }
+
+    if (!mounted) return;
+    setState(() => _loadingHistory = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
 
   String _buildProfileSummary() {
@@ -78,81 +100,289 @@ class _ChatPageState extends State<ChatPage> {
     return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
   }
 
+  // ── 新建会话 ──────────────────────────────────────────────────
+
+  Future<void> _newSession() async {
+    setState(() {
+      _currentSession = null;
+      _messages = [];
+      _inputCtrl.clear();
+    });
+  }
+
+  // ── 切换到指定会话 ────────────────────────────────────────────
+
+  Future<void> _openSession(ChatSession session) async {
+    setState(() => _loadingHistory = true);
+    final history = await _chatRepo.loadMessages(session.id);
+    if (!mounted) return;
+    setState(() {
+      _currentSession = session;
+      _messages = history.map(_UiMessage.fromDb).toList();
+      _selectedProvider = session.provider;
+      _loadingHistory = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  // ── 历史会话弹窗 ──────────────────────────────────────────────
+
+  Future<void> _showHistorySheet() async {
+    final sessions = await _chatRepo.listSessions();
+    if (!mounted) return;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.92,
+        builder: (_, scrollCtrl) => Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+              child: Row(children: [
+                const Expanded(
+                  child: Text('对话历史',
+                      style: TextStyle(
+                          fontSize: 17, fontWeight: FontWeight.w800)),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(sheetCtx);
+                    _newSession();
+                  },
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('新对话'),
+                ),
+              ]),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: sessions.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text('暂无历史对话',
+                            style: TextStyle(color: AppTheme.muted)),
+                      ),
+                    )
+                  : ListView.separated(
+                      controller: scrollCtrl,
+                      itemCount: sessions.length,
+                      separatorBuilder: (_, __) => const Divider(
+                          height: 1, indent: 16, endIndent: 16),
+                      itemBuilder: (_, i) {
+                        final s = sessions[i];
+                        final active = s.id == _currentSession?.id;
+                        final time = DateFormat('MM-dd HH:mm').format(
+                            DateTime.fromMillisecondsSinceEpoch(s.updatedAt));
+                        return ListTile(
+                          dense: false,
+                          tileColor: active
+                              ? AppTheme.deepBlue.withValues(alpha: 0.06)
+                              : null,
+                          leading: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: AppTheme.deepBlue.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.chat_bubble_outline,
+                                size: 18, color: AppTheme.deepBlue),
+                          ),
+                          title: Text(
+                            s.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight:
+                                  active ? FontWeight.w700 : FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: Text('$time · ${s.messageCount} 条消息',
+                              style: const TextStyle(
+                                  fontSize: 11, color: AppTheme.muted)),
+                          trailing: IconButton(
+                            tooltip: '删除',
+                            icon: Icon(Icons.delete_outline,
+                                size: 18, color: Colors.grey.shade500),
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('删除对话'),
+                                  content: Text('「${s.title}」将被永久删除'),
+                                  actions: [
+                                    TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: const Text('取消')),
+                                    FilledButton(
+                                        style: FilledButton.styleFrom(
+                                            backgroundColor: Colors.red),
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        child: const Text('删除')),
+                                  ],
+                                ),
+                              );
+                              if (confirm != true) return;
+                              await _chatRepo.deleteSession(s.id);
+                              if (!mounted) return;
+                              Navigator.pop(sheetCtx);
+                              if (_currentSession?.id == s.id) {
+                                await _newSession();
+                              }
+                            },
+                          ),
+                          onTap: () {
+                            Navigator.pop(sheetCtx);
+                            _openSession(s);
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ── 发送消息 ──────────────────────────────────────────────────
+
   Future<void> _sendMessage(String content) async {
     if (content.trim().isEmpty || _sending) return;
 
-    // 必须先登录账号 + 已开通会员才能用 AI
+    // 校验账号 + 会员
     if (!mounted) return;
     final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
     if (!ok) return;
 
-    final userMsg = {'role': 'user', 'content': content.trim()};
+    // 懒创建会话
+    _currentSession ??= await _ensureSession();
+
+    final sessionId = _currentSession!.id;
+    final trimmed = content.trim();
+
+    // 1) 写入 user 消息到本地
+    final userMsgId = await _chatRepo.addMessage(
+      sessionId: sessionId,
+      role: 'user',
+      content: trimmed,
+    );
+
+    // 2) 预占 assistant 消息（先空内容，流式累加）
+    final assistantMsgId = await _chatRepo.addMessage(
+      sessionId: sessionId,
+      role: 'assistant',
+      content: '',
+      provider: _selectedProvider,
+    );
+
     setState(() {
-      _messages.add(userMsg);
+      _messages.add(_UiMessage(
+        id: userMsgId,
+        role: 'user',
+        content: trimmed,
+      ));
+      _messages.add(_UiMessage(
+        id: assistantMsgId,
+        role: 'assistant',
+        content: '',
+        provider: _selectedProvider,
+        streaming: true,
+      ));
       _sending = true;
     });
     _inputCtrl.clear();
     _scrollToBottom();
 
-    // 预先插入一条空白 assistant 消息，流式追加 token 到这里
-    setState(() {
-      _messages.add({
-        'role': 'assistant',
-        'content': '',
-        'provider': _selectedProvider,
-        'streaming': 'true',
-      });
-    });
-
+    // 3) 构建发给 API 的历史（排除当前的空 assistant 占位）
     final history = _messages
-        .where((m) => m['role'] == 'user' || m['role'] == 'assistant')
-        .where((m) => m['content']!.isNotEmpty) // 排除刚刚插入的空消息
-        .map((m) => {'role': m['role']!, 'content': m['content']!})
+        .where((m) => m.content.isNotEmpty)
+        .map((m) => {'role': m.role, 'content': m.content})
         .toList();
 
-    // 加回不含空消息的 user 消息
-    final historyWithUser = [...history.where((m) => m['role'] != 'assistant' || m['content']!.isNotEmpty)];
-
     await _aiApi.streamChat(
-      messages: historyWithUser,
+      messages: history,
       profileSummary: _buildProfileSummary(),
       onToken: (token) {
         if (!mounted) return;
         setState(() {
-          final last = _messages.last;
-          _messages[_messages.length - 1] = {
-            ...last,
-            'content': (last['content'] ?? '') + token,
-          };
+          final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
+          if (idx >= 0) {
+            _messages[idx] = _messages[idx].copyWith(
+              content: _messages[idx].content + token,
+            );
+          }
         });
         _scrollToBottom();
       },
-      onDone: () {
+      onDone: () async {
         if (!mounted) return;
-        setState(() {
-          final last = _messages.last;
-          _messages[_messages.length - 1] = {
-            ...last,
-            'streaming': 'false',
-          };
-          _sending = false;
-        });
+        final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
+        if (idx >= 0) {
+          final finalContent = _messages[idx].content;
+          // 流结束，标记非 streaming，并把最终内容写库
+          setState(() {
+            _messages[idx] = _messages[idx].copyWith(streaming: false);
+            _sending = false;
+          });
+          await _chatRepo.updateMessageContent(
+            messageId: assistantMsgId,
+            content: finalContent,
+          );
+        } else {
+          setState(() => _sending = false);
+        }
         _scrollToBottom();
       },
-      onError: (error) {
+      onError: (error) async {
         if (!mounted) return;
-        setState(() {
-          _messages[_messages.length - 1] = {
-            'role': 'assistant',
-            'content': error,
-            'provider': _selectedProvider,
-            'isError': 'true',
-            'streaming': 'false',
-          };
-          _sending = false;
-        });
+        final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
+        if (idx >= 0) {
+          setState(() {
+            _messages[idx] = _messages[idx].copyWith(
+              content: error,
+              streaming: false,
+              isError: true,
+            );
+            _sending = false;
+          });
+          await _chatRepo.updateMessageContent(
+            messageId: assistantMsgId,
+            content: error,
+            isError: true,
+          );
+        } else {
+          setState(() => _sending = false);
+        }
       },
     );
+  }
+
+  Future<ChatSession> _ensureSession() async {
+    final id = await _chatRepo.createSession(provider: _selectedProvider);
+    final sessions = await _chatRepo.listSessions();
+    return sessions.firstWhere((s) => s.id == id);
   }
 
   void _scrollToBottom() {
@@ -167,16 +397,37 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  // ── UI ────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    final bottomPad = MediaQuery.viewInsetsOf(context).bottom;
-
+    // 注意：Scaffold 默认 resizeToAvoidBottomInset=true，
+    // 会自动把整个 body 上推让出键盘空间，
+    // 因此输入栏不再需要手动加 viewInsets.bottom。
     return Scaffold(
       backgroundColor: AppTheme.pageBg,
       appBar: AppBar(
-        title: const Text('AI 健康顾问'),
+        title: Text(
+          _currentSession?.title.isNotEmpty == true
+              ? _currentSession!.title
+              : 'AI 健康顾问',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
-          // 提供方选择
+          // 历史
+          IconButton(
+            tooltip: '历史对话',
+            icon: const Icon(Icons.history),
+            onPressed: _showHistorySheet,
+          ),
+          // 新对话
+          IconButton(
+            tooltip: '新对话',
+            icon: const Icon(Icons.add_comment_outlined),
+            onPressed: _newSession,
+          ),
+          // 模型选择
           PopupMenuButton<String>(
             tooltip: '切换模型',
             initialValue: _selectedProvider,
@@ -191,77 +442,60 @@ class _ChatPageState extends State<ChatPage> {
                     Text(p.name),
                     if (p.id == _selectedProvider) ...[
                       const Spacer(),
-                      const Icon(Icons.check, size: 16, color: AppTheme.deepBlue),
+                      const Icon(Icons.check,
+                          size: 16, color: AppTheme.deepBlue),
                     ],
                   ]),
                 ),
             ],
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(children: [
                 Text(
-                  _providers.firstWhere((p) => p.id == _selectedProvider,
+                  _providers
+                      .firstWhere(
+                          (p) => p.id == _selectedProvider,
                           orElse: () => _providers.first)
                       .emoji,
-                  style: const TextStyle(fontSize: 16),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  _providers.firstWhere((p) => p.id == _selectedProvider,
-                          orElse: () => _providers.first)
-                      .name,
-                  style: const TextStyle(fontSize: 13),
+                  style: const TextStyle(fontSize: 14),
                 ),
                 const Icon(Icons.arrow_drop_down, size: 18),
               ]),
             ),
           ),
-          // 清空对话
-          if (_messages.isNotEmpty)
-            IconButton(
-              tooltip: '清空对话',
-              icon: const Icon(Icons.delete_sweep_outlined),
-              onPressed: () {
-                setState(() => _messages.clear());
-              },
+        ],
+      ),
+      body: _loadingHistory
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                Expanded(
+                  child: _messages.isEmpty
+                      ? _buildEmptyState()
+                      : ListView.builder(
+                          controller: _scrollCtrl,
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          itemCount: _messages.length,
+                          itemBuilder: (_, i) {
+                            final m = _messages[i];
+                            return _MessageBubble(
+                              role: m.role,
+                              content: m.content.isEmpty && m.streaming
+                                  ? '...'
+                                  : m.content,
+                              provider: m.provider,
+                              isError: m.isError,
+                              streaming: m.streaming,
+                            );
+                          },
+                        ),
+                ),
+                if (_messages.isEmpty) _buildQuickQuestions(),
+                _buildInputBar(),
+              ],
             ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _messages.isEmpty
-                ? _buildEmptyState()
-                : ListView.builder(
-                    controller: _scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                    itemCount: _messages.length + (_sending ? 1 : 0),
-                    itemBuilder: (_, i) {
-                      if (i == _messages.length && _sending) {
-                        return const _TypingBubble();
-                      }
-                      final msg = _messages[i];
-                      return _MessageBubble(
-                        role: msg['role']!,
-                        content: msg['content']!,
-                        provider: msg['provider'],
-                        isError: msg['isError'] == 'true',
-                      );
-                    },
-                  ),
-          ),
-
-          // 快捷问题（仅无消息时）
-          if (_messages.isEmpty) _buildQuickQuestions(),
-
-          // 输入区
-          _buildInputBar(bottomPad),
-        ],
-      ),
     );
   }
-
-  // ── 空状态 ────────────────────────────────────────────────
 
   Widget _buildEmptyState() {
     return Center(
@@ -290,8 +524,6 @@ class _ChatPageState extends State<ChatPage> {
       ),
     );
   }
-
-  // ── 快捷问题 ──────────────────────────────────────────────
 
   Widget _buildQuickQuestions() {
     return Container(
@@ -323,16 +555,17 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  // ── 输入框 ────────────────────────────────────────────────
-
-  Widget _buildInputBar(double bottomPad) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + bottomPad),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.cardBorder)),
-      ),
-      child: Row(children: [
+  Widget _buildInputBar() {
+    // 键盘弹出时输入栏紧贴键盘上沿；无键盘时贴底部安全区
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: AppTheme.cardBorder)),
+        ),
+        child: Row(children: [
         Expanded(
           child: TextField(
             controller: _inputCtrl,
@@ -352,7 +585,6 @@ class _ChatPageState extends State<ChatPage> {
                 borderSide: BorderSide.none,
               ),
             ),
-            onSubmitted: (_) {},
           ),
         ),
         const SizedBox(width: 8),
@@ -377,8 +609,51 @@ class _ChatPageState extends State<ChatPage> {
                 icon: const Icon(Icons.send_rounded, size: 20),
               ),
       ]),
+      ),
     );
   }
+}
+
+// ── 内部数据类 ────────────────────────────────────────────────
+
+class _UiMessage {
+  _UiMessage({
+    required this.id,
+    required this.role,
+    required this.content,
+    this.provider = '',
+    this.isError = false,
+    this.streaming = false,
+  });
+
+  final int id;
+  final String role;
+  String content;
+  String provider;
+  bool isError;
+  bool streaming;
+
+  _UiMessage copyWith({
+    String? content,
+    bool? streaming,
+    bool? isError,
+  }) =>
+      _UiMessage(
+        id: id,
+        role: role,
+        content: content ?? this.content,
+        provider: provider,
+        isError: isError ?? this.isError,
+        streaming: streaming ?? this.streaming,
+      );
+
+  factory _UiMessage.fromDb(ChatMessage m) => _UiMessage(
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        provider: m.provider,
+        isError: m.isError,
+      );
 }
 
 // ── 消息气泡 ──────────────────────────────────────────────────
@@ -387,14 +662,16 @@ class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.role,
     required this.content,
-    this.provider,
+    this.provider = '',
     this.isError = false,
+    this.streaming = false,
   });
 
   final String role;
   final String content;
-  final String? provider;
+  final String provider;
   final bool isError;
+  final bool streaming;
 
   bool get isUser => role == 'user';
 
@@ -408,7 +685,6 @@ class _MessageBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isUser) ...[
-            // AI 头像
             Container(
               width: 32,
               height: 32,
@@ -471,10 +747,10 @@ class _MessageBubble extends StatelessWidget {
                                 : AppTheme.ink,
                       ),
                     ),
-                    if (!isUser && provider != null) ...[
+                    if (!isUser && provider.isNotEmpty && !streaming) ...[
                       const SizedBox(height: 6),
                       Text(
-                        provider!,
+                        provider,
                         style: TextStyle(
                           fontSize: 10,
                           color: isError
@@ -490,108 +766,6 @@ class _MessageBubble extends StatelessWidget {
           ),
           if (isUser) const SizedBox(width: 8),
         ],
-      ),
-    );
-  }
-}
-
-// ── 打字中动画 ────────────────────────────────────────────────
-
-class _TypingBubble extends StatefulWidget {
-  const _TypingBubble();
-
-  @override
-  State<_TypingBubble> createState() => _TypingBubbleState();
-}
-
-class _TypingBubbleState extends State<_TypingBubble>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: const Color(0xFF0277BD).withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.psychology_outlined,
-                size: 18, color: Color(0xFF0277BD)),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(18),
-                topRight: Radius.circular(18),
-                bottomLeft: Radius.circular(4),
-                bottomRight: Radius.circular(18),
-              ),
-              border: Border.all(color: AppTheme.cardBorder),
-            ),
-            child: AnimatedBuilder(
-              animation: _ctrl,
-              builder: (_, __) {
-                return Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var i = 0; i < 3; i++) ...[
-                      if (i > 0) const SizedBox(width: 4),
-                      _Dot(delay: i * 0.3, value: _ctrl.value),
-                    ],
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Dot extends StatelessWidget {
-  const _Dot({required this.delay, required this.value});
-  final double delay;
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ((value + delay) % 1.0);
-    final scale = t < 0.5 ? 1.0 + t * 0.6 : 1.6 - (t - 0.5) * 0.6;
-    return Transform.scale(
-      scale: scale.clamp(1.0, 1.6),
-      child: Container(
-        width: 7,
-        height: 7,
-        decoration: BoxDecoration(
-          color: AppTheme.muted,
-          shape: BoxShape.circle,
-        ),
       ),
     );
   }

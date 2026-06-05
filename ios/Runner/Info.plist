@@ -45,5 +45,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSHealthShareUsageDescription</key>
+	<string>用于同步手环、手表中的步数、心率和睡眠数据。</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>用于健康数据授权管理，本应用不会向系统健康写入数据。</string>
 </dict>
 </plist>

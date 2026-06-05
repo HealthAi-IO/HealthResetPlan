@@ -53,7 +53,7 @@ class _SqfliteAppDatabase extends AppDatabase {
 
   sqflite.Database? _db;
   static const String _fileName = 'health_reset_plan.sqlite';
-  static const int _schemaVersion = 3;
+  static const int _schemaVersion = 6;
 
   Future<sqflite.Database> _ensureDb() async {
     if (_db != null) return _db!;
@@ -186,6 +186,10 @@ class _SqfliteAppDatabase extends AppDatabase {
     await db.execute(_ddlClockRecord);
     await db.execute(_ddlReminder);
     await db.execute(_ddlSyncQueue);
+    await db.execute(_ddlAiSession);
+    await db.execute(_ddlAiMessage);
+    await db.execute(_idxAiMessageSession);
+    await db.execute(_ddlBoundDevice);
   }
 
   Future<void> _onUpgrade(
@@ -202,6 +206,21 @@ class _SqfliteAppDatabase extends AppDatabase {
       await db.execute("ALTER TABLE user_profile ADD COLUMN goal TEXT NOT NULL DEFAULT 'maintain'");
       await db.execute("ALTER TABLE user_profile ADD COLUMN exercise_base TEXT NOT NULL DEFAULT 'none'");
       await db.execute("ALTER TABLE user_profile ADD COLUMN diet_preference TEXT NOT NULL DEFAULT 'normal'");
+    }
+    if (oldVersion < 4) {
+      // v4：AI 对话历史持久化
+      await db.execute(_ddlAiSession);
+      await db.execute(_ddlAiMessage);
+      await db.execute(_idxAiMessageSession);
+    }
+    if (oldVersion < 5) {
+      // v5：蓝牙设备绑定
+      await db.execute(_ddlBoundDevice);
+    }
+    if (oldVersion < 6) {
+      await db.execute("ALTER TABLE bound_device ADD COLUMN sync_source TEXT NOT NULL DEFAULT 'ble_live'");
+      await db.execute("ALTER TABLE bound_device ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'idle'");
+      await db.execute("ALTER TABLE bound_device ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
     }
   }
 }
@@ -397,5 +416,57 @@ const String _ddlSyncQueue = '''
       retry         INTEGER NOT NULL DEFAULT 0,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL
+    );
+''';
+
+/// AI 对话会话：一个用户可以有多个独立会话。
+const String _ddlAiSession = '''
+    CREATE TABLE IF NOT EXISTS ai_session (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      title         TEXT    NOT NULL DEFAULT '新对话',
+      provider      TEXT    NOT NULL DEFAULT 'deepseek',
+      message_count INTEGER NOT NULL DEFAULT 0,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+''';
+
+/// AI 对话消息：归属于某个 session_id。
+const String _ddlAiMessage = '''
+    CREATE TABLE IF NOT EXISTS ai_message (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  INTEGER NOT NULL,
+      role        TEXT    NOT NULL,
+      content     TEXT    NOT NULL DEFAULT '',
+      provider    TEXT    NOT NULL DEFAULT '',
+      is_error    INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL
+    );
+''';
+
+/// 加速按会话查询
+const String _idxAiMessageSession = '''
+    CREATE INDEX IF NOT EXISTS idx_ai_message_session
+        ON ai_message(session_id, id);
+''';
+
+/// 已绑定的蓝牙设备。
+///
+/// kind：blood_pressure / weight_scale / heart_rate / band（手环综合）
+/// status：active / disabled
+/// last_sync_at：上次同步数据的时间戳
+const String _ddlBoundDevice = '''
+    CREATE TABLE IF NOT EXISTS bound_device (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind          TEXT    NOT NULL,
+      brand         TEXT    NOT NULL DEFAULT '',
+      name          TEXT    NOT NULL,
+      mac_address   TEXT    NOT NULL UNIQUE,
+      sync_source   TEXT    NOT NULL DEFAULT 'ble_live',
+      status        TEXT    NOT NULL DEFAULT 'active',
+      bound_at      INTEGER NOT NULL,
+      last_sync_at  INTEGER NOT NULL DEFAULT 0,
+      sync_state    TEXT    NOT NULL DEFAULT 'idle',
+      last_error    TEXT    NOT NULL DEFAULT ''
     );
 ''';

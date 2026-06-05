@@ -6,6 +6,7 @@ import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import '../network/api_client.dart';
 import '../storage/app_database.dart';
+import 'health_sync_bridge.dart';
 
 class SyncResult {
   const SyncResult({required this.pushed, required this.pulled, this.error});
@@ -33,12 +34,14 @@ class SyncService {
     required this.cryptoService,
     required this.database,
     required this.repository,
-  });
+    HealthSyncBridge? healthSyncBridge,
+  }) : healthSyncBridge = healthSyncBridge ?? HealthSyncBridge();
 
   final ApiClient apiClient;
   final CryptoService cryptoService;
   final AppDatabase database;
   final HealthRepository repository;
+  final HealthSyncBridge healthSyncBridge;
 
   static const String _kLastSyncMs = 'sync_last_ms';
   static const String _kSyncEnabled = 'sync_enabled';
@@ -81,6 +84,35 @@ class SyncService {
           ? (body['message'] as String? ?? e.message ?? '网络错误')
           : (e.message ?? '网络错误');
       return SyncResult(pushed: 0, pulled: 0, error: msg);
+    } catch (e) {
+      return SyncResult(pushed: 0, pulled: 0, error: '$e');
+    }
+  }
+
+  Future<SyncResult> syncSystemHealth() async {
+    try {
+      final available = await healthSyncBridge.isAvailable();
+      if (!available) {
+        return const SyncResult(
+          pushed: 0,
+          pulled: 0,
+          error: '当前系统不支持健康数据同步，请安装或启用 Health Connect / HealthKit',
+        );
+      }
+
+      final allowed = await healthSyncBridge.requestAccess();
+      if (!allowed) {
+        return const SyncResult(pushed: 0, pulled: 0, error: '未获得健康数据读取权限');
+      }
+
+      final snapshot = await healthSyncBridge.sync();
+      final inserted = await repository.ingestSystemHealthSnapshot(
+        steps: snapshot.steps,
+        heartRateBpm: snapshot.heartRateBpm,
+        sleepHours: snapshot.sleepHours,
+        recordedAt: snapshot.recordedAt,
+      );
+      return SyncResult(pushed: inserted, pulled: 0);
     } catch (e) {
       return SyncResult(pushed: 0, pulled: 0, error: '$e');
     }

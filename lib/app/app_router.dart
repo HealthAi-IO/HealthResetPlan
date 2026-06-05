@@ -14,6 +14,8 @@ import '../features/report/report_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/stats_page.dart';
 import '../features/chat/chat_page.dart';
+import '../features/devices/device_scan_page.dart';
+import '../features/devices/devices_page.dart';
 import '../features/membership/membership_page.dart';
 import '../features/sync/cloud_sync_page.dart';
 import '../features/sync/key_setup_page.dart';
@@ -65,9 +67,10 @@ class AppRouter {
       GoRoute(
         path: '/login',
         builder: (_, state) {
-          // 通过 query 参数 ?account=1 直接打开账号登录模式
-          final account = state.uri.queryParameters['account'] == '1';
-          return LoginPage(initialAccountMode: account);
+          // 从 state.extra 或 query 参数判断是否直接打开账号登录模式
+          final forceAccount = state.extra == true ||
+              state.uri.queryParameters['account'] == '1';
+          return LoginPage(initialAccountMode: forceAccount);
         },
       ),
       GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingPage()),
@@ -76,6 +79,8 @@ class AppRouter {
       GoRoute(path: '/report', builder: (_, __) => const ReportPage()),
       GoRoute(path: '/membership', builder: (_, __) => const MembershipPage()),
       GoRoute(path: '/chat', builder: (_, __) => const ChatPage()),
+      GoRoute(path: '/devices', builder: (_, __) => const DevicesPage()),
+      GoRoute(path: '/devices/scan', builder: (_, __) => const DeviceScanPage()),
     ],
   );
 }

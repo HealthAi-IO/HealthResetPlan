@@ -57,6 +57,7 @@ class _WebAppDatabase extends AppDatabase {
     'clock_record',
     'reminder',
     'sync_queue',
+    'bound_device',
   ];
 
   SharedPreferences? _prefs;

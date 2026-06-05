@@ -5,6 +5,9 @@ import 'package:logger/logger.dart';
 import '../auth/user_session.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
+import '../bluetooth/bluetooth_service.dart';
+import '../data/chat_repository.dart';
+import '../data/device_repository.dart';
 import '../data/health_repository.dart';
 import '../membership/membership_service.dart';
 import '../network/ai_api.dart';
@@ -12,11 +15,21 @@ import '../network/api_client.dart';
 import '../network/auth_api.dart';
 import '../notification/reminder_scheduler.dart';
 import '../storage/app_database.dart';
+import '../sync/health_sync_bridge.dart';
 import '../sync/sync_service.dart';
 
 final GetIt sl = GetIt.instance;
 
+/// 服务定位器初始化。
+///
+/// 启动加速策略：
+/// 1. 同步注册不依赖 IO 的轻量级单例（Logger / SecureStorage / KeyVault 等）
+/// 2. **并行执行**两个最耗时的步骤：
+///    - SharedPreferences 初始化（UserSession.load）
+///    - 数据库迁移 + seed（HealthRepository.initialize）
+/// 3. 其余 API/Service 立即注册（构造函数都不阻塞）
 Future<void> setupServiceLocator() async {
+  // ── 同步注册（瞬时） ─────────────────────────────────────────
   sl.registerLazySingleton<Logger>(() => Logger());
 
   const secureStorage = FlutterSecureStorage(
@@ -40,13 +53,22 @@ Future<void> setupServiceLocator() async {
   final appDatabase = AppDatabase.instance;
   sl.registerSingleton<AppDatabase>(appDatabase);
 
+  // ── 并行执行 IO 密集的初始化 ────────────────────────────────
+  // 1. UserSession 从 SharedPreferences/SecureStorage 加载
+  // 2. HealthRepository 打开数据库 + 种子数据
   final healthRepository = HealthRepository(database: appDatabase);
-  await healthRepository.initialize();
+  await Future.wait([
+    UserSession.instance.load(),
+    healthRepository.initialize(),
+  ]);
   sl.registerSingleton<HealthRepository>(healthRepository);
 
-  final scheduler = ReminderScheduler(repository: healthRepository);
-  sl.registerSingleton<ReminderScheduler>(scheduler);
+  // 仓库类 - 仅持有数据库引用，构造瞬时
+  sl.registerSingleton<ChatRepository>(ChatRepository(database: appDatabase));
+  sl.registerSingleton<DeviceRepository>(DeviceRepository(database: appDatabase));
+  sl.registerSingleton<BluetoothService>(BluetoothService.instance);
 
+  // ── 网络相关 ─────────────────────────────────────────────────
   final apiClient = ApiClient();
   sl.registerSingleton<ApiClient>(apiClient);
 
@@ -56,17 +78,24 @@ Future<void> setupServiceLocator() async {
   }
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
+  sl.registerSingleton<HealthSyncBridge>(HealthSyncBridge());
 
   sl.registerSingleton<SyncService>(SyncService(
     apiClient: apiClient,
     cryptoService: sl<CryptoService>(),
     database: appDatabase,
     repository: healthRepository,
+    healthSyncBridge: sl<HealthSyncBridge>(),
   ));
 
+  // 延迟创建：会员/AI/通知调度首次访问时才实例化
   sl.registerLazySingleton<MembershipService>(
     () => MembershipService(client: apiClient),
   );
+  sl.registerLazySingleton<AiApi>(() => AiApi(client: apiClient));
 
-  sl.registerSingleton<AiApi>(AiApi(client: apiClient));
+  // 通知调度也改为延迟（main.dart 后台再触发 initialize）
+  sl.registerLazySingleton<ReminderScheduler>(
+    () => ReminderScheduler(repository: healthRepository),
+  );
 }

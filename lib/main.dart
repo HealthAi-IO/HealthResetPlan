@@ -33,21 +33,27 @@ class _AppLoaderState extends State<_AppLoader> {
   Future<void> _init() async {
     if (mounted) setState(() => _initError = null);
     try {
-      await UserSession.instance.load();
+      // setupServiceLocator 内部已并行执行 UserSession.load + DB 初始化
       await setupServiceLocator();
 
-      if (!UserSession.instance.hasName) {
-        final profile = await sl<HealthRepository>().loadProfile();
-        if (profile != null && profile.nickname.isNotEmpty) {
-          await UserSession.instance.setName(profile.nickname);
-        }
-      }
-
+      // 兼容：若无昵称但 profile 有，补一下；不阻塞首屏，后台执行
       if (mounted) setState(() => _ready = true);
+
+      _hydrateUserNameInBackground();
       _initNotificationsInBackground();
     } catch (e) {
       if (mounted) setState(() => _initError = e.toString());
     }
+  }
+
+  /// 用户昵称补全（非首屏关键路径）
+  void _hydrateUserNameInBackground() {
+    if (UserSession.instance.hasName) return;
+    sl<HealthRepository>().loadProfile().then((profile) {
+      if (profile != null && profile.nickname.isNotEmpty) {
+        UserSession.instance.setName(profile.nickname);
+      }
+    }).catchError((_) {/* 忽略 */});
   }
 
   void _initNotificationsInBackground() {
@@ -97,13 +103,58 @@ class _AppLoaderState extends State<_AppLoader> {
     }
 
     if (!_ready) {
+      // 启动闪屏：品牌色背景 + Logo + Loading
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: ThemeMode.system,
-        home: const Scaffold(
-          body: Center(child: CircularProgressIndicator()),
+        home: Scaffold(
+          backgroundColor: const Color(0xFFF5F8FF),
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 88,
+                  height: 88,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF03A9F4), Color(0xFF0288D1)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF03A9F4).withValues(alpha: 0.3),
+                        blurRadius: 18,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.favorite_rounded,
+                      color: Colors.white, size: 46),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  '健康重启计划',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF1A1A2E),
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }

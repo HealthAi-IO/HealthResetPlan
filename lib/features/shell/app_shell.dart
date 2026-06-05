@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/auth/user_session.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
@@ -89,13 +90,25 @@ class AppShell extends StatelessWidget {
               IconButton(
                 tooltip: '会员中心',
                 icon: const Icon(Icons.workspace_premium_outlined),
-                onPressed: () => context.push('/membership'),
+                onPressed: () {
+                  if (!UserSession.instance.isAccountLogin) {
+                    context.push('/login', extra: true);
+                  } else {
+                    context.push('/membership');
+                  }
+                },
               ),
               PopupMenuButton<String>(
                 tooltip: '更多操作',
                 onSelected: (value) async {
                   if (value == 'membership') {
-                    context.push('/membership');
+                    if (!UserSession.instance.isAccountLogin) {
+                      context.push('/login', extra: true);
+                    } else {
+                      context.push('/membership');
+                    }
+                  } else if (value == 'devices') {
+                    context.push('/devices');
                   } else if (value == 'onboarding') {
                     context.push('/onboarding');
                   } else if (value == 'security') {
@@ -116,6 +129,7 @@ class AppShell extends StatelessWidget {
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'membership', child: Text('会员中心')),
+                  PopupMenuItem(value: 'devices', child: Text('我的设备')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
                   PopupMenuItem(value: 'reset', child: Text('恢复示例数据')),

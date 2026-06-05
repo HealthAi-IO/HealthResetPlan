@@ -111,9 +111,15 @@ class _HomePageState extends State<HomePage> {
           // 会员横幅（免费用户显示升级入口，会员显示状态）
           _HomeMembershipBanner(
             status: _memberStatus,
-            onTap: () => context.push('/membership').then((_) {
-              if (mounted) _load(silent: true);
-            }),
+            onTap: () {
+              if (!UserSession.instance.isAccountLogin) {
+                context.push('/login', extra: true);
+              } else {
+                context.push('/membership').then((_) {
+                  if (mounted) _load(silent: true);
+                });
+              }
+            },
           ),
           const SizedBox(height: 14),
 
@@ -169,9 +175,15 @@ class _HomePageState extends State<HomePage> {
                         : Icons.workspace_premium_outlined,
                     label: _memberStatus.isActive ? '会员中心' : '升级会员',
                     color: const Color(0xFF0277BD),
-                    onTap: () => context.push('/membership').then((_) {
-                      if (mounted) _load(silent: true);
-                    }),
+                    onTap: () {
+                      if (!UserSession.instance.isAccountLogin) {
+                        context.push('/login', extra: true);
+                      } else {
+                        context.push('/membership').then((_) {
+                          if (mounted) _load(silent: true);
+                        });
+                      }
+                    },
                   ),
                 ],
               );

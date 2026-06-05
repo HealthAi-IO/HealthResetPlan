@@ -11,6 +11,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
+import '../../core/network/auth_api.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -28,6 +29,7 @@ class _StatsPageState extends State<StatsPage> {
   ClockStats? _clockStats;
   String? _error;
   MembershipStatus _memberStatus = MembershipStatus.free;
+  AccountInfo? _accountInfo;
 
   List<HealthIndicatorEntry> _weightEntries = const [];
   List<HealthIndicatorEntry> _bpEntries = const [];
@@ -52,20 +54,27 @@ class _StatsPageState extends State<StatsPage> {
     if (!mounted) return;
     if (!silent) setState(() { _loading = true; _error = null; });
     try {
-      final data = await _repo.loadDashboard();
-      final stats = await _repo.loadClockStats();
-      final weightList = await _repo.loadIndicators(type: 'weight', limit: 20);
-      final bpList = await _repo.loadIndicators(type: 'bp', limit: 20);
-      final glucoseList = await _repo.loadIndicators(type: 'glucose', limit: 20);
-      final memberStatus = await _membership.getStatus();
+      final futures = <Future<Object?>>[
+        _repo.loadDashboard(),
+        _repo.loadClockStats(),
+        _repo.loadIndicators(type: 'weight', limit: 20),
+        _repo.loadIndicators(type: 'bp', limit: 20),
+        _repo.loadIndicators(type: 'glucose', limit: 20),
+        _membership.getStatus().then((s) => s),
+      ];
+      if (UserSession.instance.isAccountLogin) {
+        futures.add(sl<AuthApi>().fetchAccountInfo());
+      }
+      final results = await Future.wait(futures);
       if (!mounted) return;
       setState(() {
-        _data = data;
-        _clockStats = stats;
-        _weightEntries = weightList.reversed.toList();
-        _bpEntries = bpList.reversed.toList();
-        _glucoseEntries = glucoseList.reversed.toList();
-        _memberStatus = memberStatus;
+        _data = results[0] as HealthDashboardData;
+        _clockStats = results[1] as ClockStats;
+        _weightEntries = (results[2] as List<HealthIndicatorEntry>).reversed.toList();
+        _bpEntries = (results[3] as List<HealthIndicatorEntry>).reversed.toList();
+        _glucoseEntries = (results[4] as List<HealthIndicatorEntry>).reversed.toList();
+        _memberStatus = results[5] as MembershipStatus;
+        _accountInfo = results.length > 6 ? results[6] as AccountInfo? : null;
         _loading = false;
       });
     } catch (e) {
@@ -111,13 +120,33 @@ class _StatsPageState extends State<StatsPage> {
       child: ListView(
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         children: [
+          _AccountCard(
+            accountInfo: _accountInfo,
+            memberStatus: _memberStatus,
+            onLogin: () => context.push('/login', extra: true).then((_) {
+              if (mounted) _load(silent: true);
+            }),
+            onMembership: () => context.push('/membership').then((_) {
+              if (mounted) _load(silent: true);
+            }),
+          ),
+          const SizedBox(height: 10),
           _UserCard(profile: profile, onEditProfile: () => context.go('/profile')),
           const SizedBox(height: 10),
           _MembershipBanner(
             status: _memberStatus,
-            onTap: () => context.push('/membership').then((_) {
-              if (mounted) _load(silent: true);
-            }),
+            onTap: () {
+              // 未登录先引导登录，已登录直接进会员中心
+              if (!UserSession.instance.isAccountLogin) {
+                context.push('/login', extra: true).then((_) {
+                  if (mounted) _load(silent: true);
+                });
+              } else {
+                context.push('/membership').then((_) {
+                  if (mounted) _load(silent: true);
+                });
+              }
+            },
           ),
           const SizedBox(height: 14),
 
@@ -186,6 +215,200 @@ class _StatsPageState extends State<StatsPage> {
         ],
       ),
     );
+  }
+}
+
+// ── 账号状态卡片 ──────────────────────────────────────────────
+class _AccountCard extends StatelessWidget {
+  const _AccountCard({
+    required this.accountInfo,
+    required this.memberStatus,
+    required this.onLogin,
+    required this.onMembership,
+  });
+
+  final AccountInfo? accountInfo;
+  final MembershipStatus memberStatus;
+  final VoidCallback onLogin;
+  final VoidCallback onMembership;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLoggedIn = UserSession.instance.isAccountLogin;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: isLoggedIn
+            ? const LinearGradient(
+                colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : LinearGradient(
+                colors: [Colors.orange.shade700, Colors.orange.shade500],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(
+              isLoggedIn ? Icons.account_circle : Icons.account_circle_outlined,
+              color: Colors.white,
+              size: 22,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              isLoggedIn ? '已绑定账号' : '尚未绑定账号',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const Spacer(),
+            if (isLoggedIn)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    width: 8, height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.lightGreenAccent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  const Text('在线',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600)),
+                ]),
+              ),
+          ]),
+          const SizedBox(height: 10),
+
+          if (!isLoggedIn) ...[
+            const Text(
+              '注册/登录账号后即可使用激活码开通会员，\n享受加密云同步、AI无限次等高级权益。',
+              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onLogin,
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text('注册 / 登录账号'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.orange.shade700,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                ),
+              ),
+            ),
+          ] else ...[
+            // 已登录：展示账号详情
+            _AccountDetailRow(
+              icon: Icons.fingerprint,
+              label: '用户 ID',
+              value: _shortId(accountInfo?.userId ?? ''),
+            ),
+            const SizedBox(height: 6),
+            _AccountDetailRow(
+              icon: Icons.person_outline,
+              label: '昵称',
+              value: accountInfo?.nickname.isNotEmpty == true
+                  ? accountInfo!.nickname
+                  : UserSession.instance.name,
+            ),
+            const SizedBox(height: 6),
+            _AccountDetailRow(
+              icon: Icons.cloud_outlined,
+              label: '云同步',
+              value: (accountInfo?.hasCloudSync == true) ? '已开通' : '未开通',
+              valueColor: (accountInfo?.hasCloudSync == true)
+                  ? Colors.lightGreenAccent
+                  : Colors.white54,
+            ),
+            const SizedBox(height: 6),
+            _AccountDetailRow(
+              icon: Icons.workspace_premium,
+              label: '会员',
+              value: memberStatus.isActive
+                  ? '${memberStatus.planName ?? '已开通'}'
+                  : '免费版',
+              valueColor: memberStatus.isActive
+                  ? Colors.lightGreenAccent
+                  : Colors.white54,
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onMembership,
+                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
+                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white54),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _shortId(String id) {
+    if (id.length <= 12) return id;
+    return '${id.substring(0, 8)}…${id.substring(id.length - 4)}';
+  }
+}
+
+class _AccountDetailRow extends StatelessWidget {
+  const _AccountDetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 15, color: Colors.white60),
+      const SizedBox(width: 8),
+      Text('$label：',
+          style: const TextStyle(color: Colors.white60, fontSize: 13)),
+      Expanded(
+        child: Text(
+          value,
+          style: TextStyle(
+            color: valueColor ?? Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    ]);
   }
 }
 
