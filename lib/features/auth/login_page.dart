@@ -6,8 +6,10 @@ import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/membership_service.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/sync/sync_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, this.initialAccountMode = false});
@@ -126,6 +128,8 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
 
+      await _syncLocalDataIfMember();
+
       if (!mounted) return;
       context.go('/home');
     } catch (e) {
@@ -134,6 +138,19 @@ class _LoginPageState extends State<LoginPage> {
         _saving = false;
         _error = friendlyAuthError(e);
       });
+    }
+  }
+
+  Future<void> _syncLocalDataIfMember() async {
+    try {
+      final status =
+          await sl<MembershipService>().getStatus(forceRefresh: true);
+      if (!status.isActive) return;
+      final sync = sl<SyncService>();
+      await sync.setSyncEnabled(true);
+      await sync.sync();
+    } catch (_) {
+      // 登录流程不因同步失败中断；用户仍可在云同步页手动重试。
     }
   }
 

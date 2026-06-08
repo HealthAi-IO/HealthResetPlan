@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../app/app_theme.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
+import '../../core/sync/sync_service.dart';
 
 class MembershipPage extends StatefulWidget {
   const MembershipPage({super.key});
@@ -65,6 +66,7 @@ class _MembershipPageState extends State<MembershipPage> {
     );
 
     if (confirmed == true) {
+      await _syncLocalData();
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -86,8 +88,8 @@ class _MembershipPageState extends State<MembershipPage> {
                 _StatusCard(status: _status),
                 const SizedBox(height: 20),
                 const Text('选择套餐',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w800)),
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 12),
                 LayoutBuilder(builder: (_, c) {
                   final wide = c.maxWidth >= 600;
@@ -152,6 +154,7 @@ class _MembershipPageState extends State<MembershipPage> {
                     final messenger = ScaffoldMessenger.of(context);
                     try {
                       await _service.activateWithCode(code);
+                      await _syncLocalData();
                       if (!mounted) return;
                       await _load();
                       messenger.showSnackBar(
@@ -179,6 +182,16 @@ class _MembershipPageState extends State<MembershipPage> {
               ],
             ),
     );
+  }
+
+  Future<void> _syncLocalData() async {
+    try {
+      final sync = sl<SyncService>();
+      await sync.setSyncEnabled(true);
+      await sync.sync();
+    } catch (_) {
+      // 会员激活不因同步失败中断；用户可稍后在云同步页手动重试。
+    }
   }
 
   String _friendly(Object e) {
@@ -245,11 +258,13 @@ class _StatusCard extends StatelessWidget {
               color: Colors.white24,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.workspace_premium, color: Colors.white, size: 26),
+            child: const Icon(Icons.workspace_premium,
+                color: Colors.white, size: 26),
           ),
           const SizedBox(width: 14),
           Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Text(status.planName ?? '会员版',
                     style: const TextStyle(
@@ -258,7 +273,8 @@ class _StatusCard extends StatelessWidget {
                         fontWeight: FontWeight.w800)),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.white24,
                     borderRadius: BorderRadius.circular(999),
@@ -291,11 +307,13 @@ class _StatusCard extends StatelessWidget {
             color: AppTheme.pageBg,
             borderRadius: BorderRadius.circular(14),
           ),
-          child: const Icon(Icons.person_outline, color: AppTheme.muted, size: 26),
+          child:
+              const Icon(Icons.person_outline, color: AppTheme.muted, size: 26),
         ),
         const SizedBox(width: 14),
         const Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('免费版',
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
             SizedBox(height: 4),
@@ -470,7 +488,9 @@ class _BenefitsPanel extends StatelessWidget {
         padding: EdgeInsets.only(bottom: 10),
         child: Text('权益项目',
             style: TextStyle(
-                fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.muted)),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.muted)),
       ),
       Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -478,8 +498,7 @@ class _BenefitsPanel extends StatelessWidget {
       ),
       Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Center(
-            child: Text('年度', style: headerStyle(AppTheme.deepBlue))),
+        child: Center(child: Text('年度', style: headerStyle(AppTheme.deepBlue))),
       ),
     ]);
   }
@@ -613,6 +632,7 @@ class _ActivationSheet extends StatefulWidget {
   final String planCode;
   final String planName;
   final String priceLabel;
+
   /// 返回错误文本；null 表示成功
   final Future<String?> Function(String code) onRedeem;
 
@@ -702,21 +722,18 @@ class _ActivationSheetState extends State<_ActivationSheet> {
 
                 // 权益清单
                 _BenefitRow(
-                    icon: Icons.cloud_sync_outlined,
-                    text: '加密云同步，多端数据安全备份'),
+                    icon: Icons.cloud_sync_outlined, text: '加密云同步，多端数据安全备份'),
                 const SizedBox(height: 8),
                 _BenefitRow(
                     icon: Icons.document_scanner_outlined,
                     text: '体检报告 OCR 智能识别'),
                 const SizedBox(height: 8),
                 _BenefitRow(
-                    icon: Icons.psychology_outlined,
-                    text: 'AI 健康方案无限次生成'),
+                    icon: Icons.psychology_outlined, text: 'AI 健康方案无限次生成'),
                 if (widget.planCode == 'yearly') ...[
                   const SizedBox(height: 8),
                   _BenefitRow(
-                      icon: Icons.support_agent_outlined,
-                      text: '年度专属优先客服响应'),
+                      icon: Icons.support_agent_outlined, text: '年度专属优先客服响应'),
                 ],
                 const SizedBox(height: 16),
 
@@ -779,8 +796,7 @@ class _ActivationSheetState extends State<_ActivationSheet> {
                                 strokeWidth: 2, color: Colors.white))
                         : const Text('兑换激活码',
                             style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700)),
+                                fontSize: 15, fontWeight: FontWeight.w700)),
                   ),
                 ),
 

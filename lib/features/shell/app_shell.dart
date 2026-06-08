@@ -132,8 +132,9 @@ class AppShell extends StatelessWidget {
                   PopupMenuItem(value: 'devices', child: Text('我的设备')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
-                  PopupMenuItem(value: 'reset', child: Text('恢复示例数据')),
-                  PopupMenuItem(value: 'dev_reset_member', child: Text('[测试] 重置为免费版')),
+                  PopupMenuItem(value: 'reset', child: Text('[测试] 恢复默认数据')),
+                  PopupMenuItem(
+                      value: 'dev_reset_member', child: Text('[测试] 重置为免费版')),
                 ],
               ),
               const SizedBox(width: 8),

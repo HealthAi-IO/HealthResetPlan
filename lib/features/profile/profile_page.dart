@@ -14,6 +14,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/auth_api.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -53,8 +54,12 @@ class _ProfilePageState extends State<ProfilePage> {
     _load();
     // 任意字段变化则标记"有未保存改动"，防止后台 repo 变更覆盖用户编辑
     for (final ctrl in [
-      _nicknameController, _birthYearController, _heightController,
-      _weightController, _medicalHistoryController, _medicationsController,
+      _nicknameController,
+      _birthYearController,
+      _heightController,
+      _weightController,
+      _medicalHistoryController,
+      _medicationsController,
     ]) {
       ctrl.addListener(_markDirty);
     }
@@ -117,11 +122,12 @@ class _ProfilePageState extends State<ProfilePage> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final now = DateTime.now().millisecondsSinceEpoch;
+      final nickname = _nicknameController.text.trim();
       await _repo.saveProfile(
         UserProfileData(
           id: _profile?.id,
           userId: kLocalUserId,
-          nickname: _nicknameController.text.trim(),
+          nickname: nickname,
           gender: _gender,
           birthYear: int.parse(_birthYearController.text.trim()),
           heightCm: double.parse(_heightController.text.trim()),
@@ -137,6 +143,10 @@ class _ProfilePageState extends State<ProfilePage> {
           isDirty: 1,
         ),
       );
+      await UserSession.instance.setName(nickname);
+      if (UserSession.instance.isAccountLogin) {
+        await sl<AuthApi>().updateAccountProfile(nickname: nickname);
+      }
       if (!mounted) return;
       _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
       messenger.showSnackBar(const SnackBar(content: Text('健康档案已保存到本地')));
@@ -177,8 +187,7 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     final profile = _profile ?? UserProfileData.empty();
-    final bottomPadding =
-        MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+    final bottomPadding = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -284,10 +293,13 @@ class _ProfilePageState extends State<ProfilePage> {
                       value: _goal,
                       decoration: const InputDecoration(labelText: '健康目标'),
                       items: const [
-                        DropdownMenuItem(value: 'maintain', child: Text('保持健康')),
+                        DropdownMenuItem(
+                            value: 'maintain', child: Text('保持健康')),
                         DropdownMenuItem(value: 'fat_loss', child: Text('减脂')),
-                        DropdownMenuItem(value: 'glucose_control', child: Text('控糖')),
-                        DropdownMenuItem(value: 'bp_control', child: Text('控压')),
+                        DropdownMenuItem(
+                            value: 'glucose_control', child: Text('控糖')),
+                        DropdownMenuItem(
+                            value: 'bp_control', child: Text('控压')),
                       ],
                       onChanged: (value) => setState(() {
                         _goal = value ?? 'maintain';
@@ -301,8 +313,10 @@ class _ProfilePageState extends State<ProfilePage> {
                       decoration: const InputDecoration(labelText: '运动基础'),
                       items: const [
                         DropdownMenuItem(value: 'none', child: Text('无（久坐为主）')),
-                        DropdownMenuItem(value: 'light', child: Text('轻度（每周 1-2 次）')),
-                        DropdownMenuItem(value: 'moderate', child: Text('中等（每周 3-5 次）')),
+                        DropdownMenuItem(
+                            value: 'light', child: Text('轻度（每周 1-2 次）')),
+                        DropdownMenuItem(
+                            value: 'moderate', child: Text('中等（每周 3-5 次）')),
                       ],
                       onChanged: (value) => setState(() {
                         _exerciseBase = value ?? 'none';
@@ -315,10 +329,14 @@ class _ProfilePageState extends State<ProfilePage> {
                       value: _dietPreference,
                       decoration: const InputDecoration(labelText: '饮食偏好'),
                       items: const [
-                        DropdownMenuItem(value: 'normal', child: Text('普通（荤素搭配）')),
-                        DropdownMenuItem(value: 'light', child: Text('清淡（少盐少油）')),
-                        DropdownMenuItem(value: 'vegetarian', child: Text('素食')),
-                        DropdownMenuItem(value: 'custom', child: Text('自定义（参考病史）')),
+                        DropdownMenuItem(
+                            value: 'normal', child: Text('普通（荤素搭配）')),
+                        DropdownMenuItem(
+                            value: 'light', child: Text('清淡（少盐少油）')),
+                        DropdownMenuItem(
+                            value: 'vegetarian', child: Text('素食')),
+                        DropdownMenuItem(
+                            value: 'custom', child: Text('自定义（参考病史）')),
                       ],
                       onChanged: (value) => setState(() {
                         _dietPreference = value ?? 'normal';
@@ -522,11 +540,9 @@ class _OverviewCard extends StatelessWidget {
                           ? '--'
                           : profile.bmi.toStringAsFixed(1)),
                   _SmallMetric(
-                      title: '最新体重',
-                      value: latestWeight?.displayValue ?? '--'),
+                      title: '最新体重', value: latestWeight?.displayValue ?? '--'),
                   _SmallMetric(
-                      title: '最新血压',
-                      value: latestBp?.displayValue ?? '--'),
+                      title: '最新血压', value: latestBp?.displayValue ?? '--'),
                 ],
               ),
               const SizedBox(height: 12),
@@ -534,9 +550,16 @@ class _OverviewCard extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  _SettingTag(icon: Icons.flag_outlined, label: '目标', value: goalLabel),
-                  _SettingTag(icon: Icons.directions_run_outlined, label: '运动', value: exerciseLabel),
-                  _SettingTag(icon: Icons.restaurant_outlined, label: '饮食', value: dietLabel),
+                  _SettingTag(
+                      icon: Icons.flag_outlined, label: '目标', value: goalLabel),
+                  _SettingTag(
+                      icon: Icons.directions_run_outlined,
+                      label: '运动',
+                      value: exerciseLabel),
+                  _SettingTag(
+                      icon: Icons.restaurant_outlined,
+                      label: '饮食',
+                      value: dietLabel),
                 ],
               ),
             ],
@@ -578,7 +601,8 @@ class _SmallMetric extends StatelessWidget {
 }
 
 class _SettingTag extends StatelessWidget {
-  const _SettingTag({required this.icon, required this.label, required this.value});
+  const _SettingTag(
+      {required this.icon, required this.label, required this.value});
 
   final IconData icon;
   final String label;
@@ -597,8 +621,11 @@ class _SettingTag extends StatelessWidget {
         children: [
           Icon(icon, size: 14, color: AppTheme.deepBlue),
           const SizedBox(width: 5),
-          Text('$label  ', style: const TextStyle(fontSize: 12, color: AppTheme.muted)),
-          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          Text('$label  ',
+              style: const TextStyle(fontSize: 12, color: AppTheme.muted)),
+          Text(value,
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
         ],
       ),
     );
@@ -667,14 +694,18 @@ class _Panel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title,
-                  style:
-                      const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 4),
-              Text(subtitle,
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
-            ])),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 4),
+                  Text(subtitle,
+                      style:
+                          const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                ])),
             if (trailing != null) trailing!,
           ]),
           const SizedBox(height: 16),
@@ -777,7 +808,9 @@ class _BackupRestoreSection extends StatefulWidget {
 class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
   bool _busy = false;
 
-  void _setBusy(bool v) { if (mounted) setState(() => _busy = v); }
+  void _setBusy(bool v) {
+    if (mounted) setState(() => _busy = v);
+  }
 
   Future<void> _exportJson() async {
     _setBusy(true);
@@ -825,7 +858,10 @@ class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
     );
     if (result == null || result.files.isEmpty) return;
     final path = result.files.first.path;
-    if (path == null) { _showError('无法读取文件路径'); return; }
+    if (path == null) {
+      _showError('无法读取文件路径');
+      return;
+    }
 
     _setBusy(true);
     try {
@@ -833,12 +869,15 @@ class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
       final data = jsonDecode(content) as Map<String, dynamic>;
 
       final exportData = data['data'] as Map<String, dynamic>?;
-      if (exportData == null) { _showError('文件格式不正确'); return; }
+      if (exportData == null) {
+        _showError('文件格式不正确');
+        return;
+      }
 
       final indicatorCount = (exportData['indicators'] as List?)?.length ?? 0;
-      final reminderCount  = (exportData['reminders']  as List?)?.length ?? 0;
-      final clockCount     = (exportData['clockRecords'] as List?)?.length ?? 0;
-      final exportedAt     = data['exportedAt'] as String? ?? '未知时间';
+      final reminderCount = (exportData['reminders'] as List?)?.length ?? 0;
+      final clockCount = (exportData['clockRecords'] as List?)?.length ?? 0;
+      final exportedAt = data['exportedAt'] as String? ?? '未知时间';
 
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
@@ -854,7 +893,9 @@ class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
             '现有指标、提醒、打卡记录将被覆盖，是否继续？',
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消')),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
               child: const Text('确认恢复'),
@@ -898,7 +939,8 @@ class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            const Icon(Icons.backup_outlined, size: 18, color: AppTheme.deepBlue),
+            const Icon(Icons.backup_outlined,
+                size: 18, color: AppTheme.deepBlue),
             const SizedBox(width: 8),
             const Text('数据备份与恢复',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
@@ -930,13 +972,16 @@ class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
             child: FilledButton.icon(
               onPressed: _busy ? null : _importJson,
               icon: _busy
-                  ? const SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.upload_file_outlined, size: 18),
               label: const Text('从 JSON 文件恢复',
                   style: TextStyle(fontWeight: FontWeight.w700)),
               style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14)),
             ),
           ),
         ],
@@ -965,10 +1010,14 @@ class _DangerZone extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Icon(Icons.warning_amber_outlined, size: 18, color: Colors.red.shade400),
+            Icon(Icons.warning_amber_outlined,
+                size: 18, color: Colors.red.shade400),
             const SizedBox(width: 8),
-            Text('危险操作', style: TextStyle(
-              fontSize: 15, fontWeight: FontWeight.w800, color: Colors.red.shade400)),
+            Text('危险操作',
+                style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.red.shade400)),
           ]),
           const SizedBox(height: 4),
           const Text('以下操作不可撤销，请谨慎使用',
@@ -978,9 +1027,11 @@ class _DangerZone extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton.icon(
               onPressed: onClearAll,
-              icon: const Icon(Icons.delete_forever_outlined, color: Colors.red),
+              icon:
+                  const Icon(Icons.delete_forever_outlined, color: Colors.red),
               label: const Text('清空全部本地数据',
-                  style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700)),
+                  style: TextStyle(
+                      color: Colors.red, fontWeight: FontWeight.w700)),
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: Colors.red),
                 padding: const EdgeInsets.symmetric(vertical: 14),

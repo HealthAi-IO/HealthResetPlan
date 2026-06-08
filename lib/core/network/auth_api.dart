@@ -14,7 +14,7 @@ class AuthApi {
 
   /// 注册新账号
   Future<AuthResult> register({
-    required String credType,        // 'phone' / 'email'
+    required String credType, // 'phone' / 'email'
     required String identifier,
     required String password,
     String? nickname,
@@ -71,6 +71,7 @@ class AuthApi {
         return AccountInfo(
           userId: data['userId'] as String? ?? '',
           nickname: data['nickname'] as String? ?? '',
+          avatarUrl: data['avatarUrl'] as String? ?? '',
           hasCloudSync: data['hasCloudSync'] == true,
         );
       }
@@ -78,6 +79,46 @@ class AuthApi {
     } on DioException {
       return null;
     }
+  }
+
+  Future<AccountInfo?> updateAccountProfile({
+    String? nickname,
+    String? avatarUrl,
+  }) async {
+    final data = <String, dynamic>{
+      if (nickname != null && nickname.trim().isNotEmpty)
+        'nickname': nickname.trim(),
+      if (avatarUrl != null && avatarUrl.trim().isNotEmpty)
+        'avatarUrl': avatarUrl.trim(),
+    };
+    if (data.isEmpty) return fetchAccountInfo();
+
+    final resp = await _client.dio.put('/users/me', data: data);
+    final body = resp.data;
+    if (body is Map && body['code'] == 0 && body['data'] is Map) {
+      return AccountInfo.fromJson(
+        Map<String, dynamic>.from(body['data'] as Map),
+      );
+    }
+    return fetchAccountInfo();
+  }
+
+  Future<String> uploadAvatar(String filePath) async {
+    final formData = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath),
+    });
+    final resp = await _client.dio.post(
+      '/files/avatar',
+      data: formData,
+      options: Options(contentType: 'multipart/form-data'),
+    );
+    final body = resp.data;
+    if (body is Map && body['code'] == 0 && body['data'] is Map) {
+      final data = Map<String, dynamic>.from(body['data'] as Map);
+      final avatarUrl = data['avatarUrl'] as String? ?? '';
+      if (avatarUrl.isNotEmpty) return avatarUrl;
+    }
+    throw StateError('头像上传失败');
   }
 }
 
@@ -106,12 +147,21 @@ class AccountInfo {
   const AccountInfo({
     required this.userId,
     required this.nickname,
+    required this.avatarUrl,
     required this.hasCloudSync,
   });
 
   final String userId;
   final String nickname;
+  final String avatarUrl;
   final bool hasCloudSync;
+
+  factory AccountInfo.fromJson(Map<String, dynamic> j) => AccountInfo(
+        userId: j['userId'] as String? ?? '',
+        nickname: j['nickname'] as String? ?? '',
+        avatarUrl: j['avatarUrl'] as String? ?? '',
+        hasCloudSync: j['hasCloudSync'] == true,
+      );
 }
 
 /// 把 DioException 转成用户友好的错误文本

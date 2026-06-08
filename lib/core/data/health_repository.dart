@@ -17,7 +17,6 @@ class HealthRepository extends ChangeNotifier {
   Future<void> initialize() async {
     if (_ready) return;
     await database.open();
-    await _seedIfEmpty();
     _ready = true;
   }
 
@@ -185,7 +184,10 @@ class HealthRepository extends ChangeNotifier {
     if (sleepHours != null && sleepHours > 0) {
       await addIndicator(
         type: 'sleep',
-        payload: {'sleepHours': double.parse(sleepHours.toStringAsFixed(1)), 'quality': 'good'},
+        payload: {
+          'sleepHours': double.parse(sleepHours.toStringAsFixed(1)),
+          'quality': 'good'
+        },
         source: 'system_health',
         measuredAt: time,
       );
@@ -229,12 +231,14 @@ class HealthRepository extends ChangeNotifier {
     final systolic = (latestBp?.payload['systolic'] as num?)?.toInt() ?? 0;
     final diastolic = (latestBp?.payload['diastolic'] as num?)?.toInt() ?? 0;
     final crisisBp = systolic >= 180 || diastolic >= 120;
-    final highBp = !crisisBp && (systolic >= 140 || diastolic >= 90);        // Stage 2
-    final borderlineBp = !highBp && !crisisBp && (systolic >= 130 || diastolic >= 80);  // Stage 1
+    final highBp = !crisisBp && (systolic >= 140 || diastolic >= 90); // Stage 2
+    final borderlineBp =
+        !highBp && !crisisBp && (systolic >= 130 || diastolic >= 80); // Stage 1
 
     // ── 血糖（ADA 2024，区分空腹/餐后） ─────────────────────────
     final latestGlucose = results[1].firstOrNull;
-    final glucoseMmol = (latestGlucose?.payload['glucoseMmol'] as num?)?.toDouble() ?? 0;
+    final glucoseMmol =
+        (latestGlucose?.payload['glucoseMmol'] as num?)?.toDouble() ?? 0;
     final mealType = latestGlucose?.payload['mealType'] as String? ?? 'fasting';
     final bool highGlucose, borderlineGlucose;
     if (mealType == 'postmeal') {
@@ -252,9 +256,11 @@ class HealthRepository extends ChangeNotifier {
     final hdl = (latestLipid?.payload['hdl'] as num?)?.toDouble() ?? 0;
     final tg = (latestLipid?.payload['tg'] as num?)?.toDouble() ?? 0;
     final highLipid = tc >= 6.22 || ldl >= 4.14;
-    final borderlineLipid = !highLipid && ((tc >= 5.18 && tc > 0) || (ldl >= 3.37 && ldl > 0));
+    final borderlineLipid =
+        !highLipid && ((tc >= 5.18 && tc > 0) || (ldl >= 3.37 && ldl > 0));
     final isMale = profile.gender == 'male';
-    final lowHdl = hdl > 0 && ((isMale && hdl < 1.04) || (!isMale && hdl < 1.30));
+    final lowHdl =
+        hdl > 0 && ((isMale && hdl < 1.04) || (!isMale && hdl < 1.30));
     final highTg = tg >= 2.26 && tg > 0;
 
     // ── BMI（中国标准 WST 428-2013） ────────────────────────────
@@ -265,14 +271,16 @@ class HealthRepository extends ChangeNotifier {
 
     // ── 体脂率（ACSM，按性别） ───────────────────────────────────
     final latestBodyFat = results[3].firstOrNull;
-    final bodyFatPct = (latestBodyFat?.payload['bodyFatPct'] as num?)?.toDouble() ?? 0;
+    final bodyFatPct =
+        (latestBodyFat?.payload['bodyFatPct'] as num?)?.toDouble() ?? 0;
     final highBodyFat = bodyFatPct > 0 &&
         ((isMale && bodyFatPct >= 25) || (!isMale && bodyFatPct >= 32));
 
     // ── 腰围（IDF 亚洲标准 2006） ────────────────────────────────
     final latestWaist = results[4].firstOrNull;
     final waistCm = (latestWaist?.payload['waistCm'] as num?)?.toDouble() ?? 0;
-    final highWaist = waistCm > 0 && ((isMale && waistCm >= 90) || (!isMale && waistCm >= 80));
+    final highWaist = waistCm > 0 &&
+        ((isMale && waistCm >= 90) || (!isMale && waistCm >= 80));
 
     // ── 血氧（WHO） ──────────────────────────────────────────────
     final latestSpo2 = results[5].firstOrNull;
@@ -282,7 +290,8 @@ class HealthRepository extends ChangeNotifier {
 
     // ── 睡眠（NSF/AASM 2015） ────────────────────────────────────
     final latestSleep = results[6].firstOrNull;
-    final sleepHours = (latestSleep?.payload['sleepHours'] as num?)?.toDouble() ?? 0;
+    final sleepHours =
+        (latestSleep?.payload['sleepHours'] as num?)?.toDouble() ?? 0;
     final shortSleep = sleepHours > 0 && sleepHours < 6;
     final borderlineSleep = !shortSleep && sleepHours > 0 && sleepHours < 7;
 
@@ -301,7 +310,8 @@ class HealthRepository extends ChangeNotifier {
     final risks = <String>[];
     if (crisisBp) risks.add('高血压危象（收缩压 ≥ 180 或舒张压 ≥ 120 mmHg，建议立即就医）');
     if (highBp) risks.add('高血压 Stage 2（收缩压 ≥ 140 或舒张压 ≥ 90 mmHg，ACC/AHA 2017）');
-    if (borderlineBp) risks.add('血压偏高 Stage 1（收缩压 130-139 或舒张压 80-89 mmHg，建议生活方式干预）');
+    if (borderlineBp)
+      risks.add('血压偏高 Stage 1（收缩压 130-139 或舒张压 80-89 mmHg，建议生活方式干预）');
     if (highGlucose) {
       risks.add(mealType == 'postmeal'
           ? '餐后血糖达糖尿病标准（≥ 11.1 mmol/L，ADA 2024，建议就医）'
@@ -312,19 +322,33 @@ class HealthRepository extends ChangeNotifier {
           ? '餐后血糖偏高（7.8-11.0 mmol/L，糖耐量异常 IGT）'
           : '空腹血糖处于糖尿病前期（5.6-6.9 mmol/L，ADA 标准）');
     }
-    if (highLipid) risks.add('血脂明显偏高（TC ≥ 6.22 或 LDL ≥ 4.14 mmol/L，ACC/AHA 高危阈值）');
-    if (borderlineLipid) risks.add('血脂处于边界高值（TC 5.18-6.21 或 LDL 3.37-4.13 mmol/L）');
-    if (lowHdl) risks.add('HDL 胆固醇偏低（${isMale ? "男 < 1.04" : "女 < 1.30"} mmol/L，心血管保护不足）');
+    if (highLipid)
+      risks.add('血脂明显偏高（TC ≥ 6.22 或 LDL ≥ 4.14 mmol/L，ACC/AHA 高危阈值）');
+    if (borderlineLipid)
+      risks.add('血脂处于边界高值（TC 5.18-6.21 或 LDL 3.37-4.13 mmol/L）');
+    if (lowHdl)
+      risks
+          .add('HDL 胆固醇偏低（${isMale ? "男 < 1.04" : "女 < 1.30"} mmol/L，心血管保护不足）');
     if (highTg) risks.add('甘油三酯偏高（≥ 2.26 mmol/L，建议减少精制糖和饮酒）');
-    if (obese) risks.add('BMI 肥胖（${bmi.toStringAsFixed(1)}，≥ 28，中国标准 WST 428-2013）');
-    if (overweight) risks.add('BMI 超重（${bmi.toStringAsFixed(1)}，24.0-27.9，建议适度减重）');
-    if (underweight) risks.add('BMI 偏低（${bmi.toStringAsFixed(1)}，< 18.5，建议增加营养）');
-    if (highBodyFat) risks.add('体脂率偏高（${bodyFatPct.toStringAsFixed(1)}%，${isMale ? "男 ≥ 25%" : "女 ≥ 32%"}，ACSM 标准）');
-    if (highWaist) risks.add('腰围超标（${waistCm.toStringAsFixed(1)} cm，${isMale ? "男 ≥ 90 cm" : "女 ≥ 80 cm"}，IDF 亚洲标准）');
+    if (obese)
+      risks.add('BMI 肥胖（${bmi.toStringAsFixed(1)}，≥ 28，中国标准 WST 428-2013）');
+    if (overweight)
+      risks.add('BMI 超重（${bmi.toStringAsFixed(1)}，24.0-27.9，建议适度减重）');
+    if (underweight)
+      risks.add('BMI 偏低（${bmi.toStringAsFixed(1)}，< 18.5，建议增加营养）');
+    if (highBodyFat)
+      risks.add(
+          '体脂率偏高（${bodyFatPct.toStringAsFixed(1)}%，${isMale ? "男 ≥ 25%" : "女 ≥ 32%"}，ACSM 标准）');
+    if (highWaist)
+      risks.add(
+          '腰围超标（${waistCm.toStringAsFixed(1)} cm，${isMale ? "男 ≥ 90 cm" : "女 ≥ 80 cm"}，IDF 亚洲标准）');
     if (dangerSpo2) risks.add('血氧饱和度危险偏低（$spo2%，< 90%，建议立即就医）');
     if (lowSpo2) risks.add('血氧饱和度偏低（$spo2%，正常 ≥ 95%，WHO 标准）');
-    if (shortSleep) risks.add('睡眠严重不足（${sleepHours.toStringAsFixed(1)} h < 6 h，成人建议 7-9 h，NSF 标准）');
-    if (borderlineSleep) risks.add('睡眠略显不足（${sleepHours.toStringAsFixed(1)} h，建议达到 7-9 h）');
+    if (shortSleep)
+      risks.add(
+          '睡眠严重不足（${sleepHours.toStringAsFixed(1)} h < 6 h，成人建议 7-9 h，NSF 标准）');
+    if (borderlineSleep)
+      risks.add('睡眠略显不足（${sleepHours.toStringAsFixed(1)} h，建议达到 7-9 h）');
     if (lowSteps) risks.add('日步数不足（$steps 步，建议每日 ≥ 7500 步，WHO 2022）');
     if (borderlineSteps) risks.add('日步数偏低（$steps 步，建议每日 ≥ 7500 步）');
     if (highHr) risks.add('静息心率偏高（$hrBpm bpm，正常范围 60-100 bpm）');
@@ -351,10 +375,19 @@ class HealthRepository extends ChangeNotifier {
       _ => tdee.clamp(1200, 3000),
     };
 
-    final saltNote = (highBp || borderlineBp || crisisBp) ? '低盐（全天钠 < 1500 mg，DASH 饮食）' : '少盐少油';
-    final carbNote = (highGlucose || borderlineGlucose) ? '优先低GI食物，均匀分配三餐碳水' : '';
-    final fatNote = (highLipid || borderlineLipid || lowHdl || highTg) ? '减少饱和脂肪，增加不饱和脂肪（深海鱼、坚果）' : '';
-    final dietParts = [saltNote, if (carbNote.isNotEmpty) carbNote, if (fatNote.isNotEmpty) fatNote];
+    final saltNote = (highBp || borderlineBp || crisisBp)
+        ? '低盐（全天钠 < 1500 mg，DASH 饮食）'
+        : '少盐少油';
+    final carbNote =
+        (highGlucose || borderlineGlucose) ? '优先低GI食物，均匀分配三餐碳水' : '';
+    final fatNote = (highLipid || borderlineLipid || lowHdl || highTg)
+        ? '减少饱和脂肪，增加不饱和脂肪（深海鱼、坚果）'
+        : '';
+    final dietParts = [
+      saltNote,
+      if (carbNote.isNotEmpty) carbNote,
+      if (fatNote.isNotEmpty) fatNote
+    ];
     final dietNote = dietParts.join('；');
 
     final goalNote = switch (profile.goal) {
@@ -492,7 +525,8 @@ class HealthRepository extends ChangeNotifier {
           'reminder',
           ReminderData(
             type: 'bp',
-            remindAt: DateTime(now.year, now.month, now.day, 19, 0).millisecondsSinceEpoch,
+            remindAt: DateTime(now.year, now.month, now.day, 19, 0)
+                .millisecondsSinceEpoch,
             payload: {'note': '晚间血压监测（安静休息5分钟后测量）'},
             channel: 'local',
             status: 'pending',
@@ -506,7 +540,8 @@ class HealthRepository extends ChangeNotifier {
           'reminder',
           ReminderData(
             type: 'glucose',
-            remindAt: DateTime(now.year, now.month, now.day, 9, 30).millisecondsSinceEpoch,
+            remindAt: DateTime(now.year, now.month, now.day, 9, 30)
+                .millisecondsSinceEpoch,
             payload: {'note': '餐后2小时血糖监测'},
             channel: 'local',
             status: 'pending',
@@ -606,8 +641,12 @@ class HealthRepository extends ChangeNotifier {
   Future<void> clearAllData() async {
     final db = await database.open();
     for (final table in [
-      'health_indicator', 'plan', 'clock_record',
-      'reminder', 'user_profile', 'sync_queue',
+      'health_indicator',
+      'plan',
+      'clock_record',
+      'reminder',
+      'user_profile',
+      'sync_queue',
     ]) {
       await db.delete(table);
     }
@@ -634,14 +673,20 @@ class HealthRepository extends ChangeNotifier {
     final db = await database.open();
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
-    final weekStart = todayStart.subtract(Duration(days: todayStart.weekday - 1));
+    final weekStart =
+        todayStart.subtract(Duration(days: todayStart.weekday - 1));
     final monthStart = DateTime(now.year, now.month, 1);
 
     Future<Map<String, int>> countByType(DateTime start, DateTime end) async {
       final rows = await db.query(
         'clock_record',
         where: 'user_id = ? AND clock_at >= ? AND clock_at < ? AND status = ?',
-        whereArgs: [kLocalUserId, start.millisecondsSinceEpoch, end.millisecondsSinceEpoch, 'done'],
+        whereArgs: [
+          kLocalUserId,
+          start.millisecondsSinceEpoch,
+          end.millisecondsSinceEpoch,
+          'done'
+        ],
       );
       final map = <String, int>{};
       for (final row in rows) {
@@ -697,14 +742,14 @@ class HealthRepository extends ChangeNotifier {
   /// 全量 JSON 备份，包含档案/指标/提醒/打卡记录
   Future<Map<String, dynamic>> exportJson() async {
     final db = await database.open();
-    final profileRows = await db.query('user_profile',
-        where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final profileRows = await db
+        .query('user_profile', where: 'user_id = ?', whereArgs: [kLocalUserId]);
     final indicatorRows = await db.query('health_indicator',
         where: 'user_id = ?', whereArgs: [kLocalUserId]);
-    final reminderRows = await db.query('reminder',
-        where: 'user_id = ?', whereArgs: [kLocalUserId]);
-    final clockRows = await db.query('clock_record',
-        where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final reminderRows = await db
+        .query('reminder', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final clockRows = await db
+        .query('clock_record', where: 'user_id = ?', whereArgs: [kLocalUserId]);
     return {
       'version': '1.0',
       'exportedAt': DateTime.now().toIso8601String(),
@@ -737,16 +782,23 @@ class HealthRepository extends ChangeNotifier {
           buf.writeln('$date,$time,体重,${e.payload['weightKg'] ?? ''},kg,');
         case 'glucose':
           final mt = switch (e.payload['mealType']) {
-            'fasting' => '空腹', 'postmeal' => '餐后2h', _ => '随机'
+            'fasting' => '空腹',
+            'postmeal' => '餐后2h',
+            _ => '随机'
           };
-          buf.writeln('$date,$time,血糖,${e.payload['glucoseMmol'] ?? ''},mmol/L,$mt');
+          buf.writeln(
+              '$date,$time,血糖,${e.payload['glucoseMmol'] ?? ''},mmol/L,$mt');
         case 'heart_rate':
           buf.writeln('$date,$time,心率,${e.payload['bpm'] ?? ''},bpm,');
         case 'lipid':
-          if (e.payload['tc'] != null) buf.writeln('$date,$time,总胆固醇 TC,${e.payload['tc']},mmol/L,');
-          if (e.payload['ldl'] != null) buf.writeln('$date,$time,LDL 低密度,${e.payload['ldl']},mmol/L,');
-          if (e.payload['hdl'] != null) buf.writeln('$date,$time,HDL 高密度,${e.payload['hdl']},mmol/L,');
-          if (e.payload['tg'] != null) buf.writeln('$date,$time,甘油三酯 TG,${e.payload['tg']},mmol/L,');
+          if (e.payload['tc'] != null)
+            buf.writeln('$date,$time,总胆固醇 TC,${e.payload['tc']},mmol/L,');
+          if (e.payload['ldl'] != null)
+            buf.writeln('$date,$time,LDL 低密度,${e.payload['ldl']},mmol/L,');
+          if (e.payload['hdl'] != null)
+            buf.writeln('$date,$time,HDL 高密度,${e.payload['hdl']},mmol/L,');
+          if (e.payload['tg'] != null)
+            buf.writeln('$date,$time,甘油三酯 TG,${e.payload['tg']},mmol/L,');
         case 'body_fat':
           buf.writeln('$date,$time,体脂率,${e.payload['bodyFatPct'] ?? ''},%,');
         case 'waist':
@@ -755,7 +807,9 @@ class HealthRepository extends ChangeNotifier {
           buf.writeln('$date,$time,血氧饱和度,${e.payload['spo2Pct'] ?? ''},%,');
         case 'sleep':
           final q = switch (e.payload['quality']) {
-            'good' => '好', 'fair' => '一般', _ => '差'
+            'good' => '好',
+            'fair' => '一般',
+            _ => '差'
           };
           buf.writeln('$date,$time,睡眠时长,${e.payload['sleepHours'] ?? ''},h,$q');
         case 'steps':
@@ -778,9 +832,12 @@ class HealthRepository extends ChangeNotifier {
 
     await db.transaction((txn) async {
       // 清除现有记录（保留 plan，恢复后可重新生成）
-      await txn.delete('health_indicator', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-      await txn.delete('reminder', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-      await txn.delete('clock_record', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn.delete('health_indicator',
+          where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn
+          .delete('reminder', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn.delete('clock_record',
+          where: 'user_id = ?', whereArgs: [kLocalUserId]);
 
       // 导入指标
       final indicators = exportData['indicators'] as List?;
@@ -854,7 +911,7 @@ class HealthRepository extends ChangeNotifier {
       UserProfileData(
         nickname: '演示用户',
         gender: 'male',
-        birthYear: 1985,           // 约 41 岁
+        birthYear: 1985, // 约 41 岁
         heightCm: 175,
         weightKg: 70.0,
         medicalHistory: '各项指标处于正常参考范围，定期监测维持健康状态',
@@ -1016,15 +1073,30 @@ class HealthRepository extends ChangeNotifier {
     final summary = '$targetKcal kcal，$dietNote';
 
     final proteins = isVeg
-        ? ['豆腐 100g', '鸡蛋 1个 + 豆腐 80g', '毛豆 50g + 腰果', '豆腐干 + 坚果',
-           '鸡蛋 2个', '毛豆 + 豆浆', '黄豆 + 豆腐']
-        : ['鸡胸肉 120g', '清蒸鱼 150g', '虾仁 100g', '牛肉 100g',
-           '三文鱼 100g', '鸡腿肉（去皮）130g', '猪瘦肉 80g'];
+        ? [
+            '豆腐 100g',
+            '鸡蛋 1个 + 豆腐 80g',
+            '毛豆 50g + 腰果',
+            '豆腐干 + 坚果',
+            '鸡蛋 2个',
+            '毛豆 + 豆浆',
+            '黄豆 + 豆腐'
+          ]
+        : [
+            '鸡胸肉 120g',
+            '清蒸鱼 150g',
+            '虾仁 100g',
+            '牛肉 100g',
+            '三文鱼 100g',
+            '鸡腿肉（去皮）130g',
+            '猪瘦肉 80g'
+          ];
 
     return [
       // 第1天
       {
-        'summary': summary, 'goalNote': goalNote,
+        'summary': summary,
+        'goalNote': goalNote,
         'breakfast': ['燕麦粥 1碗（$carb）', '水煮蛋 1个', '牛奶 200ml'],
         'lunch': ['$carb 100g（熟重）', proteins[0], '西兰花 + 胡萝卜 200g', oilNote],
         'dinner': ['$carb 80g', '清蒸鱼 120g', '菠菜 + 蘑菇 200g'],
@@ -1032,7 +1104,8 @@ class HealthRepository extends ChangeNotifier {
       },
       // 第2天
       {
-        'summary': summary, 'goalNote': goalNote,
+        'summary': summary,
+        'goalNote': goalNote,
         'breakfast': ['全麦吐司 2片', proteins[2], '番茄 1个'],
         'lunch': ['荞麦面 100g（煮熟）', proteins[1], '黄瓜 + 生菜 200g', oilNote],
         'dinner': ['红薯 150g', proteins[2], '大量绿叶菜 250g'],
@@ -1040,7 +1113,8 @@ class HealthRepository extends ChangeNotifier {
       },
       // 第3天
       {
-        'summary': summary, 'goalNote': goalNote,
+        'summary': summary,
+        'goalNote': goalNote,
         'breakfast': ['杂粮粥 1碗', '鸡蛋 1个', '黄瓜片'],
         'lunch': ['糙米饭 100g', proteins[3], '彩椒 + 西葫芦 200g', oilNote],
         'dinner': ['玉米 1根', proteins[4], '芹菜 + 木耳 200g'],
@@ -1048,7 +1122,8 @@ class HealthRepository extends ChangeNotifier {
       },
       // 第4天
       {
-        'summary': summary, 'goalNote': goalNote,
+        'summary': summary,
+        'goalNote': goalNote,
         'breakfast': ['燕麦片 + 坚果', '无糖豆浆 200ml', '番茄 1个'],
         'lunch': ['藜麦沙拉（藜麦 80g + 蔬菜）', proteins[5], oilNote],
         'dinner': ['糙米饭 80g', proteins[0], '莲藕 + 绿叶菜 200g'],
@@ -1056,7 +1131,8 @@ class HealthRepository extends ChangeNotifier {
       },
       // 第5天
       {
-        'summary': summary, 'goalNote': goalNote,
+        'summary': summary,
+        'goalNote': goalNote,
         'breakfast': ['全麦面包 2片', '鸡蛋 + 牛油果片', '牛奶 200ml'],
         'lunch': ['糙米饭 100g', proteins[1], '上汤娃娃菜 200g', oilNote],
         'dinner': ['红薯 + 玉米各半', proteins[3], '蒸南瓜 + 绿叶菜'],
@@ -1064,7 +1140,8 @@ class HealthRepository extends ChangeNotifier {
       },
       // 第6天
       {
-        'summary': summary, 'goalNote': goalNote,
+        'summary': summary,
+        'goalNote': goalNote,
         'breakfast': ['燕麦粥 + 枸杞', proteins[6], '菠菜汁'],
         'lunch': ['荞麦面 + 豆腐汤', proteins[4], '大量绿叶菜', oilNote],
         'dinner': ['糙米饭 80g', proteins[5], '茄子 + 冬瓜 200g'],
@@ -1106,21 +1183,30 @@ class HealthRepository extends ChangeNotifier {
         ? '快走 / 游泳 / 固定单车（低冲击）'
         : (highBp ? '快走 / 椭圆机 / 游泳' : '慢跑 / 椭圆机 / 跳绳');
 
-    final strengthNote = highBp
-        ? '中等重量，避免憋气，组间充分休息'
-        : (obese ? '低重量开始，注意膝关节保护' : '循序渐进加重');
+    final strengthNote =
+        highBp ? '中等重量，避免憋气，组间充分休息' : (obese ? '低重量开始，注意膝关节保护' : '循序渐进加重');
 
     return [
       // 第1天：有氧
       {
         'summary': '$intensity 有氧 ${durations[0]} 分钟',
-        'items': ['热身 5 分钟（原地踏步 + 肩颈活动）', '$cardioType ${durations[0]} 分钟', '整理拉伸 8 分钟'],
+        'items': [
+          '热身 5 分钟（原地踏步 + 肩颈活动）',
+          '$cardioType ${durations[0]} 分钟',
+          '整理拉伸 8 分钟'
+        ],
         'type': 'cardio',
       },
       // 第2天：上肢力量
       {
         'summary': '上肢力量 ${durations[1]} 分钟（$strengthNote）',
-        'items': ['热身 5 分钟', '弹力带划船 3×12', '俯卧撑 / 推墙 3×10', '哑铃弯举 3×12', '核心稳定 10 分钟'],
+        'items': [
+          '热身 5 分钟',
+          '弹力带划船 3×12',
+          '俯卧撑 / 推墙 3×10',
+          '哑铃弯举 3×12',
+          '核心稳定 10 分钟'
+        ],
         'type': 'strength',
       },
       // 第3天：主动恢复
@@ -1132,19 +1218,36 @@ class HealthRepository extends ChangeNotifier {
       // 第4天：有氧 + 核心
       {
         'summary': '$intensity 有氧 ${durations[3] - 10} 分钟 + 核心训练',
-        'items': ['热身 5 分钟', '$cardioType ${durations[3] - 10} 分钟', '平板支撑 3 组', '腹肌卷曲 3 组', '放松拉伸 8 分钟'],
+        'items': [
+          '热身 5 分钟',
+          '$cardioType ${durations[3] - 10} 分钟',
+          '平板支撑 3 组',
+          '腹肌卷曲 3 组',
+          '放松拉伸 8 分钟'
+        ],
         'type': 'cardio',
       },
       // 第5天：下肢力量
       {
         'summary': '下肢力量 ${durations[4]} 分钟（$strengthNote）',
-        'items': ['热身 5 分钟', '深蹲 / 椅子辅助 3×12', '弓箭步 3×10', '臀桥 3×15', '小腿提踵 3×20', '拉伸 8 分钟'],
+        'items': [
+          '热身 5 分钟',
+          '深蹲 / 椅子辅助 3×12',
+          '弓箭步 3×10',
+          '臀桥 3×15',
+          '小腿提踵 3×20',
+          '拉伸 8 分钟'
+        ],
         'type': 'strength',
       },
       // 第6天：有氧（本周最长）
       {
         'summary': '$intensity 有氧 ${durations[5]} 分钟，挑战本周最长时长',
-        'items': ['热身 8 分钟', '$cardioType ${durations[5] - 10} 分钟', '拉伸 + 泡沫轴放松 12 分钟'],
+        'items': [
+          '热身 8 分钟',
+          '$cardioType ${durations[5] - 10} 分钟',
+          '拉伸 + 泡沫轴放松 12 分钟'
+        ],
         'type': 'cardio',
       },
       // 第7天：休息
@@ -1244,8 +1347,10 @@ class _RiskResult {
     if (risks.isEmpty) return _buildHealthySummary();
 
     // 有风险：按严重程度描述主要问题
-    final severe = risks.where((r) =>
-        r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低')).toList();
+    final severe = risks
+        .where((r) =>
+            r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'))
+        .toList();
     if (severe.isNotEmpty) {
       return '检测到 ${severe.length} 项需立即关注的指标，请尽快就医确认，同时参考以下计划调整生活方式。';
     }

@@ -5,7 +5,12 @@ import 'package:dio/dio.dart';
 /// 注意：上传到服务端的健康敏感数据必须先经过 [CryptoService] 加密。
 /// 本类只负责 HTTP 通信，不处理加密 / 解密。
 class ApiClient {
-  ApiClient({String baseUrl = 'http://192.168.1.9:8080/api/v1'})
+  ApiClient({
+    String baseUrl = const String.fromEnvironment(
+      'API_BASE_URL',
+      defaultValue: 'http://192.168.1.188:8080/api/v1',
+    ),
+  })
       : _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
