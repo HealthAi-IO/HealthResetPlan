@@ -10,7 +10,6 @@ import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
-import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,17 +26,10 @@ class MainActivity : FlutterFragmentActivity() {
   private val coroutineScope = CoroutineScope(Dispatchers.Main)
   private var pendingAccessResult: MethodChannel.Result? = null
   private var healthClient: HealthConnectClient? = null
-  private val healthPermissions = setOf(
-    HealthPermission.getReadPermission(StepsRecord::class),
-    HealthPermission.getReadPermission(HeartRateRecord::class),
-    HealthPermission.getReadPermission(SleepSessionRecord::class),
-  )
-
-  private val healthPermissionStrings = setOf(
-    HealthPermission.getReadPermission(StepsRecord::class),
-    HealthPermission.getReadPermission(HeartRateRecord::class),
-    HealthPermission.getReadPermission(SleepSessionRecord::class),
-  )
+  private val stepsPermission = HealthPermission.getReadPermission(StepsRecord::class)
+  private val heartRatePermission = HealthPermission.getReadPermission(HeartRateRecord::class)
+  private val sleepPermission = HealthPermission.getReadPermission(SleepSessionRecord::class)
+  private val healthPermissionStrings = setOf(stepsPermission, heartRatePermission, sleepPermission)
   private lateinit var permissionLauncher: ActivityResultLauncher<Set<String>>
 
   override fun onCreate(savedInstanceState: android.os.Bundle?) {
@@ -45,7 +37,7 @@ class MainActivity : FlutterFragmentActivity() {
     permissionLauncher = registerForActivityResult(
       PermissionController.createRequestPermissionResultContract()
     ) { granted ->
-      pendingAccessResult?.success(granted.containsAll(healthPermissionStrings))
+      pendingAccessResult?.success(accessStatus(granted))
       pendingAccessResult = null
     }
   }
@@ -56,6 +48,14 @@ class MainActivity : FlutterFragmentActivity() {
     MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
       when (call.method) {
         "isAvailable" -> result.success(HealthConnectClient.getSdkStatus(this) == HealthConnectClient.SDK_AVAILABLE)
+        "accessStatus" -> coroutineScope.launch {
+          try {
+            result.success(currentAccessStatus())
+          } catch (e: Exception) {
+            Log.e(channelName, "accessStatus failed", e)
+            result.success(accessStatus(emptySet()))
+          }
+        }
         "requestAccess" -> requestAccess(result)
         "sync" -> coroutineScope.launch {
           try {
@@ -72,7 +72,7 @@ class MainActivity : FlutterFragmentActivity() {
 
   private fun requestAccess(result: MethodChannel.Result) {
     if (HealthConnectClient.getSdkStatus(this) != HealthConnectClient.SDK_AVAILABLE) {
-      result.success(false)
+      result.success(mapOf("available" to false))
       return
     }
     pendingAccessResult = result
@@ -90,16 +90,41 @@ class MainActivity : FlutterFragmentActivity() {
     val zone = ZoneId.systemDefault()
     val startOfDay = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant()
     val yesterday = now.minus(1, ChronoUnit.DAYS)
+    val granted = client().permissionController.getGrantedPermissions()
 
-    val steps = readSteps(startOfDay, now)
-    val heartRate = readHeartRate(yesterday, now)
-    val sleepHours = readSleepHours(yesterday, now)
+    val steps = if (granted.contains(stepsPermission)) readSteps(startOfDay, now) else null
+    val heartRate = if (granted.contains(heartRatePermission)) readHeartRate(yesterday, now) else null
+    val sleepHours = if (granted.contains(sleepPermission)) readSleepHours(yesterday, now) else null
 
     return mapOf(
       "steps" to steps,
       "heartRateBpm" to heartRate,
       "sleepHours" to sleepHours,
       "recordedAt" to now.toEpochMilli(),
+      "permissions" to accessStatus(granted),
+    )
+  }
+
+  private suspend fun currentAccessStatus(): Map<String, Any> {
+    if (HealthConnectClient.getSdkStatus(this) != HealthConnectClient.SDK_AVAILABLE) {
+      return mapOf("available" to false)
+    }
+    return accessStatus(client().permissionController.getGrantedPermissions())
+  }
+
+  private fun accessStatus(granted: Set<String>): Map<String, Any> {
+    val stepsGranted = granted.contains(stepsPermission)
+    val heartRateGranted = granted.contains(heartRatePermission)
+    val sleepGranted = granted.contains(sleepPermission)
+    val anyGranted = stepsGranted || heartRateGranted || sleepGranted
+    val allGranted = stepsGranted && heartRateGranted && sleepGranted
+    return mapOf(
+      "available" to (HealthConnectClient.getSdkStatus(this) == HealthConnectClient.SDK_AVAILABLE),
+      "stepsGranted" to stepsGranted,
+      "heartRateGranted" to heartRateGranted,
+      "sleepGranted" to sleepGranted,
+      "anyGranted" to anyGranted,
+      "allGranted" to allGranted,
     )
   }
 

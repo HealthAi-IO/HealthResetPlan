@@ -102,9 +102,21 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
   }
 
   Future<void> _connectAndBind(ScannedDevice d, int index) async {
+    if (d.isWearableBand) {
+      await _bindWearableBand(d, index);
+      return;
+    }
+
     if (d.inferredKind == DeviceKind.unknown) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('暂未识别该设备类型，请选择体脂秤、血压计或心率设备')),
+        const SnackBar(content: Text('暂未识别该设备类型，请选择体脂秤、血压计、心率设备或手环手表')),
+      );
+      return;
+    }
+
+    if (!d.connectable) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('该设备当前不可连接，请唤醒设备或进入测量/配对模式后重试')),
       );
       return;
     }
@@ -169,6 +181,70 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
     }
   }
 
+  Future<void> _bindWearableBand(ScannedDevice d, int index) async {
+    setState(() => _connectingIndex = index);
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      await _bt.stopScan();
+      _scanSub?.cancel();
+
+      final existing = await _devRepo.findByMac(d.id);
+      if (existing != null) {
+        messenger.showSnackBar(SnackBar(content: Text('「${d.name}」已绑定')));
+        if (mounted) context.pop();
+        return;
+      }
+
+      final standardKind = await _discoverBandStandardKind(d);
+      if (standardKind != DeviceKind.unknown) {
+        await _devRepo.bind(
+          kind: standardKind,
+          name: d.name,
+          macAddress: d.id,
+          brand: _inferBandBrand(d.name),
+          syncSource: DeviceSyncSource.bleLive,
+        );
+
+        if (!mounted) return;
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('「${d.name}」支持标准 BLE，已绑定为蓝牙实时采集设备'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        context.pop();
+        return;
+      }
+
+      await _devRepo.bind(
+        kind: DeviceKind.band,
+        name: d.name,
+        macAddress: d.id,
+        brand: _inferBandBrand(d.name),
+        syncSource: DeviceSyncSource.systemHealth,
+      );
+
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已绑定「${d.name}」。该手环未开放标准 BLE 数据，需通过系统健康同步'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      context.pop();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _connectingIndex = null);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('绑定失败：$e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   String _indicatorType(DeviceKind kind) => switch (kind) {
         DeviceKind.bloodPressure => 'bp',
         DeviceKind.weightScale => 'weight',
@@ -176,6 +252,24 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
         DeviceKind.band => 'heart_rate',
         _ => 'other',
       };
+
+  Future<DeviceKind> _discoverBandStandardKind(ScannedDevice device) async {
+    if (!device.connectable) return DeviceKind.unknown;
+    try {
+      return await _bt.discoverSupportedMeasurementKind(device.id);
+    } catch (_) {
+      return DeviceKind.unknown;
+    }
+  }
+
+  String _inferBandBrand(String name) {
+    final normalized = name.toLowerCase();
+    if (normalized.contains('huawei')) return '华为';
+    if (normalized.contains('honor')) return '荣耀';
+    if (normalized.contains('mi') || normalized.contains('xiaomi')) return '小米';
+    if (normalized.contains('apple')) return 'Apple';
+    return '手环/手表';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -260,8 +354,7 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
             Icon(Icons.bluetooth_searching,
                 size: 48, color: AppTheme.deepBlue.withValues(alpha: 0.6)),
             const SizedBox(height: 16),
-            const Text('正在搜索附近的蓝牙设备…',
-                style: TextStyle(color: AppTheme.muted)),
+            const Text('正在搜索附近的蓝牙设备…', style: TextStyle(color: AppTheme.muted)),
           ],
         ),
       );
@@ -275,8 +368,7 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
             Icon(Icons.bluetooth_disabled,
                 size: 48, color: Colors.grey.shade400),
             const SizedBox(height: 16),
-            const Text('暂未发现设备',
-                style: TextStyle(color: AppTheme.muted)),
+            const Text('暂未发现设备', style: TextStyle(color: AppTheme.muted)),
             const SizedBox(height: 6),
             const Text(
               '请打开设备电源，靠近手机后点击右上角刷新',
@@ -326,19 +418,17 @@ class _DeviceRow extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(device.name,
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${kind.label} · 信号 ${device.rssi} dBm',
-                    style: const TextStyle(
-                        fontSize: 11, color: AppTheme.muted),
-                  ),
-                ]),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(device.name,
+                  style: const TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(
+                '${kind.label} · ${_syncModeText(device)} · 信号 ${device.rssi} dBm',
+                style: const TextStyle(fontSize: 11, color: AppTheme.muted),
+              ),
+            ]),
           ),
           if (connecting)
             const SizedBox(
@@ -347,10 +437,15 @@ class _DeviceRow extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else
-            const Icon(Icons.add_circle_outline,
-                color: AppTheme.deepBlue),
+            const Icon(Icons.add_circle_outline, color: AppTheme.deepBlue),
         ]),
       ),
     );
+  }
+
+  String _syncModeText(ScannedDevice device) {
+    if (device.isWearableBand) return '系统健康同步';
+    if (device.hasStandardBleMeasurement) return 'BLE 实时采集';
+    return device.connectable ? '可连接' : '不可连接';
   }
 }

@@ -28,7 +28,14 @@ class AiApi {
       goal: goal,
     );
 
-    final resp = await _client.dio.post('/ai/plan/generate', data: body);
+    final resp = await _client.dio.post(
+      '/ai/plan/generate',
+      data: body,
+      options: Options(
+        sendTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 120),
+      ),
+    );
     final data = _unwrapData(resp.data);
 
     return AiPlanResult(

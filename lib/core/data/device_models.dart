@@ -11,8 +11,7 @@ enum DeviceKind {
   final String label;
   final String emoji;
 
-  static DeviceKind fromCode(String code) =>
-      DeviceKind.values.firstWhere(
+  static DeviceKind fromCode(String code) => DeviceKind.values.firstWhere(
         (e) => e.code == code,
         orElse: () => DeviceKind.unknown,
       );
@@ -96,16 +95,20 @@ class BoundDevice {
 /// 扫描到的设备（未绑定）
 class ScannedDevice {
   ScannedDevice({
-    required this.id,        // 平台 ID（Android 是 MAC，iOS 是 UUID）
+    required this.id, // 平台 ID（Android 是 MAC，iOS 是 UUID）
     required this.name,
     required this.rssi,
     required this.serviceUuids,
+    this.connectable = true,
+    this.manufacturerIds = const [],
   });
 
   final String id;
   final String name;
   final int rssi;
   final List<String> serviceUuids;
+  final bool connectable;
+  final List<int> manufacturerIds;
 
   /// 根据广播的 GATT 服务 UUID 推断设备类型
   DeviceKind get inferredKind {
@@ -120,12 +123,33 @@ class ScannedDevice {
     if (n.contains('bp') || n.contains('blood') || n.contains('血压')) {
       return DeviceKind.bloodPressure;
     }
-    if (n.contains('scale') || n.contains('weight') || n.contains('体重') || n.contains('体脂')) {
+    if (n.contains('scale') ||
+        n.contains('weight') ||
+        n.contains('体重') ||
+        n.contains('体脂')) {
       return DeviceKind.weightScale;
     }
-    if (n.contains('band') || n.contains('mi band') || n.contains('手环') || n.contains('watch')) {
+    if (n.contains('band') ||
+        n.contains('mi band') ||
+        n.contains('huawei') ||
+        n.contains('honor') ||
+        n.contains('手环') ||
+        n.contains('watch') ||
+        n.contains('gt ') ||
+        n.contains('fit ')) {
       return DeviceKind.band;
     }
     return DeviceKind.unknown;
   }
+
+  bool get hasStandardBleMeasurement {
+    final uuids = serviceUuids.map((e) => e.toLowerCase()).toList();
+    return uuids.any((u) =>
+        u.contains('1810') ||
+        u.contains('181d') ||
+        u.contains('181b') ||
+        u.contains('180d'));
+  }
+
+  bool get isWearableBand => inferredKind == DeviceKind.band;
 }

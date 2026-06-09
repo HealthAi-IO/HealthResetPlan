@@ -100,9 +100,9 @@ class SyncService {
         );
       }
 
-      final allowed = await healthSyncBridge.requestAccess();
-      if (!allowed) {
-        return const SyncResult(pushed: 0, pulled: 0, error: '未获得健康数据读取权限');
+      final access = await healthSyncBridge.requestAccess();
+      if (!access.anyGranted) {
+        return const SyncResult(pushed: 0, pulled: 0, error: '未获得任何健康数据读取权限');
       }
 
       final snapshot = await healthSyncBridge.sync();
@@ -112,6 +112,13 @@ class SyncService {
         sleepHours: snapshot.sleepHours,
         recordedAt: snapshot.recordedAt,
       );
+      if (inserted == 0) {
+        return const SyncResult(
+          pushed: 0,
+          pulled: 0,
+          error: '已获得健康数据权限，但暂未读取到步数、心率或睡眠数据',
+        );
+      }
       return SyncResult(pushed: inserted, pulled: 0);
     } catch (e) {
       return SyncResult(pushed: 0, pulled: 0, error: '$e');

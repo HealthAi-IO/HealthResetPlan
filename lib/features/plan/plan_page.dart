@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -99,15 +100,25 @@ class _PlanPageState extends State<PlanPage> {
       await _showAiPlanSheet(result);
     } catch (e) {
       if (!mounted) return;
+      await _ensureLocalPlanAfterAiFailure();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('AI 生成失败：${_friendlyError(e)}'),
-          backgroundColor: Colors.red.shade600,
+          content: Text(_friendlyError(e)),
+          backgroundColor: Colors.orange.shade700,
         ),
       );
     } finally {
       if (mounted) setState(() => _aiGenerating = false);
     }
+  }
+
+  Future<void> _ensureLocalPlanAfterAiFailure() async {
+    if (_plans.isNotEmpty) return;
+    try {
+      await _repo.generateWeeklyPlan();
+      await _load(silent: true);
+    } catch (_) {}
   }
 
   Future<String?> _showProviderPicker() {
@@ -327,11 +338,35 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   String _friendlyError(Object e) {
+    if (e is DioException) {
+      final body = e.response?.data;
+      if (body is Map) {
+        final code = (body['code'] as num?)?.toInt() ?? 0;
+        final message = (body['message'] ?? body['msg'])?.toString();
+        if (code == 40301) return 'AI 方案生成需要会员权益，请先开通或续费。';
+        if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置。';
+        if (code == 40101) return 'AI 服务密钥失效，请联系管理员检查后台配置。';
+        if (code == 50301) {
+          return 'AI 服务暂时繁忙，已为你保留本地规则计划，稍后可重试。';
+        }
+        if (message != null && message.isNotEmpty) return message;
+      }
+      if (e.type == DioExceptionType.receiveTimeout ||
+          e.type == DioExceptionType.sendTimeout) {
+        return 'AI 响应较慢已超时，已为你保留本地规则计划，稍后可重试。';
+      }
+      if (e.type == DioExceptionType.connectionTimeout ||
+          e.type == DioExceptionType.connectionError) {
+        return '无法连接 AI 服务，请检查手机和后端是否在同一 WiFi。';
+      }
+    }
     final s = e.toString();
     if (s.contains('40301')) return '会员权益已过期，请续费';
-    if (s.contains('50301')) return 'AI 服务响应超时，请重试';
-    if (s.contains('Connection') || s.contains('Socket')) return '网络连接失败';
-    return e.toString().substring(0, e.toString().length.clamp(0, 60));
+    if (s.contains('50301')) return 'AI 服务暂时繁忙，已为你保留本地规则计划，稍后可重试。';
+    if (s.contains('Connection') || s.contains('Socket')) {
+      return '网络连接失败，请检查后端服务和 WiFi。';
+    }
+    return 'AI 生成暂时不可用，已为你保留本地规则计划。';
   }
 
   @override

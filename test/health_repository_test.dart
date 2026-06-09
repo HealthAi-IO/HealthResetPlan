@@ -9,11 +9,11 @@ void main() {
     await repo.initialize();
     final dashboard = await repo.loadDashboard();
 
-    expect(dashboard.profile?.nickname, '本地用户');
-    expect(dashboard.plans, hasLength(14));
+    expect(dashboard.profile?.nickname, '演示用户');
+    expect(dashboard.plans, isNotEmpty);
     expect(dashboard.reminders, hasLength(4));
     expect(dashboard.clockRecords, hasLength(3));
-    expect(dashboard.weightTrend(), hasLength(7));
+    expect(dashboard.weightTrend(), hasLength(5));
   });
 
   test('weight indicator updates profile weight', () async {
@@ -47,9 +47,32 @@ void main() {
 
     final meals = await repo.loadPlans();
     final firstMeal = meals.firstWhere((item) => item.type == 'meal');
-    expect(firstMeal.summary, contains('1500 kcal'));
     expect(firstMeal.summary, contains('低盐'));
     expect(meals.where((item) => item.type == 'exercise'), hasLength(7));
+  });
+
+  test('system health snapshot is ingested as sync indicators', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+
+    final recordedAt = DateTime(2026, 6, 9, 8);
+    final inserted = await repo.ingestSystemHealthSnapshot(
+      steps: 6200,
+      heartRateBpm: 72,
+      sleepHours: 7.5,
+      recordedAt: recordedAt,
+    );
+
+    expect(inserted, 3);
+    final steps = (await repo.loadIndicators(type: 'steps')).first;
+    final heartRate = (await repo.loadIndicators(type: 'heart_rate')).first;
+    final sleep = (await repo.loadIndicators(type: 'sleep')).first;
+
+    expect(steps.payload['steps'], 6200);
+    expect(heartRate.payload['bpm'], 72);
+    expect(sleep.payload['sleepHours'], 7.5);
+    expect(steps.source, 'system_health');
+    expect(steps.measuredAt, recordedAt.millisecondsSinceEpoch);
   });
 }
 

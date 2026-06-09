@@ -17,6 +17,7 @@ class HealthRepository extends ChangeNotifier {
   Future<void> initialize() async {
     if (_ready) return;
     await database.open();
+    await _seedIfEmpty();
     _ready = true;
   }
 
@@ -308,10 +309,15 @@ class HealthRepository extends ChangeNotifier {
 
     // ── 风险列表 ──────────────────────────────────────────────────
     final risks = <String>[];
-    if (crisisBp) risks.add('高血压危象（收缩压 ≥ 180 或舒张压 ≥ 120 mmHg，建议立即就医）');
-    if (highBp) risks.add('高血压 Stage 2（收缩压 ≥ 140 或舒张压 ≥ 90 mmHg，ACC/AHA 2017）');
-    if (borderlineBp)
+    if (crisisBp) {
+      risks.add('高血压危象（收缩压 ≥ 180 或舒张压 ≥ 120 mmHg，建议立即就医）');
+    }
+    if (highBp) {
+      risks.add('高血压 Stage 2（收缩压 ≥ 140 或舒张压 ≥ 90 mmHg，ACC/AHA 2017）');
+    }
+    if (borderlineBp) {
       risks.add('血压偏高 Stage 1（收缩压 130-139 或舒张压 80-89 mmHg，建议生活方式干预）');
+    }
     if (highGlucose) {
       risks.add(mealType == 'postmeal'
           ? '餐后血糖达糖尿病标准（≥ 11.1 mmol/L，ADA 2024，建议就医）'
@@ -322,36 +328,58 @@ class HealthRepository extends ChangeNotifier {
           ? '餐后血糖偏高（7.8-11.0 mmol/L，糖耐量异常 IGT）'
           : '空腹血糖处于糖尿病前期（5.6-6.9 mmol/L，ADA 标准）');
     }
-    if (highLipid)
+    if (highLipid) {
       risks.add('血脂明显偏高（TC ≥ 6.22 或 LDL ≥ 4.14 mmol/L，ACC/AHA 高危阈值）');
-    if (borderlineLipid)
+    }
+    if (borderlineLipid) {
       risks.add('血脂处于边界高值（TC 5.18-6.21 或 LDL 3.37-4.13 mmol/L）');
-    if (lowHdl)
+    }
+    if (lowHdl) {
       risks
           .add('HDL 胆固醇偏低（${isMale ? "男 < 1.04" : "女 < 1.30"} mmol/L，心血管保护不足）');
-    if (highTg) risks.add('甘油三酯偏高（≥ 2.26 mmol/L，建议减少精制糖和饮酒）');
-    if (obese)
+    }
+    if (highTg) {
+      risks.add('甘油三酯偏高（≥ 2.26 mmol/L，建议减少精制糖和饮酒）');
+    }
+    if (obese) {
       risks.add('BMI 肥胖（${bmi.toStringAsFixed(1)}，≥ 28，中国标准 WST 428-2013）');
-    if (overweight)
+    }
+    if (overweight) {
       risks.add('BMI 超重（${bmi.toStringAsFixed(1)}，24.0-27.9，建议适度减重）');
-    if (underweight)
+    }
+    if (underweight) {
       risks.add('BMI 偏低（${bmi.toStringAsFixed(1)}，< 18.5，建议增加营养）');
-    if (highBodyFat)
+    }
+    if (highBodyFat) {
       risks.add(
           '体脂率偏高（${bodyFatPct.toStringAsFixed(1)}%，${isMale ? "男 ≥ 25%" : "女 ≥ 32%"}，ACSM 标准）');
-    if (highWaist)
+    }
+    if (highWaist) {
       risks.add(
           '腰围超标（${waistCm.toStringAsFixed(1)} cm，${isMale ? "男 ≥ 90 cm" : "女 ≥ 80 cm"}，IDF 亚洲标准）');
-    if (dangerSpo2) risks.add('血氧饱和度危险偏低（$spo2%，< 90%，建议立即就医）');
-    if (lowSpo2) risks.add('血氧饱和度偏低（$spo2%，正常 ≥ 95%，WHO 标准）');
-    if (shortSleep)
+    }
+    if (dangerSpo2) {
+      risks.add('血氧饱和度危险偏低（$spo2%，< 90%，建议立即就医）');
+    }
+    if (lowSpo2) {
+      risks.add('血氧饱和度偏低（$spo2%，正常 ≥ 95%，WHO 标准）');
+    }
+    if (shortSleep) {
       risks.add(
           '睡眠严重不足（${sleepHours.toStringAsFixed(1)} h < 6 h，成人建议 7-9 h，NSF 标准）');
-    if (borderlineSleep)
+    }
+    if (borderlineSleep) {
       risks.add('睡眠略显不足（${sleepHours.toStringAsFixed(1)} h，建议达到 7-9 h）');
-    if (lowSteps) risks.add('日步数不足（$steps 步，建议每日 ≥ 7500 步，WHO 2022）');
-    if (borderlineSteps) risks.add('日步数偏低（$steps 步，建议每日 ≥ 7500 步）');
-    if (highHr) risks.add('静息心率偏高（$hrBpm bpm，正常范围 60-100 bpm）');
+    }
+    if (lowSteps) {
+      risks.add('日步数不足（$steps 步，建议每日 ≥ 7500 步，WHO 2022）');
+    }
+    if (borderlineSteps) {
+      risks.add('日步数偏低（$steps 步，建议每日 ≥ 7500 步）');
+    }
+    if (highHr) {
+      risks.add('静息心率偏高（$hrBpm bpm，正常范围 60-100 bpm）');
+    }
 
     // ── 热量目标（Mifflin-St Jeor BMR） ─────────────────────────
     final age = profile.age > 0 ? profile.age : 35;
@@ -791,14 +819,18 @@ class HealthRepository extends ChangeNotifier {
         case 'heart_rate':
           buf.writeln('$date,$time,心率,${e.payload['bpm'] ?? ''},bpm,');
         case 'lipid':
-          if (e.payload['tc'] != null)
+          if (e.payload['tc'] != null) {
             buf.writeln('$date,$time,总胆固醇 TC,${e.payload['tc']},mmol/L,');
-          if (e.payload['ldl'] != null)
+          }
+          if (e.payload['ldl'] != null) {
             buf.writeln('$date,$time,LDL 低密度,${e.payload['ldl']},mmol/L,');
-          if (e.payload['hdl'] != null)
+          }
+          if (e.payload['hdl'] != null) {
             buf.writeln('$date,$time,HDL 高密度,${e.payload['hdl']},mmol/L,');
-          if (e.payload['tg'] != null)
+          }
+          if (e.payload['tg'] != null) {
             buf.writeln('$date,$time,甘油三酯 TG,${e.payload['tg']},mmol/L,');
+          }
         case 'body_fat':
           buf.writeln('$date,$time,体脂率,${e.payload['bodyFatPct'] ?? ''},%,');
         case 'waist':

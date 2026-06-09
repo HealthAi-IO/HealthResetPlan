@@ -438,11 +438,51 @@ class _ProfilePageState extends State<ProfilePage> {
           const SizedBox(height: 20),
           _BackupRestoreSection(repo: _repo),
           const SizedBox(height: 16),
+          if (UserSession.instance.isAccountLogin) ...[
+            _AccountSignOutSection(onSignOut: _signOut),
+            const SizedBox(height: 16),
+          ],
           _DangerZone(onClearAll: _clearAllData),
           const SizedBox(height: 20),
         ],
       ),
     );
+  }
+
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('退出登录'),
+        content: const Text(
+          '退出后将清除当前账号的登录状态，本地健康数据会保留。\n\n确认退出吗？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('退出登录'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // 通知服务端撤销 refresh session，失败不阻断本地清理
+    final refresh = UserSession.instance.refreshToken;
+    if (refresh != null && refresh.isNotEmpty) {
+      try {
+        await sl<AuthApi>().logout(refresh);
+      } catch (_) {/* 忽略 */}
+    }
+
+    await UserSession.instance.signOut();
+    sl<ApiClient>().setAccessToken(null);
+    if (!mounted) return;
+    context.go('/login');
   }
 
   Future<void> _clearAllData() async {
@@ -982,6 +1022,53 @@ class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
                   style: TextStyle(fontWeight: FontWeight.w700)),
               style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── 账号操作区 ─────────────────────────────────────────────────────
+
+class _AccountSignOutSection extends StatelessWidget {
+  const _AccountSignOutSection({required this.onSignOut});
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: const [
+            Icon(Icons.account_circle_outlined,
+                size: 18, color: AppTheme.muted),
+            SizedBox(width: 8),
+            Text('账号',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('退出当前账号后可登录其他账号；本地健康数据会保留',
+              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onSignOut,
+              icon: const Icon(Icons.logout),
+              label: const Text('退出登录',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
             ),
           ),
         ],

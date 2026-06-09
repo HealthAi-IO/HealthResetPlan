@@ -44,7 +44,8 @@ class BluetoothService {
   static const _chrWeightMeasurement = '00002a9d-0000-1000-8000-00805f9b34fb';
 
   static const _svcHeartRate = '0000180d-0000-1000-8000-00805f9b34fb';
-  static const _chrHeartRateMeasurement = '00002a37-0000-1000-8000-00805f9b34fb';
+  static const _chrHeartRateMeasurement =
+      '00002a37-0000-1000-8000-00805f9b34fb';
 
   Future<bool> ensurePermissions() async {
     final results = await [
@@ -72,30 +73,132 @@ class BluetoothService {
 
   Stream<List<ScannedDevice>> scan({
     Duration timeout = const Duration(seconds: 10),
-  }) async* {
-    if (fbp.FlutterBluePlus.isScanningNow) {
-      await fbp.FlutterBluePlus.stopScan();
+  }) {
+    final seen = <String, ScannedDevice>{};
+    Timer? timer;
+    StreamSubscription<List<fbp.ScanResult>>? sub;
+    final controller = StreamController<List<ScannedDevice>>();
+
+    Future<void> finish() async {
+      timer?.cancel();
+      await sub?.cancel();
+      if (fbp.FlutterBluePlus.isScanningNow) {
+        await fbp.FlutterBluePlus.stopScan();
+      }
+      if (!controller.isClosed) {
+        await controller.close();
+      }
     }
 
-    await fbp.FlutterBluePlus.startScan(
-      timeout: timeout,
-      androidScanMode: fbp.AndroidScanMode.balanced,
-    );
+    controller.onListen = () async {
+      try {
+        if (fbp.FlutterBluePlus.isScanningNow) {
+          await fbp.FlutterBluePlus.stopScan();
+        }
 
-    final seen = <String, ScannedDevice>{};
-    await for (final results in fbp.FlutterBluePlus.scanResults) {
-      for (final r in results) {
-        final name = r.device.platformName.trim();
-        if (name.isEmpty) continue;
-        seen[r.device.remoteId.str] = ScannedDevice(
-          id: r.device.remoteId.str,
-          name: name,
-          rssi: r.rssi,
-          serviceUuids: r.advertisementData.serviceUuids.map((u) => u.str).toList(),
+        sub = fbp.FlutterBluePlus.onScanResults.listen(
+          (results) {
+            _collectScanResults(results, seen);
+            if (!controller.isClosed) {
+              controller.add(_sortedDevices(seen));
+            }
+          },
+          onError: controller.addError,
+        );
+
+        await fbp.FlutterBluePlus.startScan(
+          timeout: timeout,
+          androidScanMode: fbp.AndroidScanMode.balanced,
+          androidUsesFineLocation: true,
+        );
+        timer = Timer(timeout + const Duration(milliseconds: 300), finish);
+      } catch (e, s) {
+        if (!controller.isClosed) {
+          controller.addError(e, s);
+          await controller.close();
+        }
+      }
+    };
+
+    controller.onCancel = finish;
+    return controller.stream;
+  }
+
+  void _collectScanResults(
+    List<fbp.ScanResult> results,
+    Map<String, ScannedDevice> seen,
+  ) {
+    for (final r in results) {
+      final advName = r.advertisementData.advName.trim();
+      final platformName = r.device.platformName.trim();
+      final name = advName.isNotEmpty
+          ? advName
+          : (platformName.isNotEmpty
+              ? platformName
+              : '未命名设备 ${r.device.remoteId.str}');
+      final serviceUuids =
+          r.advertisementData.serviceUuids.map((u) => u.str).toList();
+      final hasUsefulSignal = name.trim().isNotEmpty ||
+          serviceUuids.isNotEmpty ||
+          r.advertisementData.manufacturerData.isNotEmpty;
+      if (!hasUsefulSignal) continue;
+
+      seen[r.device.remoteId.str] = ScannedDevice(
+        id: r.device.remoteId.str,
+        name: name,
+        rssi: r.rssi,
+        serviceUuids: serviceUuids,
+        connectable: r.advertisementData.connectable,
+        manufacturerIds: r.advertisementData.manufacturerData.keys.toList(),
+      );
+    }
+  }
+
+  List<ScannedDevice> _sortedDevices(Map<String, ScannedDevice> seen) {
+    return seen.values.toList()
+      ..sort((a, b) {
+        final aKnown = a.inferredKind == DeviceKind.unknown ? 0 : 1;
+        final bKnown = b.inferredKind == DeviceKind.unknown ? 0 : 1;
+        if (aKnown != bKnown) return bKnown.compareTo(aKnown);
+        return b.rssi.compareTo(a.rssi);
+      });
+  }
+
+  Future<DeviceKind> discoverSupportedMeasurementKind(String deviceId) async {
+    final device = fbp.BluetoothDevice.fromId(deviceId);
+    final shouldDisconnect = !device.isConnected;
+    try {
+      if (shouldDisconnect) {
+        await device.connect(
+          timeout: const Duration(seconds: 12),
+          autoConnect: false,
         );
       }
-      yield seen.values.toList()..sort((a, b) => b.rssi.compareTo(a.rssi));
+      final services = await device.discoverServices();
+      for (final svc in services) {
+        final svcId = svc.uuid.str128.toLowerCase();
+        if (svcId == _svcBloodPressure) {
+          return DeviceKind.bloodPressure;
+        }
+        if (svcId == _svcWeightScale ||
+            svcId == '0000181b-0000-1000-8000-00805f9b34fb') {
+          return DeviceKind.weightScale;
+        }
+        if (svcId == _svcHeartRate) {
+          return DeviceKind.heartRate;
+        }
+      }
+      return DeviceKind.unknown;
+    } finally {
+      if (shouldDisconnect && device.isConnected) {
+        await device.disconnect();
+      }
     }
+  }
+
+  Future<bool> hasSupportedMeasurementService(String deviceId) async {
+    final kind = await discoverSupportedMeasurementKind(deviceId);
+    return kind != DeviceKind.unknown;
   }
 
   Future<void> stopScan() async {
@@ -113,6 +216,7 @@ class BluetoothService {
 
     final services = await device.discoverServices();
     final controller = StreamController<MeasurementReading>();
+    var subscribedCount = 0;
 
     device.connectionState.listen((state) {
       if (state == fbp.BluetoothConnectionState.disconnected) {
@@ -129,21 +233,48 @@ class BluetoothService {
             final reading = _parseBloodPressure(bytes);
             if (reading != null) controller.add(reading);
           });
+          subscribedCount++;
         } else if (svcId == _svcWeightScale && chrId == _chrWeightMeasurement) {
           await _subscribeCharacteristic(chr, (bytes) {
             final reading = _parseWeight(bytes);
             if (reading != null) controller.add(reading);
           });
-        } else if (svcId == _svcHeartRate && chrId == _chrHeartRateMeasurement) {
+          subscribedCount++;
+        } else if (svcId == _svcHeartRate &&
+            chrId == _chrHeartRateMeasurement) {
           await _subscribeCharacteristic(chr, (bytes) {
             final reading = _parseHeartRate(bytes);
             if (reading != null) controller.add(reading);
           });
+          subscribedCount++;
         }
       }
     }
 
+    if (subscribedCount == 0) {
+      await controller.close();
+      await device.disconnect();
+      throw StateError('该设备没有开放可读取的标准 BLE 健康测量服务');
+    }
+
     return controller.stream;
+  }
+
+  Future<List<MeasurementReading>> collectMeasurements(
+    String deviceId, {
+    Duration listenDuration = const Duration(seconds: 12),
+  }) async {
+    final readings = <MeasurementReading>[];
+    StreamSubscription<MeasurementReading>? sub;
+    try {
+      final stream = await connectAndSubscribe(deviceId);
+      sub = stream.listen(readings.add);
+      await Future.delayed(listenDuration);
+      return readings;
+    } finally {
+      await sub?.cancel();
+      await disconnect(deviceId);
+    }
   }
 
   Future<void> disconnect(String deviceId) async {

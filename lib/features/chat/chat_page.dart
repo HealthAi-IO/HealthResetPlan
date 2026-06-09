@@ -95,7 +95,11 @@ class _ChatPageState extends State<ChatPage> {
     final p = _profile;
     if (p == null) return '';
     final age = p.birthYear > 0 ? '${DateTime.now().year - p.birthYear}岁' : '';
-    final gender = p.gender == 'male' ? '男' : p.gender == 'female' ? '女' : '';
+    final gender = p.gender == 'male'
+        ? '男'
+        : p.gender == 'female'
+            ? '女'
+            : '';
     final bmi = p.bmi > 0 ? '，BMI ${p.bmi.toStringAsFixed(1)}' : '';
     return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
   }
@@ -158,8 +162,8 @@ class _ChatPageState extends State<ChatPage> {
               child: Row(children: [
                 const Expanded(
                   child: Text('对话历史',
-                      style: TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w800)),
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
                 ),
                 TextButton.icon(
                   onPressed: () {
@@ -184,8 +188,8 @@ class _ChatPageState extends State<ChatPage> {
                   : ListView.separated(
                       controller: scrollCtrl,
                       itemCount: sessions.length,
-                      separatorBuilder: (_, __) => const Divider(
-                          height: 1, indent: 16, endIndent: 16),
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, indent: 16, endIndent: 16),
                       itemBuilder: (_, i) {
                         final s = sessions[i];
                         final active = s.id == _currentSession?.id;
@@ -245,7 +249,7 @@ class _ChatPageState extends State<ChatPage> {
                               );
                               if (confirm != true) return;
                               await _chatRepo.deleteSession(s.id);
-                              if (!mounted) return;
+                              if (!mounted || !sheetCtx.mounted) return;
                               Navigator.pop(sheetCtx);
                               if (_currentSession?.id == s.id) {
                                 await _newSession();
@@ -453,8 +457,7 @@ class _ChatPageState extends State<ChatPage> {
               child: Row(children: [
                 Text(
                   _providers
-                      .firstWhere(
-                          (p) => p.id == _selectedProvider,
+                      .firstWhere((p) => p.id == _selectedProvider,
                           orElse: () => _providers.first)
                       .emoji,
                   style: const TextStyle(fontSize: 14),
@@ -566,49 +569,49 @@ class _ChatPageState extends State<ChatPage> {
           border: Border(top: BorderSide(color: AppTheme.cardBorder)),
         ),
         child: Row(children: [
-        Expanded(
-          child: TextField(
-            controller: _inputCtrl,
-            focusNode: _focusNode,
-            maxLines: 4,
-            minLines: 1,
-            textInputAction: TextInputAction.newline,
-            decoration: InputDecoration(
-              hintText: '输入健康问题…',
-              hintStyle: const TextStyle(color: AppTheme.muted, fontSize: 14),
-              filled: true,
-              fillColor: AppTheme.pageBg,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(20),
-                borderSide: BorderSide.none,
+          Expanded(
+            child: TextField(
+              controller: _inputCtrl,
+              focusNode: _focusNode,
+              maxLines: 4,
+              minLines: 1,
+              textInputAction: TextInputAction.newline,
+              decoration: InputDecoration(
+                hintText: '输入健康问题…',
+                hintStyle: const TextStyle(color: AppTheme.muted, fontSize: 14),
+                filled: true,
+                fillColor: AppTheme.pageBg,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        _sending
-            ? const SizedBox(
-                width: 44,
-                height: 44,
-                child: Center(
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+          const SizedBox(width: 8),
+          _sending
+              ? const SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   ),
+                )
+              : IconButton.filled(
+                  onPressed: () => _sendMessage(_inputCtrl.text),
+                  style: IconButton.styleFrom(
+                    backgroundColor: const Color(0xFF0277BD),
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.send_rounded, size: 20),
                 ),
-              )
-            : IconButton.filled(
-                onPressed: () => _sendMessage(_inputCtrl.text),
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF0277BD),
-                  foregroundColor: Colors.white,
-                ),
-                icon: const Icon(Icons.send_rounded, size: 20),
-              ),
-      ]),
+        ]),
       ),
     );
   }
@@ -753,9 +756,7 @@ class _MessageBubble extends StatelessWidget {
                         provider,
                         style: TextStyle(
                           fontSize: 10,
-                          color: isError
-                              ? Colors.red.shade300
-                              : AppTheme.muted,
+                          color: isError ? Colors.red.shade300 : AppTheme.muted,
                         ),
                       ),
                     ],

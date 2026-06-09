@@ -202,7 +202,7 @@ class _MembershipPageState extends State<MembershipPage> {
       if (body is Map) {
         final code = (body['code'] as num?)?.toInt() ?? 0;
         final msg = body['message']?.toString();
-        if (code == 40002) return '激活码无效或已使用';
+        if (code == 40002) return '激活码无效';
         if (code == 40301) return '请先开通会员';
         if (code == 40101 || status == 401) return '登录已过期，请重新登录';
         if (msg != null && msg.isNotEmpty) return msg;
