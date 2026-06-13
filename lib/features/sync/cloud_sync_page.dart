@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
@@ -340,7 +340,7 @@ class _E2eeNote extends StatelessWidget {
               Icon(Icons.shield_outlined, size: 16, color: AppTheme.deepBlue),
               SizedBox(width: 6),
               Text(
-                '客户端加密说明',
+                '端到端加密说明',
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
@@ -361,3 +361,4 @@ class _E2eeNote extends StatelessWidget {
     );
   }
 }
+

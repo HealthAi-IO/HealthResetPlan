@@ -25,7 +25,7 @@ class AuthApi {
       'password': password,
       if (nickname != null) 'nickname': nickname,
     });
-    return AuthResult.fromJson(resp.data['data'] as Map<String, dynamic>);
+    return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
   /// 登录现有账号
@@ -39,7 +39,7 @@ class AuthApi {
       'identifier': identifier,
       'password': password,
     });
-    return AuthResult.fromJson(resp.data['data'] as Map<String, dynamic>);
+    return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
   /// 刷新 Access Token
@@ -47,7 +47,7 @@ class AuthApi {
     final resp = await _client.dio.post('/auth/refresh', data: {
       'refreshToken': refreshToken,
     });
-    return AuthResult.fromJson(resp.data['data'] as Map<String, dynamic>);
+    return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
   /// 注销（删除服务端 session）
@@ -61,6 +61,38 @@ class AuthApi {
     }
   }
 
+  Future<PasswordResetCodeResult> sendPasswordResetCode({
+    required String credType,
+    required String identifier,
+  }) async {
+    final resp =
+        await _client.dio.post('/auth/password-reset/send-code', data: {
+      'credType': credType,
+      'identifier': identifier,
+    });
+    final body = resp.data;
+    if (body is Map && body['code'] == 0 && body['data'] is Map) {
+      return PasswordResetCodeResult.fromJson(
+        Map<String, dynamic>.from(body['data'] as Map),
+      );
+    }
+    throw StateError('验证码发送失败');
+  }
+
+  Future<void> resetPassword({
+    required String credType,
+    required String identifier,
+    required String code,
+    required String newPassword,
+  }) async {
+    await _client.dio.post('/auth/password-reset/reset', data: {
+      'credType': credType,
+      'identifier': identifier,
+      'code': code,
+      'newPassword': newPassword,
+    });
+  }
+
   /// 获取当前登录用户的账号信息（需 JWT 认证）
   Future<AccountInfo?> fetchAccountInfo() async {
     try {
@@ -70,6 +102,7 @@ class AuthApi {
         if (data == null) return null;
         return AccountInfo(
           userId: data['userId'] as String? ?? '',
+          phoneTail: data['phoneTail'] as String? ?? '',
           nickname: data['nickname'] as String? ?? '',
           avatarUrl: data['avatarUrl'] as String? ?? '',
           hasCloudSync: data['hasCloudSync'] == true,
@@ -120,6 +153,21 @@ class AuthApi {
     }
     throw StateError('头像上传失败');
   }
+
+  Map<String, dynamic> _unwrapData(dynamic body) {
+    if (body is! Map) {
+      throw StateError('服务器响应格式异常');
+    }
+    final code = (body['code'] as num?)?.toInt() ?? 0;
+    if (code != 0) {
+      throw StateError(
+        (body['message'] ?? body['msg'])?.toString() ?? '请求失败',
+      );
+    }
+    final data = body['data'];
+    if (data is Map) return Map<String, dynamic>.from(data);
+    throw StateError('服务器响应缺少 data 字段');
+  }
 }
 
 class AuthResult {
@@ -146,22 +194,42 @@ class AuthResult {
 class AccountInfo {
   const AccountInfo({
     required this.userId,
+    required this.phoneTail,
     required this.nickname,
     required this.avatarUrl,
     required this.hasCloudSync,
   });
 
   final String userId;
+  final String phoneTail;
   final String nickname;
   final String avatarUrl;
   final bool hasCloudSync;
 
   factory AccountInfo.fromJson(Map<String, dynamic> j) => AccountInfo(
         userId: j['userId'] as String? ?? '',
+        phoneTail: j['phoneTail'] as String? ?? '',
         nickname: j['nickname'] as String? ?? '',
         avatarUrl: j['avatarUrl'] as String? ?? '',
         hasCloudSync: j['hasCloudSync'] == true,
       );
+}
+
+class PasswordResetCodeResult {
+  const PasswordResetCodeResult({
+    required this.debugCode,
+    required this.expiresIn,
+  });
+
+  final String debugCode;
+  final int expiresIn;
+
+  factory PasswordResetCodeResult.fromJson(Map<String, dynamic> j) {
+    return PasswordResetCodeResult(
+      debugCode: j['debugCode'] as String? ?? '',
+      expiresIn: (j['expiresIn'] as num?)?.toInt() ?? 0,
+    );
+  }
 }
 
 /// 把 DioException 转成用户友好的错误文本
@@ -180,5 +248,6 @@ String friendlyAuthError(Object e) {
     }
     return '请求失败：${e.type.name}';
   }
+  if (e is StateError) return e.message;
   return e.toString();
 }

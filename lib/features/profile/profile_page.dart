@@ -1,19 +1,12 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -52,7 +45,7 @@ class _ProfilePageState extends State<ProfilePage> {
     super.initState();
     _repo.addListener(_onRepoChanged);
     _load();
-    // 任意字段变化则标记"有未保存改动"，防止后台 repo 变更覆盖用户编辑
+    // 任意字段变化则标�?有未保存改动"，防止后�?repo 变更覆盖用户编辑
     for (final ctrl in [
       _nicknameController,
       _birthYearController,
@@ -98,7 +91,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _syncControllers(UserProfileData? profile) {
     if (profile == null) return;
-    // 同步时暂停 dirty 监听，避免赋值本身触发 _markDirty
+    // 同步时暂�?dirty 监听，避免赋值本身触�?_markDirty
     _dirty = false;
     _nicknameController.text = profile.nickname;
     _birthYearController.text =
@@ -113,7 +106,7 @@ class _ProfilePageState extends State<ProfilePage> {
     _goal = profile.goal;
     _exerciseBase = profile.exerciseBase;
     _dietPreference = profile.dietPreference;
-    // 同步完成后 dirty 保持 false，下一帧用户操作再触发
+    // 同步完成�?dirty 保持 false，下一帧用户操作再触发
   }
 
   Future<void> _saveProfile() async {
@@ -148,7 +141,7 @@ class _ProfilePageState extends State<ProfilePage> {
         await sl<AuthApi>().updateAccountProfile(nickname: nickname);
       }
       if (!mounted) return;
-      _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
+      _dirty = false; // 保存成功后清除脏标记，允许后�?repo 变更同步表单
       messenger.showSnackBar(const SnackBar(content: Text('健康档案已保存到本地')));
     } catch (_) {
       if (!mounted) return;
@@ -436,53 +429,11 @@ class _ProfilePageState extends State<ProfilePage> {
             },
           ),
           const SizedBox(height: 20),
-          _BackupRestoreSection(repo: _repo),
-          const SizedBox(height: 16),
-          if (UserSession.instance.isAccountLogin) ...[
-            _AccountSignOutSection(onSignOut: _signOut),
-            const SizedBox(height: 16),
-          ],
           _DangerZone(onClearAll: _clearAllData),
           const SizedBox(height: 20),
         ],
       ),
     );
-  }
-
-  Future<void> _signOut() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('退出登录'),
-        content: const Text(
-          '退出后将清除当前账号的登录状态，本地健康数据会保留。\n\n确认退出吗？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('退出登录'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    // 通知服务端撤销 refresh session，失败不阻断本地清理
-    final refresh = UserSession.instance.refreshToken;
-    if (refresh != null && refresh.isNotEmpty) {
-      try {
-        await sl<AuthApi>().logout(refresh);
-      } catch (_) {/* 忽略 */}
-    }
-
-    await UserSession.instance.signOut();
-    sl<ApiClient>().setAccessToken(null);
-    if (!mounted) return;
-    context.go('/login');
   }
 
   Future<void> _clearAllData() async {
@@ -508,10 +459,11 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     if (confirmed != true || !mounted) return;
     await _repo.clearAllData();
-    await UserSession.instance.clear();
-    sl<ApiClient>().setAccessToken(null);
     if (!mounted) return;
-    context.go('/login');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('本地健康数据已清空，账号登录状态已保留')),
+    );
+    setState(() {});
   }
 }
 
@@ -573,7 +525,7 @@ class _OverviewCard extends StatelessWidget {
                 children: [
                   _SmallMetric(
                       title: '年龄',
-                      value: profile.age == 0 ? '--' : '${profile.age}岁'),
+                      value: profile.age == 0 ? '--' : '${profile.age} 岁'),
                   _SmallMetric(
                       title: 'BMI',
                       value: profile.bmi == 0
@@ -765,7 +717,7 @@ class _IndicatorList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (indicators.isEmpty) {
       return const Text(
-        '暂无记录。',
+        '暂无记录',
         style: TextStyle(color: AppTheme.muted),
       );
     }
@@ -835,203 +787,9 @@ IconData _iconFor(String type) {
   };
 }
 
-// ── 数据备份与恢复 ─────────────────────────────────────────────────
+// ── 账号操作�?─────────────────────────────────────────────────────
 
-class _BackupRestoreSection extends StatefulWidget {
-  const _BackupRestoreSection({required this.repo});
-  final HealthRepository repo;
-
-  @override
-  State<_BackupRestoreSection> createState() => _BackupRestoreSectionState();
-}
-
-class _BackupRestoreSectionState extends State<_BackupRestoreSection> {
-  bool _busy = false;
-
-  void _setBusy(bool v) {
-    if (mounted) setState(() => _busy = v);
-  }
-
-  Future<void> _exportJson() async {
-    _setBusy(true);
-    try {
-      final data = await widget.repo.exportJson();
-      final json = const JsonEncoder.withIndent('  ').convert(data);
-      final dir = await getApplicationDocumentsDirectory();
-      final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
-      final file = File('${dir.path}/health_backup_$ts.json');
-      await file.writeAsString(json, flush: true);
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'application/json')],
-        subject: '健康数据备份 $ts',
-      );
-    } catch (e) {
-      if (mounted) _showError('导出失败：$e');
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  Future<void> _exportCsv() async {
-    _setBusy(true);
-    try {
-      final csv = await widget.repo.exportCsv();
-      final dir = await getApplicationDocumentsDirectory();
-      final ts = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
-      final file = File('${dir.path}/health_indicators_$ts.csv');
-      await file.writeAsString(csv, flush: true);
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: 'text/csv')],
-        subject: '健康指标 CSV $ts',
-      );
-    } catch (e) {
-      if (mounted) _showError('导出失败：$e');
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  Future<void> _importJson() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-    );
-    if (result == null || result.files.isEmpty) return;
-    final path = result.files.first.path;
-    if (path == null) {
-      _showError('无法读取文件路径');
-      return;
-    }
-
-    _setBusy(true);
-    try {
-      final content = await File(path).readAsString();
-      final data = jsonDecode(content) as Map<String, dynamic>;
-
-      final exportData = data['data'] as Map<String, dynamic>?;
-      if (exportData == null) {
-        _showError('文件格式不正确');
-        return;
-      }
-
-      final indicatorCount = (exportData['indicators'] as List?)?.length ?? 0;
-      final reminderCount = (exportData['reminders'] as List?)?.length ?? 0;
-      final clockCount = (exportData['clockRecords'] as List?)?.length ?? 0;
-      final exportedAt = data['exportedAt'] as String? ?? '未知时间';
-
-      if (!mounted) return;
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('确认导入数据'),
-          content: Text(
-            '备份时间：$exportedAt\n\n'
-            '将恢复：\n'
-            '  • $indicatorCount 条健康指标\n'
-            '  • $reminderCount 条提醒规则\n'
-            '  • $clockCount 条打卡记录\n\n'
-            '现有指标、提醒、打卡记录将被覆盖，是否继续？',
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('取消')),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确认恢复'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-
-      final imported = await widget.repo.importJson(data);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已成功恢复 $imported 条健康指标记录')),
-      );
-    } on FormatException catch (e) {
-      if (mounted) _showError('文件解析失败：${e.message}');
-    } catch (e) {
-      if (mounted) _showError('导入失败：$e');
-    } finally {
-      _setBusy(false);
-    }
-  }
-
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red.shade600),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            const Icon(Icons.backup_outlined,
-                size: 18, color: AppTheme.deepBlue),
-            const SizedBox(width: 8),
-            const Text('数据备份与恢复',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-          ]),
-          const SizedBox(height: 4),
-          const Text('换机前先导出备份，换机后导入恢复',
-              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
-          const SizedBox(height: 14),
-          Row(children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _busy ? null : _exportJson,
-                icon: const Icon(Icons.download_outlined, size: 18),
-                label: const Text('导出 JSON'),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _busy ? null : _exportCsv,
-                icon: const Icon(Icons.table_chart_outlined, size: 18),
-                label: const Text('导出 CSV'),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _busy ? null : _importJson,
-              icon: _busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.upload_file_outlined, size: 18),
-              label: const Text('从 JSON 文件恢复',
-                  style: TextStyle(fontWeight: FontWeight.w700)),
-              style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── 账号操作区 ─────────────────────────────────────────────────────
-
+// ignore: unused_element
 class _AccountSignOutSection extends StatelessWidget {
   const _AccountSignOutSection({required this.onSignOut});
   final VoidCallback onSignOut;
@@ -1077,7 +835,7 @@ class _AccountSignOutSection extends StatelessWidget {
   }
 }
 
-// ── 危险操作区 ─────────────────────────────────────────────────────
+// ── 危险操作�?─────────────────────────────────────────────────────
 
 class _DangerZone extends StatelessWidget {
   const _DangerZone({required this.onClearAll});
@@ -1197,7 +955,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(labelText: '收缩压'),
                         validator: (value) {
-                          if (int.tryParse(value ?? '') == null) return '请输入数值';
+                          if (int.tryParse(value ?? '') == null) return '请输入数字';
                           return null;
                         },
                       ),
@@ -1209,7 +967,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(labelText: '舒张压'),
                         validator: (value) {
-                          if (int.tryParse(value ?? '') == null) return '请输入数值';
+                          if (int.tryParse(value ?? '') == null) return '请输入数字';
                           return null;
                         },
                       ),
@@ -1223,7 +981,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: '体重（kg）'),
                   validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数值';
+                    if (double.tryParse(value ?? '') == null) return '请输入数字';
                     return null;
                   },
                 ),
@@ -1234,7 +992,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: '血糖（mmol/L）'),
                   validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数值';
+                    if (double.tryParse(value ?? '') == null) return '请输入数字';
                     return null;
                   },
                 ),
@@ -1245,7 +1003,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: '总胆固醇（mmol/L）'),
                   validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数值';
+                    if (double.tryParse(value ?? '') == null) return '请输入数字';
                     return null;
                   },
                 ),
@@ -1256,7 +1014,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: 'LDL-C（mmol/L）'),
                   validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数值';
+                    if (double.tryParse(value ?? '') == null) return '请输入数字';
                     return null;
                   },
                 ),

@@ -107,8 +107,6 @@ class AppShell extends StatelessWidget {
                     } else {
                       context.push('/membership');
                     }
-                  } else if (value == 'devices') {
-                    context.push('/devices');
                   } else if (value == 'onboarding') {
                     context.push('/onboarding');
                   } else if (value == 'security') {
@@ -129,12 +127,13 @@ class AppShell extends StatelessWidget {
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'membership', child: Text('会员中心')),
-                  PopupMenuItem(value: 'devices', child: Text('我的设备')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
                   PopupMenuItem(value: 'reset', child: Text('[测试] 恢复默认数据')),
                   PopupMenuItem(
-                      value: 'dev_reset_member', child: Text('[测试] 重置为免费版')),
+                    value: 'dev_reset_member',
+                    child: Text('[测试] 重置为免费版'),
+                  ),
                 ],
               ),
               const SizedBox(width: 8),
@@ -170,7 +169,9 @@ class AppShell extends StatelessWidget {
                         ],
                       ),
                       const VerticalDivider(
-                          width: 1, color: AppTheme.cardBorder),
+                        width: 1,
+                        color: AppTheme.cardBorder,
+                      ),
                       Expanded(child: child),
                     ],
                   )

@@ -13,6 +13,7 @@ class UserSession {
   // 公开存储（昵称）
   static const _kName = 'user_display_name';
   static const _kUserId = 'user_account_id';
+  static const _kAccountIdentifier = 'user_account_identifier';
 
   // 安全存储（Token）
   static const _kAccess = 'hrp_access_token';
@@ -28,15 +29,18 @@ class UserSession {
 
   String _name = '';
   String? _userId;
+  String? _accountIdentifier;
   String? _accessToken;
   String? _refreshToken;
 
   String get name => _name;
   String? get userId => _userId;
+  String? get accountIdentifier => _accountIdentifier;
   String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
 
   bool get hasName => _name.isNotEmpty;
+
   /// 是否已绑定真实账号（拥有 JWT Token）
   bool get isAccountLogin =>
       _userId != null && _accessToken != null && _accessToken!.isNotEmpty;
@@ -46,6 +50,7 @@ class UserSession {
     final prefs = await SharedPreferences.getInstance();
     _name = prefs.getString(_kName) ?? '';
     _userId = prefs.getString(_kUserId);
+    _accountIdentifier = prefs.getString(_kAccountIdentifier);
 
     _accessToken = await _secureStorage.read(key: _kAccess);
     _refreshToken = await _secureStorage.read(key: _kRefresh);
@@ -64,14 +69,21 @@ class UserSession {
     required String accessToken,
     required String refreshToken,
     String? nickname,
+    String? accountIdentifier,
   }) async {
     _userId = userId;
+    _accountIdentifier = accountIdentifier?.trim().isNotEmpty == true
+        ? accountIdentifier!.trim()
+        : _accountIdentifier;
     _accessToken = accessToken;
     _refreshToken = refreshToken;
     if (nickname != null && nickname.isNotEmpty) _name = nickname;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUserId, userId);
+    if (_accountIdentifier != null && _accountIdentifier!.isNotEmpty) {
+      await prefs.setString(_kAccountIdentifier, _accountIdentifier!);
+    }
     if (nickname != null && nickname.isNotEmpty) {
       await prefs.setString(_kName, _name);
     }
@@ -82,10 +94,12 @@ class UserSession {
   /// 退出账号登录（保留本地昵称，仅清除 Token）
   Future<void> signOut() async {
     _userId = null;
+    _accountIdentifier = null;
     _accessToken = null;
     _refreshToken = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kUserId);
+    await prefs.remove(_kAccountIdentifier);
     await _secureStorage.delete(key: _kAccess);
     await _secureStorage.delete(key: _kRefresh);
   }

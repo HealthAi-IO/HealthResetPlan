@@ -76,6 +76,48 @@ class _StatsPageState extends State<StatsPage> {
     }
   }
 
+  Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('退出登录'),
+        content: const Text(
+          '退出后会清除当前账号登录状态，并自动回到本地免费版。会员期间录入的本地健康数据、聊天记录和打卡数据都会保留。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('退出登录'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final refresh = UserSession.instance.refreshToken;
+    if (refresh != null && refresh.isNotEmpty) {
+      try {
+        await sl<AuthApi>().logout(refresh);
+      } catch (_) {
+        // Local sign-out should still finish when the server is unreachable.
+      }
+    }
+
+    await UserSession.instance.signOut();
+    sl<ApiClient>().setAccessToken(null);
+    _membership.invalidateCache();
+    if (!mounted) return;
+    setState(() {
+      _memberStatus = MembershipStatus.free;
+      _accountInfo = null;
+    });
+    await _load(silent: true);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -171,7 +213,7 @@ class _StatsPageState extends State<StatsPage> {
       child: ListView(
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         children: [
-          _AccountCard(
+          _UnifiedProfileCard(
             accountInfo: _accountInfo,
             memberStatus: _memberStatus,
             profile: profile,
@@ -182,32 +224,15 @@ class _StatsPageState extends State<StatsPage> {
             onMembership: () => context.push('/membership').then((_) {
               if (mounted) _load(silent: true);
             }),
-          ),
-          const SizedBox(height: 10),
-          _UserCard(
-              profile: profile, onEditProfile: () => context.go('/profile')),
-          const SizedBox(height: 10),
-          _MembershipBanner(
-            status: _memberStatus,
-            onTap: () {
-              // 未登录先引导登录，已登录直接进会员中心
-              if (!UserSession.instance.isAccountLogin) {
-                context.push('/login', extra: true).then((_) {
-                  if (mounted) _load(silent: true);
-                });
-              } else {
-                context.push('/membership').then((_) {
-                  if (mounted) _load(silent: true);
-                });
-              }
-            },
+            onSignOut: _signOut,
+            onEditProfile: () => context.go('/profile'),
           ),
           const SizedBox(height: 14),
           _SummaryRow(profile: profile, data: data),
           const SizedBox(height: 14),
           _Panel(
             title: '打卡完成率',
-            subtitle: '日 / 周 / 月 三档统计',
+            subtitle: '日 / 周 / 月三档统计',
             trailing: TextButton.icon(
               onPressed: () => context.go('/clock'),
               icon: const Icon(Icons.add, size: 16),
@@ -218,11 +243,13 @@ class _StatsPageState extends State<StatsPage> {
           const SizedBox(height: 14),
           _Panel(
             title: '体重趋势',
-            subtitle: '最近 ${_weightEntries.length} 条  单位：kg  · 触摸查看数据',
+            subtitle: '最新 ${_weightEntries.length} 项  单位：kg  · 触摸查看数据',
             trailing: _AddButton(onTap: () => pushInput('weight')),
             child: _weightEntries.isEmpty
                 ? _EmptyChart(
-                    text: '暂无体重记录，点击 + 开始录入', onAdd: () => pushInput('weight'))
+                    text: '暂无体重记录，点击 + 开始录入',
+                    onAdd: () => pushInput('weight'),
+                  )
                 : _WeightChart(entries: _weightEntries),
           ),
           const SizedBox(height: 14),
@@ -232,7 +259,9 @@ class _StatsPageState extends State<StatsPage> {
             trailing: _AddButton(onTap: () => pushInput('bp')),
             child: _bpEntries.isEmpty
                 ? _EmptyChart(
-                    text: '暂无血压记录，点击 + 开始录入', onAdd: () => pushInput('bp'))
+                    text: '暂无血压记录，点击 + 开始录入',
+                    onAdd: () => pushInput('bp'),
+                  )
                 : _BpChart(entries: _bpEntries),
           ),
           const SizedBox(height: 14),
@@ -242,7 +271,9 @@ class _StatsPageState extends State<StatsPage> {
             trailing: _AddButton(onTap: () => pushInput('glucose')),
             child: _glucoseEntries.isEmpty
                 ? _EmptyChart(
-                    text: '暂无血糖记录，点击 + 开始录入', onAdd: () => pushInput('glucose'))
+                    text: '暂无血糖记录，点击 + 开始录入',
+                    onAdd: () => pushInput('glucose'),
+                  )
                 : _GlucoseChart(entries: _glucoseEntries),
           ),
           const SizedBox(height: 14),
@@ -269,15 +300,17 @@ class _StatsPageState extends State<StatsPage> {
   }
 }
 
-// ── 账号状态卡片 ──────────────────────────────────────────────
-class _AccountCard extends StatelessWidget {
-  const _AccountCard({
+// ── 账号状态卡�?──────────────────────────────────────────────
+class _UnifiedProfileCard extends StatelessWidget {
+  const _UnifiedProfileCard({
     required this.accountInfo,
     required this.memberStatus,
     required this.profile,
     required this.onAvatarTap,
     required this.onLogin,
     required this.onMembership,
+    required this.onSignOut,
+    required this.onEditProfile,
   });
 
   final AccountInfo? accountInfo;
@@ -286,6 +319,587 @@ class _AccountCard extends StatelessWidget {
   final VoidCallback onAvatarTap;
   final VoidCallback onLogin;
   final VoidCallback onMembership;
+  final VoidCallback onSignOut;
+  final VoidCallback onEditProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLoggedIn = UserSession.instance.isAccountLogin;
+    final displayName = (profile?.nickname.isNotEmpty == true)
+        ? profile!.nickname
+        : UserSession.instance.name;
+    final name = displayName.isNotEmpty ? displayName : '未设置昵称';
+    final imageUrl = _avatarImageUrl(accountInfo);
+    final savedPhone = UserSession.instance.accountIdentifier?.trim() ?? '';
+    final phoneTail = accountInfo?.phoneTail.trim() ?? '';
+    final phoneText = savedPhone.isNotEmpty
+        ? '手机号 $savedPhone'
+        : phoneTail.isEmpty
+            ? '手机号未绑定'
+            : '手机号 **** $phoneTail';
+    final age = profile?.age;
+    final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
+    final bmi = profile?.bmi ?? 0;
+    final bmiText = bmi == 0 ? 'BMI --' : 'BMI ${bmi.toStringAsFixed(1)}';
+    final membershipText = memberStatus.isActive
+        ? (memberStatus.planName ?? '会员')
+        : memberStatus.isExpired
+            ? '会员已过期'
+            : '免费版';
+    final cloudText = accountInfo?.hasCloudSync == true ? '已开启' : '未开启';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0277BD), Color(0xFF039BE5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0277BD).withValues(alpha: 0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: isLoggedIn ? onAvatarTap : null,
+                child: CircleAvatar(
+                  radius: 31,
+                  backgroundColor: Colors.white24,
+                  foregroundImage:
+                      imageUrl == null ? null : NetworkImage(imageUrl),
+                  child: imageUrl == null
+                      ? Text(
+                          name.characters.first,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: onEditProfile,
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('编辑'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isLoggedIn ? phoneText : '本地免费版',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        _MiniStatusChip(text: ageText),
+                        _MiniStatusChip(text: bmiText),
+                        _MiniStatusChip(text: isLoggedIn ? '已绑定账号' : '未绑定账号'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _CardInfoPill(
+                  icon: Icons.cloud_outlined,
+                  label: '云同步',
+                  value: cloudText,
+                  highlight: accountInfo?.hasCloudSync == true,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _CardInfoPill(
+                  icon: Icons.workspace_premium_outlined,
+                  label: '会员',
+                  value: membershipText,
+                  highlight: memberStatus.isActive,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (!isLoggedIn)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onLogin,
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text('注册 / 登录账号'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF0277BD),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            )
+          else ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onMembership,
+                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
+                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white60),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Center(
+              child: TextButton.icon(
+                onPressed: onSignOut,
+                icon: const Icon(Icons.logout, size: 18),
+                label: const Text('退出登录'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String? _avatarImageUrl(AccountInfo? info) {
+    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
+      return null;
+    }
+    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
+    final apiRoot = baseUrl.endsWith('/api/v1')
+        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
+        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
+    final stamp = Uri.encodeComponent(info.avatarUrl);
+    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
+  }
+}
+
+class _MiniStatusChip extends StatelessWidget {
+  const _MiniStatusChip({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+// ignore: unused_element
+class _CombinedProfileCard extends StatelessWidget {
+  const _CombinedProfileCard({
+    required this.accountInfo,
+    required this.memberStatus,
+    required this.profile,
+    required this.onAvatarTap,
+    required this.onLogin,
+    required this.onMembership,
+    required this.onSignOut,
+    required this.onEditProfile,
+  });
+
+  final AccountInfo? accountInfo;
+  final MembershipStatus memberStatus;
+  final UserProfileData? profile;
+  final VoidCallback onAvatarTap;
+  final VoidCallback onLogin;
+  final VoidCallback onMembership;
+  final VoidCallback onSignOut;
+  final VoidCallback onEditProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLoggedIn = UserSession.instance.isAccountLogin;
+    final displayName = (profile?.nickname.isNotEmpty == true)
+        ? profile!.nickname
+        : UserSession.instance.name;
+    final safeName = displayName.isNotEmpty ? displayName : '未设置昵称';
+    final imageUrl = _avatarImageUrl(accountInfo);
+    final membershipLabel = memberStatus.isActive
+        ? (memberStatus.planName ?? '会员')
+        : memberStatus.isExpired
+            ? '已过期'
+            : '免费版';
+    final age = profile?.age;
+    final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
+    final bmi = profile?.bmi ?? 0;
+    final bmiText = bmi == 0 ? 'BMI --' : 'BMI ${bmi.toStringAsFixed(1)}';
+    final cloudText = accountInfo?.hasCloudSync == true ? '已开启' : '未开启';
+    final initials = safeName.characters.first;
+    final phoneTail = accountInfo?.phoneTail.trim() ?? '';
+    // ignore: unused_local_variable
+    final phoneText = phoneTail.isEmpty ? '手机号未绑定' : '手机号 **** $phoneTail';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0277BD), Color(0xFF039BE5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0277BD).withValues(alpha: 0.18),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: isLoggedIn ? onAvatarTap : null,
+                child: CircleAvatar(
+                  radius: 26,
+                  backgroundColor: Colors.white24,
+                  foregroundImage:
+                      imageUrl == null ? null : NetworkImage(imageUrl),
+                  child: imageUrl == null
+                      ? Text(
+                          initials,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        )
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isLoggedIn ? '已绑定账号' : '本地免费版',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      isLoggedIn ? safeName : '数据保存在本机，可随时绑定账号',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              _CardBadge(text: membershipLabel),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 34,
+                backgroundColor: Colors.white.withValues(alpha: 0.18),
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            safeName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: onEditProfile,
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('编辑'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white70,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$ageText   $bmiText',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _CardInfoPill(
+                  icon: Icons.cloud_outlined,
+                  label: '云同步',
+                  value: cloudText,
+                  highlight: accountInfo?.hasCloudSync == true,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _CardInfoPill(
+                  icon: Icons.workspace_premium_outlined,
+                  label: '会员',
+                  value: membershipLabel,
+                  highlight: memberStatus.isActive,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (!isLoggedIn)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onLogin,
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text('注册 / 登录账号'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFF0277BD),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            )
+          else ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onMembership,
+                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
+                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white60),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Center(
+              child: TextButton.icon(
+                onPressed: onSignOut,
+                icon: const Icon(Icons.logout, size: 18),
+                label: const Text('退出登录'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String? _avatarImageUrl(AccountInfo? info) {
+    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
+      return null;
+    }
+    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
+    final apiRoot = baseUrl.endsWith('/api/v1')
+        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
+        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
+    final stamp = Uri.encodeComponent(info.avatarUrl);
+    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
+  }
+}
+
+class _CardBadge extends StatelessWidget {
+  const _CardBadge({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _CardInfoPill extends StatelessWidget {
+  const _CardInfoPill({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.highlight,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.white70),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(color: Colors.white60, fontSize: 11),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: highlight ? const Color(0xFFB9F77A) : Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ignore: unused_element
+class _AccountStatusCard extends StatelessWidget {
+  const _AccountStatusCard({
+    required this.accountInfo,
+    required this.memberStatus,
+    required this.profile,
+    required this.onAvatarTap,
+    required this.onLogin,
+    required this.onMembership,
+    required this.onSignOut,
+    required this.onEditProfile,
+  });
+
+  final AccountInfo? accountInfo;
+  final MembershipStatus memberStatus;
+  final UserProfileData? profile;
+  final VoidCallback onAvatarTap;
+  final VoidCallback onLogin;
+  final VoidCallback onMembership;
+  final VoidCallback onSignOut;
+  final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -294,6 +908,272 @@ class _AccountCard extends StatelessWidget {
         ? profile!.nickname
         : UserSession.instance.name;
     final imageUrl = _avatarImageUrl(accountInfo);
+    final membershipLabel = memberStatus.isActive
+        ? (memberStatus.planName ?? '已开启')
+        : memberStatus.isExpired
+            ? '已过期，当前免费版'
+            : '免费版';
+    final ageText = profile?.age == 0 ? '--' : '${profile?.age ?? '--'} 岁';
+    final bmiText =
+        profile?.bmi == 0 ? 'BMI --' : 'BMI ${profile!.bmi.toStringAsFixed(1)}';
+    final gradient = memberStatus.isActive
+        ? const LinearGradient(
+            colors: [Color(0xFF0277BD), Color(0xFF0288D1)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          )
+        : isLoggedIn
+            ? const LinearGradient(
+                colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : LinearGradient(
+                colors: [Colors.orange.shade700, Colors.orange.shade500],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              );
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            GestureDetector(
+              onTap: isLoggedIn ? onAvatarTap : null,
+              child: CircleAvatar(
+                radius: 24,
+                backgroundColor: Colors.white24,
+                foregroundImage:
+                    imageUrl == null ? null : NetworkImage(imageUrl),
+                child: imageUrl == null
+                    ? Text(
+                        displayName.isNotEmpty
+                            ? displayName.characters.first
+                            : '?',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      )
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isLoggedIn ? '已绑定账号' : '本地免费版',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    displayName.isNotEmpty ? displayName : '未设置昵称',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                membershipLabel,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(children: [
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: Colors.white24,
+                child: Text(
+                  displayName.isNotEmpty ? displayName.characters.first : '?',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName.isNotEmpty ? displayName : '未设置昵称',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '$ageText   $bmiText',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onEditProfile,
+                icon: const Icon(Icons.edit_outlined, size: 17),
+                label: const Text('编辑'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          if (!isLoggedIn) ...[
+            const Text(
+              '绑定账号可开通会员；退出账号后会自动回到本地免费版，已有本地数据继续保留。',
+              style:
+                  TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onLogin,
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text('注册 / 登录账号'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.orange.shade700,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                ),
+              ),
+            ),
+          ] else ...[
+            _AccountDetailRow(
+              icon: Icons.cloud_outlined,
+              label: '云同步',
+              value: (accountInfo?.hasCloudSync == true) ? '已开启' : '未开启',
+              valueColor: (accountInfo?.hasCloudSync == true)
+                  ? Colors.lightGreenAccent
+                  : Colors.white54,
+            ),
+            const SizedBox(height: 6),
+            _AccountDetailRow(
+              icon: Icons.workspace_premium,
+              label: '会员',
+              value: membershipLabel,
+              valueColor: memberStatus.isActive
+                  ? Colors.lightGreenAccent
+                  : Colors.white54,
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: onMembership,
+                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
+                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white54),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                onPressed: onSignOut,
+                icon: const Icon(Icons.logout, size: 18),
+                label: const Text('退出登录'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String? _avatarImageUrl(AccountInfo? info) {
+    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
+      return null;
+    }
+    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
+    final apiRoot = baseUrl.endsWith('/api/v1')
+        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
+        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
+    final stamp = Uri.encodeComponent(info.avatarUrl);
+    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
+  }
+}
+
+// ignore: unused_element
+class _AccountCard extends StatelessWidget {
+  const _AccountCard({
+    required this.accountInfo,
+    required this.memberStatus,
+    required this.profile,
+    required this.onAvatarTap,
+    required this.onLogin,
+    required this.onMembership,
+    required this.onSignOut,
+  });
+
+  final AccountInfo? accountInfo;
+  final MembershipStatus memberStatus;
+  final UserProfileData? profile;
+  final VoidCallback onAvatarTap;
+  final VoidCallback onLogin;
+  final VoidCallback onMembership;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLoggedIn = UserSession.instance.isAccountLogin;
+    final displayName = (profile?.nickname.isNotEmpty == true)
+        ? profile!.nickname
+        : UserSession.instance.name;
+    final imageUrl = _avatarImageUrl(accountInfo);
+    // ignore: unused_local_variable
+    final membershipLabel = memberStatus.isActive
+        ? (memberStatus.planName ?? '已开启')
+        : memberStatus.isExpired
+            ? '已过期，当前免费版'
+            : '免费版';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -445,7 +1325,7 @@ class _AccountCard extends StatelessWidget {
             _AccountDetailRow(
               icon: Icons.cloud_outlined,
               label: '云同步',
-              value: (accountInfo?.hasCloudSync == true) ? '已开通' : '未开通',
+              value: (accountInfo?.hasCloudSync == true) ? '已开启' : '未开启',
               valueColor: (accountInfo?.hasCloudSync == true)
                   ? Colors.lightGreenAccent
                   : Colors.white54,
@@ -455,7 +1335,7 @@ class _AccountCard extends StatelessWidget {
               icon: Icons.workspace_premium,
               label: '会员',
               value: memberStatus.isActive
-                  ? (memberStatus.planName ?? '已开通')
+                  ? (memberStatus.planName ?? '已开启')
                   : '免费版',
               valueColor: memberStatus.isActive
                   ? Colors.lightGreenAccent
@@ -530,6 +1410,7 @@ class _AccountDetailRow extends StatelessWidget {
 }
 
 // ── 用户卡片 ──────────────────────────────────────────────────
+// ignore: unused_element
 class _UserCard extends StatelessWidget {
   const _UserCard({required this.profile, required this.onEditProfile});
   final UserProfileData? profile;
@@ -601,7 +1482,7 @@ class _UserCard extends StatelessWidget {
   }
 }
 
-// ── 概要卡片行 ────────────────────────────────────────────────
+// ── 概要卡片�?────────────────────────────────────────────────
 class _SummaryRow extends StatelessWidget {
   const _SummaryRow({required this.profile, required this.data});
   final UserProfileData? profile;
@@ -692,7 +1573,7 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-// ── 打卡完成率 ────────────────────────────────────────────────
+// ── 打卡完成�?────────────────────────────────────────────────
 class _ClockRateSection extends StatefulWidget {
   const _ClockRateSection({required this.stats});
   final ClockStats? stats;
@@ -805,13 +1686,13 @@ class _RateBar extends StatelessWidget {
           ),
       ]),
       const SizedBox(height: 4),
-      Text('统计周期：$days 天',
+      Text('统计周期 $days 天',
           style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
 }
 
-// ── 体重图 ────────────────────────────────────────────────────
+// ── 体重�?────────────────────────────────────────────────────
 class _WeightChart extends StatelessWidget {
   const _WeightChart({required this.entries});
   final List<HealthIndicatorEntry> entries;
@@ -862,7 +1743,7 @@ class _BpChart extends StatelessWidget {
         _Legend(color: AppTheme.deepBlue, label: '舒张压'),
       ]),
       const SizedBox(height: 4),
-      const Text('正常参考：收缩压 <140  舒张压 <90 mmHg',
+      const Text('正常参考：收缩�?<140  舒张�?<90 mmHg',
           style: TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
@@ -910,7 +1791,7 @@ class _GlucoseChart extends StatelessWidget {
         _Legend(color: Colors.orange, label: '血糖'),
         if (fastingAvg > 0) ...[
           const SizedBox(width: 12),
-          Text('空腹均值 ${fastingAvg.toStringAsFixed(1)} mmol/L',
+          Text('空腹均�?${fastingAvg.toStringAsFixed(1)} mmol/L',
               style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
         ],
       ]),
@@ -1087,7 +1968,7 @@ class _Legend extends StatelessWidget {
   }
 }
 
-// ── 通用折线图 Painter ────────────────────────────────────────
+// ── 通用折线�?Painter ────────────────────────────────────────
 class _Series {
   const _Series({required this.values, required this.color, this.label = ''});
   final List<double> values;
@@ -1194,7 +2075,7 @@ class _LineChartPainter extends CustomPainter {
       }
     }
 
-    // 选中点高亮
+    // 选中点高�?
     if (selectedIndex != null) {
       final si = selectedIndex!;
       final n = longest;
@@ -1273,7 +2154,7 @@ class _EmptyChart extends StatelessWidget {
   }
 }
 
-// ── 最近指标列表 ──────────────────────────────────────────────
+// ── 最近指标列�?──────────────────────────────────────────────
 class _RecentIndicators extends StatelessWidget {
   const _RecentIndicators(
       {required this.items, required this.bmi, required this.onAdd});
@@ -1402,6 +2283,7 @@ IconData _iconFor(String type) => switch (type) {
     };
 
 // ── 会员横幅 ──────────────────────────────────────────────────
+// ignore: unused_element
 class _MembershipBanner extends StatelessWidget {
   const _MembershipBanner({required this.status, required this.onTap});
   final MembershipStatus status;
@@ -1426,7 +2308,7 @@ class _MembershipBanner extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                '${status.planName ?? '会员版'} · 有效至 $expiry',
+                "${status.planName ?? '会员'} · 有效至 $expiry",
                 style: const TextStyle(
                     color: Colors.white,
                     fontSize: 13,
@@ -1454,7 +2336,7 @@ class _MembershipBanner extends StatelessWidget {
           const SizedBox(width: 8),
           const Expanded(
             child: Text(
-              '开通会员 · 解锁云同步、AI无限次等权益',
+              '开通会�?· 解锁云同步、AI无限次等权益',
               style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,

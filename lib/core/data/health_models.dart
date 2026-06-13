@@ -213,7 +213,8 @@ class HealthIndicatorEntry {
       'bp' => '${_fmt(payload['systolic'])}/${_fmt(payload['diastolic'])} mmHg',
       'weight' => '${_fmt(payload['weightKg'], digits: 1)} kg',
       'glucose' => '${_fmt(payload['glucoseMmol'], digits: 1)} mmol/L',
-      'lipid' => 'TC ${_fmt(payload['tc'], digits: 1)} / LDL ${_fmt(payload['ldl'], digits: 1)}',
+      'lipid' =>
+        'TC ${_fmt(payload['tc'], digits: 1)} / LDL ${_fmt(payload['ldl'], digits: 1)}',
       'heart_rate' => '${_fmt(payload['bpm'])} bpm',
       'body_fat' => '${_fmt(payload['bodyFatPct'], digits: 1)} %',
       'waist' => '${_fmt(payload['waistCm'], digits: 1)} cm',
@@ -266,6 +267,83 @@ class HealthIndicatorEntry {
       'payload_json': jsonEncode(payload),
       'source': source,
       'measured_at': measuredAt,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+      'version': version,
+      'is_dirty': isDirty,
+      'sync_at': syncAt,
+    };
+  }
+}
+
+class HealthReportRecord {
+  const HealthReportRecord({
+    this.id,
+    this.userId = kLocalUserId,
+    required this.clientId,
+    required this.imagePath,
+    required this.reportTime,
+    required this.summary,
+    required this.rawText,
+    required this.structured,
+    required this.provider,
+    required this.createdAt,
+    required this.updatedAt,
+    this.version = 0,
+    this.isDirty = 1,
+    this.syncAt = 0,
+  });
+
+  final int? id;
+  final String userId;
+  final String clientId;
+  final String imagePath;
+  final int reportTime;
+  final String summary;
+  final String rawText;
+  final Map<String, dynamic> structured;
+  final String provider;
+  final int createdAt;
+  final int updatedAt;
+  final int version;
+  final int isDirty;
+  final int syncAt;
+
+  DateTime get reportDateTime =>
+      DateTime.fromMillisecondsSinceEpoch(reportTime);
+  DateTime get createdTime => DateTime.fromMillisecondsSinceEpoch(createdAt);
+
+  int get indicatorCount => (structured['indicators'] as List?)?.length ?? 0;
+
+  factory HealthReportRecord.fromRow(Map<String, Object?> row) {
+    return HealthReportRecord(
+      id: _asInt(row['id']),
+      userId: row['user_id'] as String? ?? kLocalUserId,
+      clientId: row['client_id'] as String? ?? '',
+      imagePath: row['image_path'] as String? ?? '',
+      reportTime: _asInt(row['report_time']) ?? 0,
+      summary: row['summary'] as String? ?? '',
+      rawText: row['raw_text'] as String? ?? '',
+      structured: decodeJson(row['structured_json'] as String? ?? '{}'),
+      provider: row['provider'] as String? ?? '',
+      createdAt: _asInt(row['created_at']) ?? 0,
+      updatedAt: _asInt(row['updated_at']) ?? 0,
+      version: _asInt(row['version']) ?? 0,
+      isDirty: _asInt(row['is_dirty']) ?? 1,
+      syncAt: _asInt(row['sync_at']) ?? 0,
+    );
+  }
+
+  Map<String, Object?> toRow() {
+    return {
+      'user_id': userId,
+      'client_id': clientId,
+      'image_path': imagePath,
+      'report_time': reportTime,
+      'summary': summary,
+      'raw_text': rawText,
+      'structured_json': jsonEncode(structured),
+      'provider': provider,
       'created_at': createdAt,
       'updated_at': updatedAt,
       'version': version,
@@ -559,7 +637,13 @@ class ClockStats {
   final int weekDays;
   final int monthDays;
 
-  static const List<String> allTypes = ['meal', 'exercise', 'medicine', 'weight', 'water'];
+  static const List<String> allTypes = [
+    'meal',
+    'exercise',
+    'medicine',
+    'weight',
+    'water'
+  ];
   static const int dailyTarget = 4; // meal + exercise + medicine + weight
 
   double rateForPeriod(Map<String, int> counts, int days) {

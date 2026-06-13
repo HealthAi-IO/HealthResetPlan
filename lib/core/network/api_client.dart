@@ -160,6 +160,7 @@ class ApiClient {
       accessToken: accessToken,
       refreshToken: nextRefreshToken,
       nickname: UserSession.instance.name,
+      accountIdentifier: UserSession.instance.accountIdentifier,
     );
     setAccessToken(accessToken);
     return _RefreshedSession(accessToken: accessToken);

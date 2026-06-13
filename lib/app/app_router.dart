@@ -14,8 +14,6 @@ import '../features/report/report_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/stats_page.dart';
 import '../features/chat/chat_page.dart';
-import '../features/devices/device_scan_page.dart';
-import '../features/devices/devices_page.dart';
 import '../features/membership/membership_page.dart';
 import '../features/sync/cloud_sync_page.dart';
 import '../features/sync/key_setup_page.dart';
@@ -27,7 +25,9 @@ class AppRouter {
     initialLocation: '/home',
     redirect: (context, state) {
       final path = state.uri.path;
-      if (!UserSession.instance.hasName && path != '/login') return '/login';
+      final hasLocalIdentity =
+          UserSession.instance.hasName || UserSession.instance.isAccountLogin;
+      if (!hasLocalIdentity && path != '/login') return '/login';
       return null;
     },
     routes: [
@@ -75,12 +75,11 @@ class AppRouter {
       ),
       GoRoute(path: '/onboarding', builder: (_, __) => const OnboardingPage()),
       GoRoute(path: '/sync', builder: (_, __) => const CloudSyncPage()),
-      GoRoute(path: '/sync/key-setup', builder: (_, __) => const KeySetupPage()),
+      GoRoute(
+          path: '/sync/key-setup', builder: (_, __) => const KeySetupPage()),
       GoRoute(path: '/report', builder: (_, __) => const ReportPage()),
       GoRoute(path: '/membership', builder: (_, __) => const MembershipPage()),
       GoRoute(path: '/chat', builder: (_, __) => const ChatPage()),
-      GoRoute(path: '/devices', builder: (_, __) => const DevicesPage()),
-      GoRoute(path: '/devices/scan', builder: (_, __) => const DeviceScanPage()),
     ],
   );
 }

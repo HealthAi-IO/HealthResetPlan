@@ -18,6 +18,19 @@ class MembershipStatus {
 
   static const MembershipStatus free = MembershipStatus(isActive: false);
 
+  bool get isExpired =>
+      expiresAt != null && !expiresAt!.isAfter(DateTime.now());
+
+  MembershipStatus get normalized {
+    if (!isActive || !isExpired) return this;
+    return MembershipStatus(
+      isActive: false,
+      planCode: planCode,
+      planName: planName,
+      expiresAt: expiresAt,
+    );
+  }
+
   factory MembershipStatus.fromJson(Map<String, dynamic> json) {
     final expiresText = json['expiresAt'] as String?;
     return MembershipStatus(
@@ -25,7 +38,7 @@ class MembershipStatus {
       planCode: json['planCode'] as String?,
       planName: json['planName'] as String?,
       expiresAt: expiresText == null ? null : DateTime.tryParse(expiresText),
-    );
+    ).normalized;
   }
 }
 
@@ -34,20 +47,19 @@ class MembershipService {
 
   final ApiClient? _client;
 
-  // ── 内存缓存：避免每次进入页面都查后端，减少卡顿 ────────────
   MembershipStatus? _cached;
   DateTime _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _cacheTtl = Duration(minutes: 5);
 
   Future<MembershipStatus> getStatus({bool forceRefresh = false}) async {
-    // 仅账号登录后才查询会员状态；本地模式始终视为免费版
     if (!UserSession.instance.isAccountLogin || _client == null) {
+      invalidateCache();
       return MembershipStatus.free;
     }
 
-    // 命中缓存且未强制刷新 → 直接返回，避免网络阻塞
     final age = DateTime.now().difference(_cachedAt);
     if (!forceRefresh && _cached != null && age < _cacheTtl) {
+      _cached = _cached!.normalized;
       return _cached!;
     }
 
@@ -55,7 +67,6 @@ class MembershipService {
       final resp = await _client.dio.get(
         '/membership/status',
         options: Options(
-          // 关键：3 秒短超时，网络慢直接降级，不卡 UI
           sendTimeout: const Duration(seconds: 3),
           receiveTimeout: const Duration(seconds: 3),
         ),
@@ -64,8 +75,13 @@ class MembershipService {
       _cached = status;
       _cachedAt = DateTime.now();
       return status;
-    } on DioException {
-      // 网络异常时：若有旧缓存就返回旧值；否则按"未开通"处理
+    } on DioException catch (e) {
+      if (_isMembershipInactive(e)) {
+        _cached = MembershipStatus.free;
+        _cachedAt = DateTime.now();
+        return MembershipStatus.free;
+      }
+      _cached = _cached?.normalized;
       return _cached ?? MembershipStatus.free;
     }
   }
@@ -75,19 +91,11 @@ class MembershipService {
     return status.isActive;
   }
 
-  /// 清空缓存（兑换激活码后立即调用，下次查询拿最新状态）
   void invalidateCache() {
     _cached = null;
     _cachedAt = DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  /// 激活码兑换。
-  ///
-  /// 必须先登录账号才能兑换 — 会员权益与账号绑定，
-  /// 服务端记录订阅状态，多端同步可用。
-  ///
-  /// 成功时正常返回；失败时抛出 [DioException] 携带后端错误信息，
-  /// 或 [StateError] 提示需要登录。
   Future<void> activateWithCode(String code) async {
     final normalized = code.toUpperCase().trim();
     if (!UserSession.instance.isAccountLogin || _client == null) {
@@ -105,7 +113,6 @@ class MembershipService {
       invalidateCache();
       return;
     }
-    // 后端返回业务错误 — 构造 DioException 携带响应体，由调用方解析
     final options = RequestOptions(path: '/membership/redeem');
     throw DioException(
       requestOptions: options,
@@ -120,9 +127,16 @@ class MembershipService {
     );
   }
 
-  /// 调试：清空本地状态。会员状态实际由服务端管理，此方法主要为测试用。
   Future<void> deactivate() async {
-    // 当前会员状态完全来自服务端，本地无需清理
+    _cached = MembershipStatus.free;
+    _cachedAt = DateTime.now();
+  }
+
+  bool _isMembershipInactive(DioException e) {
+    final body = e.response?.data;
+    if (body is! Map) return false;
+    final code = (body['code'] as num?)?.toInt();
+    return code == 40301 || code == 40302;
   }
 
   Map<String, dynamic> _unwrapData(dynamic body) {

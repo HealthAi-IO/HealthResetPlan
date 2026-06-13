@@ -5,9 +5,7 @@ import 'package:logger/logger.dart';
 import '../auth/user_session.dart';
 import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
-import '../bluetooth/bluetooth_service.dart';
 import '../data/chat_repository.dart';
-import '../data/device_repository.dart';
 import '../data/health_repository.dart';
 import '../membership/membership_service.dart';
 import '../network/ai_api.dart';
@@ -15,7 +13,6 @@ import '../network/api_client.dart';
 import '../network/auth_api.dart';
 import '../notification/reminder_scheduler.dart';
 import '../storage/app_database.dart';
-import '../sync/health_sync_bridge.dart';
 import '../sync/sync_service.dart';
 
 final GetIt sl = GetIt.instance;
@@ -65,8 +62,6 @@ Future<void> setupServiceLocator() async {
 
   // 仓库类 - 仅持有数据库引用，构造瞬时
   sl.registerSingleton<ChatRepository>(ChatRepository(database: appDatabase));
-  sl.registerSingleton<DeviceRepository>(DeviceRepository(database: appDatabase));
-  sl.registerSingleton<BluetoothService>(BluetoothService.instance);
 
   // ── 网络相关 ─────────────────────────────────────────────────
   final apiClient = ApiClient();
@@ -78,14 +73,12 @@ Future<void> setupServiceLocator() async {
   }
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
-  sl.registerSingleton<HealthSyncBridge>(HealthSyncBridge());
 
   sl.registerSingleton<SyncService>(SyncService(
     apiClient: apiClient,
     cryptoService: sl<CryptoService>(),
     database: appDatabase,
     repository: healthRepository,
-    healthSyncBridge: sl<HealthSyncBridge>(),
   ));
 
   // 延迟创建：会员/AI/通知调度首次访问时才实例化

@@ -29,12 +29,13 @@ class _ChatPageState extends State<ChatPage> {
   ChatSession? _currentSession;
   List<_UiMessage> _messages = [];
 
-  String _selectedProvider = 'deepseek';
+  String _selectedProvider = 'auto';
   bool _sending = false;
   bool _loadingHistory = true;
   UserProfileData? _profile;
 
   static const _providers = [
+    _ProviderOption('auto', '自动择优', 'AI'),
     _ProviderOption('deepseek', 'DeepSeek', '🤖'),
     _ProviderOption('doubao', '豆包', '🫘'),
     _ProviderOption('qwen', '通义千问', '🌟'),
@@ -83,7 +84,7 @@ class _ChatPageState extends State<ChatPage> {
       _currentSession = sessions.first;
       final history = await _chatRepo.loadMessages(_currentSession!.id);
       _messages = history.map(_UiMessage.fromDb).toList();
-      _selectedProvider = _currentSession!.provider;
+      _selectedProvider = _normalizeProvider(_currentSession!.provider);
     }
 
     if (!mounted) return;
@@ -123,7 +124,7 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {
       _currentSession = session;
       _messages = history.map(_UiMessage.fromDb).toList();
-      _selectedProvider = session.provider;
+      _selectedProvider = _normalizeProvider(session.provider);
       _loadingHistory = false;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
@@ -327,6 +328,7 @@ class _ChatPageState extends State<ChatPage> {
 
     await _aiApi.streamChat(
       messages: history,
+      provider: _apiProvider,
       profileSummary: _buildProfileSummary(),
       onToken: (token) {
         if (!mounted) return;
@@ -387,6 +389,13 @@ class _ChatPageState extends State<ChatPage> {
     final id = await _chatRepo.createSession(provider: _selectedProvider);
     final sessions = await _chatRepo.listSessions();
     return sessions.firstWhere((s) => s.id == id);
+  }
+
+  String? get _apiProvider =>
+      _selectedProvider == 'auto' ? null : _selectedProvider;
+
+  String _normalizeProvider(String provider) {
+    return _providers.any((p) => p.id == provider) ? provider : 'auto';
   }
 
   void _scrollToBottom() {

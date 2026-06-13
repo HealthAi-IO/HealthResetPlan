@@ -78,7 +78,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _submitAccount() async {
-    final identifier = _accountCtrl.text.trim();
+    final identifier = _normalizeIdentifier(_accountCtrl.text);
     final password = _passwordCtrl.text;
     final nickname = _nameCtrl.text.trim();
 
@@ -116,7 +116,8 @@ class _LoginPageState extends State<LoginPage> {
         userId: result.userId,
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
-        nickname: nickname.isEmpty ? null : nickname,
+        nickname: nickname.isEmpty ? identifier : nickname,
+        accountIdentifier: credType == 'phone' ? identifier : null,
       );
       sl<ApiClient>().setAccessToken(result.accessToken);
 
@@ -141,6 +142,11 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  String _normalizeIdentifier(String raw) {
+    final value = raw.trim();
+    return value.contains('@') ? value.toLowerCase() : value;
+  }
+
   Future<void> _syncLocalDataIfMember() async {
     try {
       final status =
@@ -151,6 +157,19 @@ class _LoginPageState extends State<LoginPage> {
       await sync.sync();
     } catch (_) {
       // 登录流程不因同步失败中断；用户仍可在云同步页手动重试。
+    }
+  }
+
+  Future<void> _showForgotPasswordDialog() async {
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _ForgotPasswordDialog(),
+    );
+    if (updated == true && mounted) {
+      setState(() {
+        _registerMode = false;
+        _error = '密码已重置，请使用新密码登录';
+      });
     }
   }
 
@@ -269,6 +288,14 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             ),
                           ),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed:
+                                  _saving ? null : _showForgotPasswordDialog,
+                              child: const Text('忘记密码？'),
+                            ),
+                          ),
                           const SizedBox(height: 12),
                         ],
                         TextField(
@@ -330,6 +357,173 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ForgotPasswordDialog extends StatefulWidget {
+  const _ForgotPasswordDialog();
+
+  @override
+  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  final _accountCtrl = TextEditingController();
+  final _codeCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _sending = false;
+  bool _resetting = false;
+  String? _debugCode;
+  String? _error;
+
+  @override
+  void dispose() {
+    _accountCtrl.dispose();
+    _codeCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  String get _credType =>
+      _normalizeIdentifier(_accountCtrl.text).contains('@') ? 'email' : 'phone';
+
+  String _normalizeIdentifier(String raw) {
+    final value = raw.trim();
+    return value.contains('@') ? value.toLowerCase() : value;
+  }
+
+  Future<void> _sendCode() async {
+    final identifier = _normalizeIdentifier(_accountCtrl.text);
+    if (identifier.isEmpty) {
+      setState(() => _error = '请输入手机号或邮箱');
+      return;
+    }
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      final result = await sl<AuthApi>().sendPasswordResetCode(
+        credType: _credType,
+        identifier: identifier,
+      );
+      if (!mounted) return;
+      setState(() {
+        _debugCode = result.debugCode;
+        _codeCtrl.text = result.debugCode;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = friendlyAuthError(e));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _reset() async {
+    final identifier = _normalizeIdentifier(_accountCtrl.text);
+    final code = _codeCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    if (identifier.isEmpty || code.isEmpty || password.isEmpty) {
+      setState(() => _error = '请填写账号、验证码和新密码');
+      return;
+    }
+    if (password.length < 8) {
+      setState(() => _error = '新密码至少 8 位');
+      return;
+    }
+    setState(() {
+      _resetting = true;
+      _error = null;
+    });
+    try {
+      await sl<AuthApi>().resetPassword(
+        credType: _credType,
+        identifier: identifier,
+        code: code,
+        newPassword: password,
+      );
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = friendlyAuthError(e));
+    } finally {
+      if (mounted) setState(() => _resetting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('找回/重置密码'),
+      content: SizedBox(
+        width: 420,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: _accountCtrl,
+            decoration: const InputDecoration(
+              labelText: '手机号或邮箱',
+              prefixIcon: Icon(Icons.alternate_email),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: TextField(
+                controller: _codeCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '验证码',
+                  prefixIcon: Icon(Icons.sms_outlined),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton(
+              onPressed: _sending ? null : _sendCode,
+              child: Text(_sending ? '发送中...' : '获取验证码'),
+            ),
+          ]),
+          if (_debugCode != null && _debugCode!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '开发测试验证码：$_debugCode',
+              style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+            ),
+          ],
+          const SizedBox(height: 10),
+          TextField(
+            controller: _passwordCtrl,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: '新密码（至少 8 位）',
+              prefixIcon: Icon(Icons.lock_reset_outlined),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _error!,
+                style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+              ),
+            ),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _resetting ? null : () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _resetting ? null : _reset,
+          child: Text(_resetting ? '重置中...' : '重置密码'),
+        ),
+      ],
     );
   }
 }

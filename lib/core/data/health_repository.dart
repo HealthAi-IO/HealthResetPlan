@@ -153,51 +153,6 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<int> ingestSystemHealthSnapshot({
-    required int? steps,
-    required int? heartRateBpm,
-    required double? sleepHours,
-    DateTime? recordedAt,
-  }) async {
-    var inserted = 0;
-    final time = recordedAt ?? DateTime.now();
-
-    if (steps != null && steps > 0) {
-      await addIndicator(
-        type: 'steps',
-        payload: {'steps': steps},
-        source: 'system_health',
-        measuredAt: time,
-      );
-      inserted++;
-    }
-
-    if (heartRateBpm != null && heartRateBpm > 0) {
-      await addIndicator(
-        type: 'heart_rate',
-        payload: {'bpm': heartRateBpm},
-        source: 'system_health',
-        measuredAt: time,
-      );
-      inserted++;
-    }
-
-    if (sleepHours != null && sleepHours > 0) {
-      await addIndicator(
-        type: 'sleep',
-        payload: {
-          'sleepHours': double.parse(sleepHours.toStringAsFixed(1)),
-          'quality': 'good'
-        },
-        source: 'system_health',
-        measuredAt: time,
-      );
-      inserted++;
-    }
-
-    return inserted;
-  }
-
   Future<List<PlanRecordData>> loadPlans({int limit = 30}) async {
     final db = await database.open();
     final rows = await db.query(
@@ -582,6 +537,211 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> applyAiPlan({
+    required Map<String, dynamic> plan,
+    required String provider,
+  }) async {
+    final rawDays = plan['days'];
+    final days = rawDays is List
+        ? rawDays
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList()
+        : <Map<String, dynamic>>[];
+    if (days.isEmpty) {
+      throw const FormatException('AI 方案缺少 7 天计划明细');
+    }
+
+    final db = await database.open();
+    final profile = await loadProfile() ?? UserProfileData.empty();
+    final risk = await _assessRisk(profile);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final timestamp = now.millisecondsSinceEpoch;
+    final keyFocus = _aiText(plan['keyFocus']);
+    final targetCalories = _aiNumber(plan['targetCalories'])?.round();
+
+    await db.transaction((txn) async {
+      await txn.delete('plan', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+
+      for (var i = 0; i < days.length && i < 7; i++) {
+        final day = days[i];
+        final date = today.add(Duration(days: i));
+        final planDate = date.millisecondsSinceEpoch;
+        final diet = _aiMap(day['diet']);
+        final exercise = _aiMap(day['exercise']);
+        final reminders = _aiStringList(day['reminders']);
+
+        await txn.insert(
+          'plan',
+          PlanRecordData(
+            type: 'meal',
+            planDate: planDate,
+            payload: _aiMealPayload(
+              diet,
+              keyFocus: keyFocus,
+              targetCalories: targetCalories,
+            ),
+            aiProvider: provider,
+            aiModel: 'ai-plan-json',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            version: 1,
+            isDirty: 1,
+          ).toRow(),
+          replace: true,
+        );
+
+        await txn.insert(
+          'plan',
+          PlanRecordData(
+            type: 'exercise',
+            planDate: planDate,
+            payload: _aiExercisePayload(exercise),
+            aiProvider: provider,
+            aiModel: 'ai-plan-json',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            version: 1,
+            isDirty: 1,
+          ).toRow(),
+          replace: true,
+        );
+
+        await txn.insert(
+          'plan',
+          PlanRecordData(
+            type: 'measurement',
+            planDate: planDate,
+            payload: _aiMeasurementPayload(reminders),
+            aiProvider: provider,
+            aiModel: 'ai-plan-json',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            version: 1,
+            isDirty: 1,
+          ).toRow(),
+          replace: true,
+        );
+      }
+
+      await txn.insert(
+        'plan',
+        PlanRecordData(
+          type: 'risk',
+          planDate: today.millisecondsSinceEpoch,
+          payload: {
+            ...risk.toPayload(),
+            if (_aiText(plan['summary']).isNotEmpty)
+              'aiSummary': _aiText(plan['summary']),
+            if (keyFocus.isNotEmpty) 'keyFocus': keyFocus,
+            if (_aiText(plan['riskAlert']).isNotEmpty &&
+                _aiText(plan['riskAlert']).toLowerCase() != 'null')
+              'aiRiskAlert': _aiText(plan['riskAlert']),
+          },
+          aiProvider: provider,
+          aiModel: 'ai-plan-json',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          version: 1,
+          isDirty: 1,
+        ).toRow(),
+        replace: true,
+      );
+    });
+
+    notifyListeners();
+  }
+
+  Map<String, dynamic> _aiMealPayload(
+    Map<String, dynamic> diet, {
+    required String keyFocus,
+    required int? targetCalories,
+  }) {
+    final breakfast = _aiStringList(diet['breakfast']);
+    final lunch = _aiStringList(diet['lunch']);
+    final dinner = _aiStringList(diet['dinner']);
+    final snack = _aiStringList(diet['snack']);
+    final notes = _aiText(diet['notes']);
+
+    return {
+      'summary': notes.isNotEmpty
+          ? notes
+          : [
+              if (targetCalories != null) '$targetCalories kcal',
+              if (keyFocus.isNotEmpty) keyFocus,
+              if (breakfast.isNotEmpty) breakfast.first,
+            ].join('，'),
+      if (keyFocus.isNotEmpty) 'goalNote': keyFocus,
+      if (targetCalories != null) 'targetCalories': targetCalories,
+      'breakfast': breakfast,
+      'lunch': lunch,
+      'dinner': dinner,
+      'snack': snack,
+    };
+  }
+
+  Map<String, dynamic> _aiExercisePayload(Map<String, dynamic> exercise) {
+    final type = _aiText(exercise['type']);
+    final duration = _aiNumber(exercise['durationMinutes'])?.round();
+    final intensity = _aiText(exercise['intensity']);
+    final description = _aiText(exercise['description']);
+    final summaryParts = [
+      if (type.isNotEmpty) type,
+      if (duration != null && duration > 0) '$duration 分钟',
+      if (intensity.isNotEmpty) intensity,
+    ];
+
+    return {
+      'summary': summaryParts.isNotEmpty
+          ? summaryParts.join(' · ')
+          : (description.isNotEmpty ? description : '按 AI 建议完成今日运动'),
+      if (type.isNotEmpty) 'type': type,
+      if (duration != null) 'duration': duration,
+      if (duration != null) 'durationMinutes': duration,
+      if (intensity.isNotEmpty) 'intensity': intensity,
+      if (description.isNotEmpty) 'desc': description,
+      'items': [
+        if (description.isNotEmpty) description,
+      ],
+    };
+  }
+
+  Map<String, dynamic> _aiMeasurementPayload(List<String> reminders) {
+    final items =
+        reminders.isEmpty ? const ['晨起空腹体重', '按需记录血压、血糖或今日不适'] : reminders;
+    return {
+      'summary': '今日 ${items.length} 项提醒',
+      'items': items,
+    };
+  }
+
+  Map<String, dynamic> _aiMap(Object? raw) {
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) return raw.map((key, value) => MapEntry('$key', value));
+    return <String, dynamic>{};
+  }
+
+  List<String> _aiStringList(Object? raw) {
+    if (raw is List) {
+      return raw.map(_aiText).where((item) => item.isNotEmpty).toList();
+    }
+    final text = _aiText(raw);
+    if (text.isEmpty) return <String>[];
+    return [text];
+  }
+
+  String _aiText(Object? raw) {
+    if (raw == null) return '';
+    return raw.toString().trim();
+  }
+
+  num? _aiNumber(Object? raw) {
+    if (raw is num) return raw;
+    if (raw == null) return null;
+    return num.tryParse(raw.toString().trim());
+  }
+
   Future<List<ClockRecordData>> loadClockRecords({int limit = 40}) async {
     final db = await database.open();
     final rows = await db.query(
@@ -655,14 +815,142 @@ class HealthRepository extends ChangeNotifier {
 
   Future<void> deleteReminder(int id) async {
     final db = await database.open();
-    await db.delete('reminder', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      await _deleteSyncedRow(
+        txn,
+        table: 'reminder',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    });
     notifyListeners();
   }
 
   Future<void> deleteIndicator(int id) async {
     final db = await database.open();
-    await db.delete('health_indicator', where: 'id = ?', whereArgs: [id]);
+    await db.transaction((txn) async {
+      await _deleteSyncedRow(
+        txn,
+        table: 'health_indicator',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    });
     notifyListeners();
+  }
+
+  Future<void> addWeightClockRecord(double weightKg) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await addIndicator(
+      type: 'weight',
+      payload: {'weightKg': weightKg},
+      measuredAt: DateTime.fromMillisecondsSinceEpoch(now),
+      source: 'manual',
+    );
+    await addClockRecord(
+      type: 'weight',
+      status: 'done',
+      note: '体重 ${weightKg.toStringAsFixed(1)} kg',
+    );
+  }
+
+  Future<List<HealthReportRecord>> loadReportRecords({int limit = 50}) async {
+    final db = await database.open();
+    final rows = await db.query(
+      'health_report',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+      orderBy: 'report_time DESC, id DESC',
+      limit: limit,
+    );
+    return rows.map(HealthReportRecord.fromRow).toList();
+  }
+
+  Future<void> saveReportRecord({
+    required String clientId,
+    required String imagePath,
+    required DateTime reportTime,
+    required String summary,
+    required String rawText,
+    required Map<String, dynamic> structured,
+    required String provider,
+  }) async {
+    final db = await database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final record = HealthReportRecord(
+      userId: kLocalUserId,
+      clientId: clientId,
+      imagePath: imagePath,
+      reportTime: reportTime.millisecondsSinceEpoch,
+      summary: summary,
+      rawText: rawText,
+      structured: structured,
+      provider: provider,
+      createdAt: now,
+      updatedAt: now,
+      version: 1,
+      isDirty: 1,
+      syncAt: 0,
+    );
+    await db.insert('health_report', record.toRow(), replace: true);
+    notifyListeners();
+  }
+
+  Future<void> deleteReportRecord(String clientId) async {
+    final db = await database.open();
+    await db.transaction((txn) async {
+      await _deleteSyncedRow(
+        txn,
+        table: 'health_report',
+        where: 'user_id = ? AND client_id = ?',
+        whereArgs: [kLocalUserId, clientId],
+      );
+    });
+    notifyListeners();
+  }
+
+  Future<void> _deleteSyncedRow(
+    AppDatabase db, {
+    required String table,
+    required String where,
+    required List<Object?> whereArgs,
+  }) async {
+    final rows = await db.query(
+      table,
+      where: where,
+      whereArgs: whereArgs,
+      limit: 1,
+    );
+    if (rows.isNotEmpty) {
+      await _queueDelete(db, table, rows.first);
+    }
+    await db.delete(table, where: where, whereArgs: whereArgs);
+  }
+
+  Future<void> _queueDelete(
+    AppDatabase db,
+    String table,
+    Map<String, Object?> row,
+  ) async {
+    final clientId = row['client_id'] as String?;
+    if (clientId == null || clientId.isEmpty) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final version = (_asInt(row['version']) ?? 0) + 1;
+    await db.insert('sync_queue', {
+      'table_name': table,
+      'row_id': _asInt(row['id']) ?? 0,
+      'op': 'delete',
+      'payload_json': jsonEncode({
+        'table': table,
+        'clientId': clientId,
+        'version': version,
+        'clientUpdatedAt': now,
+      }),
+      'retry': 0,
+      'created_at': now,
+      'updated_at': now,
+    });
   }
 
   // 清空本地全部数据（不可逆）
@@ -674,6 +962,7 @@ class HealthRepository extends ChangeNotifier {
       'clock_record',
       'reminder',
       'user_profile',
+      'health_report',
       'sync_queue',
     ]) {
       await db.delete(table);
@@ -695,6 +984,13 @@ class HealthRepository extends ChangeNotifier {
       whereArgs: [id],
     );
     notifyListeners();
+  }
+
+  int? _asInt(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse('$value');
   }
 
   Future<ClockStats> loadClockStats() async {

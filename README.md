@@ -15,7 +15,7 @@ HealthResetPlan/
  │    │    ├── storage/       # 本地数据库：移动/桌面 SQLite，Web SharedPreferences
  │    │    ├── network/       # Dio API 客户端
  │    │    ├── di/            # GetIt 服务定位器
- │    │    └── platform/      # 平台差异封装（蓝牙、文件、健康 SDK）
+ │    │    └── platform/      # 平台差异封装（文件、系统健康平台、通知）
  │    ├── features/
  │    │    ├── auth/          # 登录与引导
  │    │    ├── profile/       # 健康档案

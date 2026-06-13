@@ -81,7 +81,10 @@ class _PlanPageState extends State<PlanPage> {
     // 2. 弹出模型选择对话框
     final provider = await _showProviderPicker();
     if (provider == null || !mounted) return;
-    setState(() { _aiGenerating = true; _selectedProvider = provider; });
+    setState(() {
+      _aiGenerating = true;
+      _selectedProvider = provider;
+    });
 
     try {
       // 3. 拉取最近指标
@@ -91,6 +94,7 @@ class _PlanPageState extends State<PlanPage> {
       final result = await _aiApi.generatePlan(
         profile: _profile ?? UserProfileData.empty(),
         recentIndicators: indicators,
+        provider: provider,
         goal: _profile?.goal ?? 'general',
       );
 
@@ -150,8 +154,8 @@ class _PlanPageState extends State<PlanPage> {
                 title: Text(p.$3,
                     style: const TextStyle(fontWeight: FontWeight.w700)),
                 subtitle: Text(p.$4,
-                    style: const TextStyle(
-                        color: AppTheme.muted, fontSize: 12)),
+                    style:
+                        const TextStyle(color: AppTheme.muted, fontSize: 12)),
                 trailing: _selectedProvider == p.$1
                     ? const Icon(Icons.check_circle,
                         color: AppTheme.deepBlue, size: 20)
@@ -165,18 +169,13 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   Future<void> _showAiPlanSheet(AiPlanResult result) async {
-    Map<String, dynamic> parsed = {};
-    try {
-      parsed = jsonDecode(result.rawJson) as Map<String, dynamic>;
-    } catch (_) {
-      // JSON 解析失败时显示原文
-    }
+    final parsed = _parseAiPlanJson(result.rawJson);
 
     final summary = parsed['summary'] as String? ?? '方案已生成';
     final keyFocus = parsed['keyFocus'] as String? ?? '';
     final riskAlert = parsed['riskAlert'] as String?;
-    final targetCal = parsed['targetCalories'] as int?;
-    final days = (parsed['days'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final targetCal = _intValue(parsed['targetCalories']);
+    final days = _mapList(parsed['days']);
 
     await showModalBottomSheet(
       context: context,
@@ -217,8 +216,8 @@ class _PlanPageState extends State<PlanPage> {
                             fontSize: 17, fontWeight: FontWeight.w800)),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: AppTheme.pageBg,
                       borderRadius: BorderRadius.circular(999),
@@ -266,13 +265,11 @@ class _PlanPageState extends State<PlanPage> {
                         decoration: BoxDecoration(
                           color: Colors.orange.shade50,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                              color: Colors.orange.shade200),
+                          border: Border.all(color: Colors.orange.shade200),
                         ),
                         child: Row(children: [
                           Icon(Icons.warning_amber_outlined,
-                              size: 14,
-                              color: Colors.orange.shade700),
+                              size: 14, color: Colors.orange.shade700),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(riskAlert,
@@ -314,18 +311,33 @@ class _PlanPageState extends State<PlanPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        await _repo.generateWeeklyPlan();
-                        if (mounted) {
-                          _load(silent: true);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('已同步到本地计划')),
-                          );
-                        }
-                      },
+                      onPressed: days.isEmpty
+                          ? null
+                          : () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              Navigator.pop(context);
+                              try {
+                                await _repo.applyAiPlan(
+                                  plan: parsed,
+                                  provider: result.provider,
+                                );
+                                if (mounted) {
+                                  await _load(silent: true);
+                                  messenger.showSnackBar(
+                                    const SnackBar(
+                                      content: Text('AI 方案已应用到本地计划'),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  SnackBar(content: Text('应用失败：$e')),
+                                );
+                              }
+                            },
                       icon: const Icon(Icons.sync, size: 16),
-                      label: const Text('应用到计划'),
+                      label: Text(days.isEmpty ? '无法应用' : '应用到计划'),
                     ),
                   ),
                 ]),
@@ -335,6 +347,44 @@ class _PlanPageState extends State<PlanPage> {
         ),
       ),
     );
+  }
+
+  Map<String, dynamic> _parseAiPlanJson(String rawJson) {
+    final raw = rawJson.trim();
+    if (raw.isEmpty) return <String, dynamic>{};
+
+    final candidates = <String>[raw];
+    final firstBrace = raw.indexOf('{');
+    final lastBrace = raw.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      candidates.add(raw.substring(firstBrace, lastBrace + 1));
+    }
+
+    for (final candidate in candidates) {
+      try {
+        final decoded = jsonDecode(candidate);
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) {
+          return decoded.map((key, value) => MapEntry('$key', value));
+        }
+      } catch (_) {}
+    }
+    return <String, dynamic>{};
+  }
+
+  List<Map<String, dynamic>> _mapList(Object? raw) {
+    if (raw is! List) return <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => item.map((key, value) => MapEntry('$key', value)))
+        .toList();
+  }
+
+  int? _intValue(Object? raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.round();
+    if (raw == null) return null;
+    return int.tryParse(raw.toString());
   }
 
   String _friendlyError(Object e) {
@@ -378,8 +428,7 @@ class _PlanPageState extends State<PlanPage> {
     final grouped = _groupPlans();
     final riskPayload = _riskPlan?.payload;
     final targetKcal = riskPayload?['targetKcal'] as int? ?? 0;
-    final bottomPadding =
-        MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+    final bottomPadding = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -537,7 +586,8 @@ class _PlanHero extends StatelessWidget {
                     icon: const Icon(Icons.auto_awesome_outlined, size: 16),
                     label: const Text('本地生成'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: AppTheme.deepBlue.withValues(alpha: 0.15),
+                      backgroundColor:
+                          AppTheme.deepBlue.withValues(alpha: 0.15),
                       foregroundColor: AppTheme.deepBlue,
                     ),
                   ),
@@ -635,9 +685,7 @@ class _RiskCard extends StatelessWidget {
               child: Text(
                 summary.isNotEmpty ? summary : '各项已录入指标均在正常范围。',
                 style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF15803D),
-                    height: 1.4),
+                    fontSize: 12, color: Color(0xFF15803D), height: 1.4),
               ),
             ),
           ],
@@ -646,8 +694,8 @@ class _RiskCard extends StatelessWidget {
     }
 
     // 有风险：醒目卡片
-    final hasSevere = risks.any((r) =>
-        r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'));
+    final hasSevere = risks.any(
+        (r) => r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'));
     final cardColor =
         hasSevere ? const Color(0xFFFEE2E2) : const Color(0xFFFFFBEB);
     final borderColor =
@@ -677,8 +725,7 @@ class _RiskCard extends StatelessWidget {
           ]),
           const SizedBox(height: 8),
           Text(summary,
-              style: TextStyle(
-                  fontSize: 13, color: iconColor, height: 1.5)),
+              style: TextStyle(fontSize: 13, color: iconColor, height: 1.5)),
           const SizedBox(height: 10),
           Wrap(
             spacing: 7,
@@ -702,8 +749,7 @@ class _RiskCard extends StatelessWidget {
           if (dietNote.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text('饮食建议：$dietNote',
-                style: TextStyle(
-                    fontSize: 12, color: iconColor, height: 1.5)),
+                style: TextStyle(fontSize: 12, color: iconColor, height: 1.5)),
           ],
         ],
       ),
@@ -728,7 +774,8 @@ class _DayPlanCard extends StatelessWidget {
         DateFormat('MM月dd日').format(DateFormat('yyyy-MM-dd').parse(date));
     final meals = plans.where((item) => item.type == 'meal').toList();
     final exercises = plans.where((item) => item.type == 'exercise').toList();
-    final measurements = plans.where((item) => item.type == 'measurement').toList();
+    final measurements =
+        plans.where((item) => item.type == 'measurement').toList();
 
     final showMeal = filter == 'all' || filter == 'meal';
     final showExercise = filter == 'all' || filter == 'exercise';
@@ -752,16 +799,14 @@ class _DayPlanCard extends StatelessWidget {
         subtitle: Text('$visibleCount 条计划',
             style: const TextStyle(color: AppTheme.muted)),
         children: [
-          if (showMeal)
-            _MealDetailSection(items: meals),
+          if (showMeal) _MealDetailSection(items: meals),
           if (showExercise)
             _PlanSection(
               title: '运动计划',
               icon: Icons.directions_run_outlined,
               items: exercises,
             ),
-          if (showMeasure)
-            _MeasurementSection(items: measurements),
+          if (showMeasure) _MeasurementSection(items: measurements),
         ],
       ),
     );
@@ -841,7 +886,8 @@ class _MealDetailSection extends StatelessWidget {
           children: [
             Row(
               children: const [
-                Icon(Icons.restaurant_outlined, size: 18, color: AppTheme.deepBlue),
+                Icon(Icons.restaurant_outlined,
+                    size: 18, color: AppTheme.deepBlue),
                 SizedBox(width: 8),
                 Text('饮食计划', style: TextStyle(fontWeight: FontWeight.w700)),
               ],
@@ -851,7 +897,8 @@ class _MealDetailSection extends StatelessWidget {
               if (item.summary.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
                     color: AppTheme.primaryBlue.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(8),
@@ -960,7 +1007,8 @@ class _MeasurementSection extends StatelessWidget {
           children: [
             Row(
               children: const [
-                Icon(Icons.monitor_heart_outlined, size: 18, color: AppTheme.deepBlue),
+                Icon(Icons.monitor_heart_outlined,
+                    size: 18, color: AppTheme.deepBlue),
                 SizedBox(width: 8),
                 Text('每日测量', style: TextStyle(fontWeight: FontWeight.w700)),
               ],
@@ -1148,8 +1196,8 @@ class _AiDayCard extends StatelessWidget {
           ]),
           const SizedBox(height: 10),
           if (diet.isNotEmpty) ...[
-            const _SectionRow(Icons.restaurant_outlined, '饮食',
-                Color(0xFF0277BD)),
+            const _SectionRow(
+                Icons.restaurant_outlined, '饮食', Color(0xFF0277BD)),
             const SizedBox(height: 6),
             for (final label in ['早餐', '午餐', '晚餐', '加餐'])
               if (diet[_dietKey(label)] != null)
@@ -1175,8 +1223,8 @@ class _AiDayCard extends StatelessWidget {
           ],
           if (exercise.isNotEmpty) ...[
             const SizedBox(height: 10),
-            const _SectionRow(Icons.directions_run_outlined, '运动',
-                Colors.green),
+            const _SectionRow(
+                Icons.directions_run_outlined, '运动', Colors.green),
             const SizedBox(height: 6),
             Text(
               '${exercise['type'] ?? ''} · '

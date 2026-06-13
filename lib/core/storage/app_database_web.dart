@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -57,7 +57,7 @@ class _WebAppDatabase extends AppDatabase {
     'clock_record',
     'reminder',
     'sync_queue',
-    'bound_device',
+    'health_report',
   ];
 
   SharedPreferences? _prefs;
@@ -119,7 +119,8 @@ class _WebAppDatabase extends AppDatabase {
     int? limit,
   }) async {
     await open();
-    var rows = _table(table).map((row) => Map<String, Object?>.from(row)).toList();
+    var rows =
+        _table(table).map((row) => Map<String, Object?>.from(row)).toList();
     if (where != null && where.trim().isNotEmpty) {
       rows = rows.where((row) => _matchesWhere(row, where, whereArgs)).toList();
     }
@@ -240,7 +241,8 @@ class _WebAppDatabase extends AppDatabase {
     final clauses = where.split(RegExp(r'\s+AND\s+', caseSensitive: false));
     var argIndex = 0;
     for (final clause in clauses) {
-      final match = RegExp(r'^\s*([a-zA-Z0-9_]+)\s*=\s*\?\s*$').firstMatch(clause);
+      final match =
+          RegExp(r'^\s*([a-zA-Z0-9_]+)\s*=\s*\?\s*$').firstMatch(clause);
       if (match == null) {
         return false;
       }
@@ -260,7 +262,11 @@ class _WebAppDatabase extends AppDatabase {
     List<Map<String, Object?>> rows,
     String orderBy,
   ) {
-    final clauses = orderBy.split(',').map((part) => part.trim()).where((part) => part.isNotEmpty).toList();
+    final clauses = orderBy
+        .split(',')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
     rows.sort((a, b) {
       for (final clause in clauses) {
         final parts = clause.split(RegExp(r'\s+'));
@@ -323,7 +329,9 @@ class _WebAppDatabase extends AppDatabase {
   ) {
     return {
       for (final entry in source.entries)
-        entry.key: entry.value.map((row) => Map<String, Object?>.from(row)).toList(),
+        entry.key:
+            entry.value.map((row) => Map<String, Object?>.from(row)).toList(),
     };
   }
 }
+

@@ -1,12 +1,17 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:dio/dio.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../crypto/crypto_service.dart';
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import '../network/api_client.dart';
 import '../storage/app_database.dart';
-import 'health_sync_bridge.dart';
 
 class SyncResult {
   const SyncResult({required this.pushed, required this.pulled, this.error});
@@ -19,39 +24,70 @@ class SyncResult {
 }
 
 class _TableConfig {
-  const _TableConfig({required this.table, required this.metaKeys});
+  const _TableConfig({
+    required this.table,
+    required this.metaKeys,
+    this.profileSingleton = false,
+  });
+
   final String table;
   final List<String> metaKeys;
+  final bool profileSingleton;
 }
 
-/// 客户端加密增量同步服务。
+/// Client-side encrypted incremental sync.
 ///
-/// push：将本地 is_dirty=1 的记录加密后上传；成功后清除 dirty 标记。
-/// pull：增量拉取服务端新数据，解密后按 last-write-wins 合并到本地。
+/// Each synced row is serialized as one JSON object, encrypted locally, then
+/// uploaded. The server only stores ciphertext and merge metadata.
 class SyncService {
   SyncService({
     required this.apiClient,
     required this.cryptoService,
     required this.database,
     required this.repository,
-    HealthSyncBridge? healthSyncBridge,
-  }) : healthSyncBridge = healthSyncBridge ?? HealthSyncBridge();
+  });
 
   final ApiClient apiClient;
   final CryptoService cryptoService;
   final AppDatabase database;
   final HealthRepository repository;
-  final HealthSyncBridge healthSyncBridge;
 
   static const String _kLastSyncMs = 'sync_last_ms';
   static const String _kSyncEnabled = 'sync_enabled';
+  static const String _kDeviceId = 'sync_device_id';
+  static const _uuid = Uuid();
 
   static const _tables = [
+    _TableConfig(
+      table: 'user_profile',
+      metaKeys: ['nickname', 'updated_at'],
+      profileSingleton: true,
+    ),
     _TableConfig(
       table: 'health_indicator',
       metaKeys: ['type', 'measured_at', 'source'],
     ),
+    _TableConfig(
+      table: 'plan',
+      metaKeys: ['type', 'plan_date', 'ai_provider', 'ai_model'],
+    ),
+    _TableConfig(
+      table: 'clock_record',
+      metaKeys: ['type', 'clock_at', 'status'],
+    ),
+    _TableConfig(
+      table: 'reminder',
+      metaKeys: ['type', 'remind_at', 'status'],
+    ),
+    _TableConfig(
+      table: 'health_report',
+      metaKeys: ['report_time', 'provider'],
+    ),
   ];
+
+  static final Map<String, _TableConfig> _configByTable = {
+    for (final config in _tables) config.table: config,
+  };
 
   Future<bool> isSyncEnabled() async {
     final prefs = await SharedPreferences.getInstance();
@@ -68,9 +104,24 @@ class SyncService {
     return prefs.getInt(_kLastSyncMs) ?? 0;
   }
 
+  Future<void> resetLastSyncMs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kLastSyncMs);
+  }
+
   Future<void> _saveLastSyncMs(int ms) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kLastSyncMs, ms);
+  }
+
+  Future<String> _getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_kDeviceId);
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    final next = _uuid.v4();
+    await prefs.setString(_kDeviceId, next);
+    return next;
   }
 
   Future<SyncResult> sync() async {
@@ -81,94 +132,97 @@ class SyncService {
     } on DioException catch (e) {
       final body = e.response?.data;
       final msg = body is Map
-          ? (body['message'] as String? ?? e.message ?? '网络错误')
-          : (e.message ?? '网络错误');
+          ? (body['message'] as String? ??
+              body['msg'] as String? ??
+              e.message ??
+              '缃戠粶閿欒')
+          : (e.message ?? '缃戠粶閿欒');
       return SyncResult(pushed: 0, pulled: 0, error: msg);
     } catch (e) {
       return SyncResult(pushed: 0, pulled: 0, error: '$e');
     }
   }
 
-  Future<SyncResult> syncSystemHealth() async {
+  Future<SyncResult> restoreFromCloud({bool replaceLocal = false}) async {
     try {
-      final available = await healthSyncBridge.isAvailable();
-      if (!available) {
-        return const SyncResult(
-          pushed: 0,
-          pulled: 0,
-          error: '当前系统不支持健康数据同步，请安装或启用 Health Connect / HealthKit',
-        );
+      await resetLastSyncMs();
+      if (replaceLocal) {
+        await _clearLocalSyncedData();
       }
-
-      final access = await healthSyncBridge.requestAccess();
-      if (!access.anyGranted) {
-        return const SyncResult(pushed: 0, pulled: 0, error: '未获得任何健康数据读取权限');
-      }
-
-      final snapshot = await healthSyncBridge.sync();
-      final inserted = await repository.ingestSystemHealthSnapshot(
-        steps: snapshot.steps,
-        heartRateBpm: snapshot.heartRateBpm,
-        sleepHours: snapshot.sleepHours,
-        recordedAt: snapshot.recordedAt,
-      );
-      if (inserted == 0) {
-        return const SyncResult(
-          pushed: 0,
-          pulled: 0,
-          error: '已获得健康数据权限，但暂未读取到步数、心率或睡眠数据',
-        );
-      }
-      return SyncResult(pushed: inserted, pulled: 0);
+      final pulled = await _pull();
+      return SyncResult(pushed: 0, pulled: pulled);
+    } on DioException catch (e) {
+      final body = e.response?.data;
+      final msg = body is Map
+          ? (body['message'] as String? ??
+              body['msg'] as String? ??
+              e.message ??
+              '缃戠粶閿欒')
+          : (e.message ?? '缃戠粶閿欒');
+      return SyncResult(pushed: 0, pulled: 0, error: msg);
     } catch (e) {
       return SyncResult(pushed: 0, pulled: 0, error: '$e');
     }
   }
 
+  Future<void> _clearLocalSyncedData() async {
+    final db = await database.open();
+    for (final config in _tables) {
+      await db.delete(config.table);
+    }
+    repository.signalChanged();
+  }
+
   Future<int> _push() async {
     final db = await database.open();
-    var totalAccepted = 0;
+    var totalAccepted = await _pushDeletes(db);
 
     for (final config in _tables) {
-      final dirtyRows = await db.query(
-        config.table,
-        where: 'is_dirty = 1 AND client_id IS NOT NULL',
-      );
+      final rows = await db.query(config.table);
+      final dirtyRows = rows
+          .where((row) => (_asInt(row['is_dirty']) ?? 1) == 1)
+          .where(
+              (row) => row['user_id'] == null || row['user_id'] == kLocalUserId)
+          .toList();
       if (dirtyRows.isEmpty) continue;
 
       final items = <Map<String, dynamic>>[];
-      for (final row in dirtyRows) {
-        final rawPayload = row['payload_json'] as String? ?? '{}';
-        final enc = await cryptoService.encryptString(rawPayload);
+      final rowsToMark = <String>[];
 
-        final meta = <String, dynamic>{
-          for (final k in config.metaKeys)
-            if (row[k] != null) k: row[k],
-        };
+      for (final row in dirtyRows) {
+        final prepared = await _ensureClientId(db, config, row);
+        final clientId = prepared['client_id'] as String;
+        final payload = await _buildEncryptedRowPayload(config.table, prepared);
+        final enc = await cryptoService.encryptString(jsonEncode(payload));
 
         items.add({
           'table': config.table,
-          'clientId': row['client_id'],
-          'version': row['version'] ?? 0,
-          'clientUpdatedAt': row['updated_at'],
-          ...enc.toJson(), // cipher, iv, tag, alg
-          'meta': meta,
+          'clientId': clientId,
+          'version': _asInt(prepared['version']) ?? 0,
+          'clientUpdatedAt': _asInt(prepared['updated_at']) ??
+              DateTime.now().millisecondsSinceEpoch,
+          ...enc.toJson(),
+          'deleted': false,
+          'meta': _buildMeta(config, prepared),
         });
+        rowsToMark.add(clientId);
       }
 
-      final resp =
-          await apiClient.dio.post('/sync/push', data: {'items': items});
-      final accepted =
-          (resp.data?['data']?['accepted'] as num?)?.toInt() ?? items.length;
+      final resp = await apiClient.dio.post('/sync/push', data: {
+        'deviceId': await _getDeviceId(),
+        'items': items,
+      });
+      final data = _responseData(resp.data);
+      final accepted = (data['accepted'] as num?)?.toInt() ?? items.length;
       totalAccepted += accepted;
 
       final now = DateTime.now().millisecondsSinceEpoch;
-      for (final row in dirtyRows) {
+      for (final clientId in rowsToMark) {
         await db.update(
           config.table,
           {'is_dirty': 0, 'sync_at': now},
           where: 'client_id = ?',
-          whereArgs: [row['client_id']],
+          whereArgs: [clientId],
         );
       }
     }
@@ -176,14 +230,63 @@ class SyncService {
     return totalAccepted;
   }
 
+  Future<int> _pushDeletes(AppDatabase db) async {
+    final rows = await db.query(
+      'sync_queue',
+      where: 'op = ?',
+      whereArgs: ['delete'],
+      orderBy: 'created_at ASC',
+      limit: 200,
+    );
+    if (rows.isEmpty) return 0;
+
+    final items = <Map<String, dynamic>>[];
+    final queuedIds = <Object?>[];
+    for (final row in rows) {
+      final payload = jsonDecode(row['payload_json'] as String? ?? '{}');
+      if (payload is! Map) continue;
+      final table =
+          payload['table'] as String? ?? row['table_name'] as String? ?? '';
+      final clientId = payload['clientId'] as String? ?? '';
+      if (!_configByTable.containsKey(table) || clientId.isEmpty) continue;
+
+      final enc =
+          await cryptoService.encryptString(jsonEncode({'deleted': true}));
+      items.add({
+        'table': table,
+        'clientId': clientId,
+        'version': _asInt(payload['version']) ?? 0,
+        'clientUpdatedAt': _asInt(payload['clientUpdatedAt']) ??
+            _asInt(row['updated_at']) ??
+            DateTime.now().millisecondsSinceEpoch,
+        ...enc.toJson(),
+        'deleted': true,
+        'meta': {'deleted': true},
+      });
+      queuedIds.add(row['id']);
+    }
+    if (items.isEmpty) return 0;
+
+    final resp = await apiClient.dio.post('/sync/push', data: {
+      'deviceId': await _getDeviceId(),
+      'items': items,
+    });
+    final data = _responseData(resp.data);
+    final accepted = (data['accepted'] as num?)?.toInt() ?? items.length;
+    for (final id in queuedIds) {
+      await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+    }
+    return accepted;
+  }
+
   Future<int> _pull() async {
     final since = await getLastSyncMs();
     final resp = await apiClient.dio.get(
       '/sync/pull',
-      queryParameters: {'since': since, 'limit': 200},
+      queryParameters: {'since': since, 'limit': 500},
     );
 
-    final data = resp.data?['data'] as Map<String, dynamic>? ?? {};
+    final data = _responseData(resp.data);
     final rawItems = data['items'] as List? ?? [];
     final serverTime = (data['serverTime'] as num?)?.toInt();
 
@@ -195,56 +298,63 @@ class SyncService {
       for (final raw in rawItems) {
         final item = raw as Map<String, dynamic>;
         try {
-          final enc = EncryptedPayload.fromJson(item);
-          final plaintext = await cryptoService.decryptToString(enc);
-
-          final table = item['table'] as String;
-          final clientId = item['clientId'] as String;
-          final clientUpdatedAt = (item['clientUpdatedAt'] as num).toInt();
-          final meta = item['meta'] as Map<String, dynamic>? ?? {};
-
-          final existing = await db.query(
-            table,
-            where: 'client_id = ?',
-            whereArgs: [clientId],
-            limit: 1,
-          );
-
-          if (existing.isEmpty) {
-            await db.insert(table, {
-              'client_id': clientId,
-              'user_id': kLocalUserId,
-              'payload_json': plaintext,
-              'version': (item['version'] as num?)?.toInt() ?? 0,
-              'is_dirty': 0,
-              'sync_at': now,
-              'created_at': clientUpdatedAt,
-              'updated_at': clientUpdatedAt,
-              ...meta,
-            });
-            merged++;
-          } else {
-            final localUpdatedAt =
-                (existing.first['updated_at'] as num?)?.toInt() ?? 0;
-            if (localUpdatedAt <= clientUpdatedAt) {
-              // 服务端版本更新，覆盖本地；否则保留本地，下次 push 时会上传
-              await db.update(
+          final table = item['table'] as String? ?? '';
+          final config = _configByTable[table];
+          if (config == null) continue;
+          final clientId = item['clientId'] as String? ?? '';
+          final deleted = item['deleted'] == true;
+          if (deleted) {
+            if (clientId.isNotEmpty) {
+              await db.delete(
                 table,
-                {
-                  'payload_json': plaintext,
-                  'version': (item['version'] as num?)?.toInt() ?? 0,
-                  'is_dirty': 0,
-                  'sync_at': now,
-                  'updated_at': clientUpdatedAt,
-                },
                 where: 'client_id = ?',
                 whereArgs: [clientId],
               );
               merged++;
             }
+            continue;
+          }
+
+          final enc = EncryptedPayload.fromJson(item);
+          final plaintext = await cryptoService.decryptToString(enc);
+          final payload = _decodePayload(table, plaintext, item);
+          final effectiveClientId = clientId.isNotEmpty
+              ? clientId
+              : payload['client_id'] as String? ?? _uuid.v4();
+          final clientUpdatedAt = (item['clientUpdatedAt'] as num?)?.toInt() ??
+              _asInt(payload['updated_at']) ??
+              now;
+
+          final row = await _preparePulledRow(
+            table: table,
+            payload: payload,
+            clientId: effectiveClientId,
+            version: (item['version'] as num?)?.toInt() ?? 0,
+            clientUpdatedAt: clientUpdatedAt,
+            syncAt: now,
+          );
+
+          final existing =
+              await _findExistingRow(db, config, effectiveClientId);
+          if (existing == null) {
+            await db.insert(table, row);
+            merged++;
+            continue;
+          }
+
+          final localUpdatedAt = _asInt(existing['updated_at']) ?? 0;
+          final localDirty = _asInt(existing['is_dirty']) == 1;
+          if (!localDirty || localUpdatedAt <= clientUpdatedAt) {
+            await db.update(
+              table,
+              row..remove('id'),
+              where: 'id = ?',
+              whereArgs: [existing['id']],
+            );
+            merged++;
           }
         } catch (_) {
-          // 单条解密失败不中断整体同步
+          // A single corrupt or incompatible row should not break all sync.
           continue;
         }
       }
@@ -254,5 +364,250 @@ class SyncService {
 
     if (serverTime != null) await _saveLastSyncMs(serverTime);
     return merged;
+  }
+
+  Future<Map<String, Object?>> _ensureClientId(
+    AppDatabase db,
+    _TableConfig config,
+    Map<String, Object?> row,
+  ) async {
+    final existing = row['client_id'] as String?;
+    if (existing != null && existing.isNotEmpty) return row;
+
+    final clientId =
+        config.profileSingleton ? 'profile-$kLocalUserId' : _uuid.v4();
+    final updated = Map<String, Object?>.from(row)..['client_id'] = clientId;
+    await db.update(
+      config.table,
+      {'client_id': clientId},
+      where: 'id = ?',
+      whereArgs: [row['id']],
+    );
+    return updated;
+  }
+
+  Future<Map<String, Object?>> _buildEncryptedRowPayload(
+    String table,
+    Map<String, Object?> row,
+  ) async {
+    final payload = <String, Object?>{
+      for (final entry in row.entries)
+        if (!_localOnlyColumns.contains(entry.key)) entry.key: entry.value,
+    };
+    payload['user_id'] = kLocalUserId;
+
+    if (table == 'health_report') {
+      final imagePath = row['image_path'] as String? ?? '';
+      final imageFile = File(imagePath);
+      if (imagePath.isNotEmpty && await imageFile.exists()) {
+        payload['image_base64'] = base64Encode(await imageFile.readAsBytes());
+        payload['image_ext'] = p.extension(imagePath);
+      }
+    }
+
+    return payload;
+  }
+
+  Future<Map<String, Object?>> _preparePulledRow({
+    required String table,
+    required Map<String, dynamic> payload,
+    required String clientId,
+    required int version,
+    required int clientUpdatedAt,
+    required int syncAt,
+  }) async {
+    final row = Map<String, Object?>.from(payload)
+      ..remove('id')
+      ..remove('image_base64')
+      ..remove('image_ext')
+      ..['user_id'] = kLocalUserId
+      ..['client_id'] = clientId
+      ..['version'] = _asInt(payload['version']) ?? version
+      ..['is_dirty'] = 0
+      ..['sync_at'] = syncAt
+      ..['created_at'] = _asInt(payload['created_at']) ?? clientUpdatedAt
+      ..['updated_at'] = _asInt(payload['updated_at']) ?? clientUpdatedAt;
+
+    switch (table) {
+      case 'user_profile':
+        row.addAll({
+          'nickname': row['nickname'] ?? '',
+          'gender': row['gender'] ?? 'unknown',
+          'birth_year': _asInt(row['birth_year']) ?? 0,
+          'height_cm': _asDouble(row['height_cm']),
+          'weight_kg': _asDouble(row['weight_kg']),
+          'medical_history': row['medical_history'] ?? '',
+          'medications': row['medications'] ?? '',
+          'goal': row['goal'] ?? 'maintain',
+          'exercise_base': row['exercise_base'] ?? 'none',
+          'diet_preference': row['diet_preference'] ?? 'normal',
+        });
+      case 'health_indicator':
+        row.addAll({
+          'type': row['type'] ?? 'weight',
+          'payload_json': row['payload_json'] ?? '{}',
+          'source': row['source'] ?? 'manual',
+          'measured_at': _asInt(row['measured_at']) ?? clientUpdatedAt,
+        });
+      case 'plan':
+        row.addAll({
+          'type': row['type'] ?? 'meal',
+          'plan_date': _asInt(row['plan_date']) ?? clientUpdatedAt,
+          'payload_json': row['payload_json'] ?? '{}',
+          'ai_provider': row['ai_provider'] ?? '',
+          'ai_model': row['ai_model'] ?? '',
+        });
+      case 'clock_record':
+        row.addAll({
+          'type': row['type'] ?? 'meal',
+          'status': row['status'] ?? 'done',
+          'clock_at': _asInt(row['clock_at']) ?? clientUpdatedAt,
+          'note': row['note'] ?? '',
+          'photo_path': row['photo_path'] ?? '',
+        });
+      case 'reminder':
+        row.addAll({
+          'type': row['type'] ?? 'meal',
+          'remind_at': _asInt(row['remind_at']) ?? clientUpdatedAt,
+          'payload_json': row['payload_json'] ?? '{}',
+          'channel': row['channel'] ?? 'local',
+          'status': row['status'] ?? 'pending',
+        });
+      case 'health_report':
+        row.addAll({
+          'image_path': await _restoreReportImage(payload, clientId),
+          'report_time': _asInt(row['report_time']) ?? clientUpdatedAt,
+          'summary': row['summary'] ?? '',
+          'raw_text': row['raw_text'] ?? '',
+          'structured_json': row['structured_json'] ?? '{}',
+          'provider': row['provider'] ?? '',
+        });
+    }
+    return row;
+  }
+
+  Future<String> _restoreReportImage(
+    Map<String, dynamic> payload,
+    String clientId,
+  ) async {
+    final imageBase64 = payload['image_base64'] as String?;
+    if (imageBase64 == null || imageBase64.isEmpty) {
+      return payload['image_path'] as String? ?? '';
+    }
+
+    final dir = await getApplicationDocumentsDirectory();
+    final reportDir = Directory(p.join(dir.path, 'private_reports'));
+    if (!await reportDir.exists()) {
+      await reportDir.create(recursive: true);
+    }
+    final ext = (payload['image_ext'] as String?)?.isNotEmpty == true
+        ? payload['image_ext'] as String
+        : '.jpg';
+    final file = File(p.join(reportDir.path, '$clientId$ext'));
+    await file.writeAsBytes(base64Decode(imageBase64), flush: true);
+    return file.path;
+  }
+
+  Map<String, dynamic> _decodePayload(
+    String table,
+    String plaintext,
+    Map<String, dynamic> item,
+  ) {
+    final decoded = jsonDecode(plaintext);
+    if (decoded is Map) {
+      final mapped = decoded.map((key, value) => MapEntry('$key', value));
+      if (table == 'health_indicator' && !mapped.containsKey('payload_json')) {
+        final meta = item['meta'] as Map<String, dynamic>? ?? {};
+        return {
+          'type': meta['type'] ?? mapped['type'] ?? 'weight',
+          'payload_json': jsonEncode(mapped),
+          'source': meta['source'] ?? 'cloud',
+          'measured_at': meta['measured_at'] ?? item['clientUpdatedAt'],
+        };
+      }
+      return mapped;
+    }
+
+    // Backward compatibility: older health sync encrypted only payload_json.
+    if (table == 'health_indicator') {
+      final meta = item['meta'] as Map<String, dynamic>? ?? {};
+      return {
+        'type': meta['type'] ?? 'weight',
+        'payload_json': plaintext,
+        'source': meta['source'] ?? 'cloud',
+        'measured_at': meta['measured_at'] ?? item['clientUpdatedAt'],
+      };
+    }
+    return {};
+  }
+
+  Future<Map<String, Object?>?> _findExistingRow(
+    AppDatabase db,
+    _TableConfig config,
+    String clientId,
+  ) async {
+    final rows = await db.query(
+      config.table,
+      where: 'client_id = ?',
+      whereArgs: [clientId],
+      limit: 1,
+    );
+    if (rows.isNotEmpty) return rows.first;
+
+    if (config.profileSingleton) {
+      final profileRows = await db.query(
+        config.table,
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+        limit: 1,
+      );
+      if (profileRows.isNotEmpty) return profileRows.first;
+    }
+    return null;
+  }
+
+  Map<String, Object?> _buildMeta(
+    _TableConfig config,
+    Map<String, Object?> row,
+  ) {
+    return {
+      for (final key in config.metaKeys)
+        if (row[key] != null) key: row[key],
+    };
+  }
+
+  Map<String, dynamic> _responseData(Object? body) {
+    if (body is Map) {
+      final code = body['code'];
+      if (code != null && code != 0) {
+        throw StateError(
+          body['message']?.toString() ?? body['msg']?.toString() ?? '云同步请求失败',
+        );
+      }
+      if (body['data'] is Map) {
+        return Map<String, dynamic>.from(body['data'] as Map);
+      }
+      return Map<String, dynamic>.from(body);
+    }
+    return {};
+  }
+
+  static const _localOnlyColumns = {
+    'id',
+    'is_dirty',
+    'sync_at',
+  };
+
+  int? _asInt(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse('$value');
+  }
+
+  double _asDouble(Object? value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    return double.tryParse('$value') ?? 0;
   }
 }

@@ -6,6 +6,8 @@ import '../../app/app_theme.dart';
 import '../../core/crypto/key_vault.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/paywall.dart';
+import '../../core/sync/sync_service.dart';
 
 class KeySetupPage extends StatefulWidget {
   const KeySetupPage({super.key});
@@ -83,10 +85,37 @@ class _KeySetupPageState extends State<KeySetupPage> {
         _mnemonic = _vault.exportMnemonic(umk);
         _confirmed = true;
       });
+      await _vault.markBackedUp();
       sl<HealthRepository>().signalChanged();
       await _refreshBackupState();
+
       if (!mounted) return;
-      messenger.showSnackBar(const SnackBar(content: Text('助记词已恢复到本地安全存储')));
+      final canSync =
+          await requireAccountAndMember(context, PaywallFeature.cloudSync);
+      if (!canSync) {
+        await sl<SyncService>().setSyncEnabled(false);
+        if (!mounted) return;
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('主密钥已恢复到本地。登录账号并开通会员后，可在云同步页拉取云端数据。'),
+          ),
+        );
+        return;
+      }
+
+      final sync = sl<SyncService>();
+      await sync.setSyncEnabled(true);
+      final result = await sync.restoreFromCloud();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            result.hasError
+                ? '主密钥已恢复，但云端同步失败：${result.error}'
+                : '主密钥已恢复，并已拉取云端数据 ${result.pulled} 条',
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {

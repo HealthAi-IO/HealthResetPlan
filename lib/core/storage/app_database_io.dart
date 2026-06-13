@@ -53,7 +53,7 @@ class _SqfliteAppDatabase extends AppDatabase {
 
   sqflite.Database? _db;
   static const String _fileName = 'health_reset_plan.sqlite';
-  static const int _schemaVersion = 6;
+  static const int _schemaVersion = 8;
 
   Future<sqflite.Database> _ensureDb() async {
     if (_db != null) return _db!;
@@ -189,7 +189,7 @@ class _SqfliteAppDatabase extends AppDatabase {
     await db.execute(_ddlAiSession);
     await db.execute(_ddlAiMessage);
     await db.execute(_idxAiMessageSession);
-    await db.execute(_ddlBoundDevice);
+    await db.execute(_ddlHealthReport);
   }
 
   Future<void> _onUpgrade(
@@ -213,14 +213,41 @@ class _SqfliteAppDatabase extends AppDatabase {
       await db.execute(_ddlAiMessage);
       await db.execute(_idxAiMessageSession);
     }
-    if (oldVersion < 5) {
-      // v5：蓝牙设备绑定
-      await db.execute(_ddlBoundDevice);
+    if (oldVersion < 7) {
+      await db.execute(_ddlHealthReport);
     }
-    if (oldVersion < 6) {
-      await db.execute("ALTER TABLE bound_device ADD COLUMN sync_source TEXT NOT NULL DEFAULT 'ble_live'");
-      await db.execute("ALTER TABLE bound_device ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'idle'");
-      await db.execute("ALTER TABLE bound_device ADD COLUMN last_error TEXT NOT NULL DEFAULT ''");
+    if (oldVersion < 8) {
+      // v8：补齐所有云同步表的同步元数据列。部分旧库只给部分表加过列，
+      // 这里用幂等检查避免重复 ALTER 导致升级失败。
+      await _addColumnIfMissing(db, 'user_profile', 'client_id', 'TEXT');
+      await _addColumnIfMissing(
+          db, 'user_profile', 'sync_at', 'INTEGER NOT NULL DEFAULT 0');
+
+      for (final t in ['clock_record', 'reminder']) {
+        await _addColumnIfMissing(db, t, 'client_id', 'TEXT');
+        await _addColumnIfMissing(
+            db, t, 'sync_at', 'INTEGER NOT NULL DEFAULT 0');
+      }
+
+      await _addColumnIfMissing(
+          db, 'health_report', 'version', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(
+          db, 'health_report', 'is_dirty', 'INTEGER NOT NULL DEFAULT 1');
+      await _addColumnIfMissing(
+          db, 'health_report', 'sync_at', 'INTEGER NOT NULL DEFAULT 0');
+    }
+  }
+
+  Future<void> _addColumnIfMissing(
+    sqflite.Database db,
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = columns.any((row) => row['name'] == column);
+    if (!exists) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
     }
   }
 }
@@ -330,11 +357,13 @@ const String _ddlUserProfile = '''
       medications     TEXT    NOT NULL DEFAULT '',
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL,
+      client_id       TEXT,
       goal            TEXT    NOT NULL DEFAULT 'maintain',
       exercise_base   TEXT    NOT NULL DEFAULT 'none',
       diet_preference TEXT    NOT NULL DEFAULT 'normal',
       version         INTEGER NOT NULL DEFAULT 0,
-      is_dirty        INTEGER NOT NULL DEFAULT 1
+      is_dirty        INTEGER NOT NULL DEFAULT 1,
+      sync_at         INTEGER NOT NULL DEFAULT 0
     );
 ''';
 
@@ -377,6 +406,7 @@ const String _ddlClockRecord = '''
     CREATE TABLE IF NOT EXISTS clock_record (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id     TEXT    NOT NULL,
+      client_id   TEXT,
       type        TEXT    NOT NULL,
       status      TEXT    NOT NULL DEFAULT 'done',
       clock_at    INTEGER NOT NULL,
@@ -385,7 +415,8 @@ const String _ddlClockRecord = '''
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL,
       version     INTEGER NOT NULL DEFAULT 0,
-      is_dirty    INTEGER NOT NULL DEFAULT 1
+      is_dirty    INTEGER NOT NULL DEFAULT 1,
+      sync_at     INTEGER NOT NULL DEFAULT 0
     );
 ''';
 
@@ -393,6 +424,7 @@ const String _ddlReminder = '''
     CREATE TABLE IF NOT EXISTS reminder (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id      TEXT    NOT NULL,
+      client_id    TEXT,
       type         TEXT    NOT NULL,
       remind_at    INTEGER NOT NULL,
       payload_json TEXT    NOT NULL DEFAULT '',
@@ -401,7 +433,8 @@ const String _ddlReminder = '''
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL,
       version      INTEGER NOT NULL DEFAULT 0,
-      is_dirty     INTEGER NOT NULL DEFAULT 1
+      is_dirty     INTEGER NOT NULL DEFAULT 1,
+      sync_at      INTEGER NOT NULL DEFAULT 0
     );
 ''';
 
@@ -450,23 +483,22 @@ const String _idxAiMessageSession = '''
         ON ai_message(session_id, id);
 ''';
 
-/// 已绑定的蓝牙设备。
-///
-/// kind：blood_pressure / weight_scale / heart_rate / band（手环综合）
-/// status：active / disabled
-/// last_sync_at：上次同步数据的时间戳
-const String _ddlBoundDevice = '''
-    CREATE TABLE IF NOT EXISTS bound_device (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      kind          TEXT    NOT NULL,
-      brand         TEXT    NOT NULL DEFAULT '',
-      name          TEXT    NOT NULL,
-      mac_address   TEXT    NOT NULL UNIQUE,
-      sync_source   TEXT    NOT NULL DEFAULT 'ble_live',
-      status        TEXT    NOT NULL DEFAULT 'active',
-      bound_at      INTEGER NOT NULL,
-      last_sync_at  INTEGER NOT NULL DEFAULT 0,
-      sync_state    TEXT    NOT NULL DEFAULT 'idle',
-      last_error    TEXT    NOT NULL DEFAULT ''
+const String _ddlHealthReport = '''
+    CREATE TABLE IF NOT EXISTS health_report (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         TEXT    NOT NULL,
+      client_id       TEXT    NOT NULL,
+      image_path      TEXT    NOT NULL DEFAULT '',
+      report_time     INTEGER NOT NULL,
+      summary         TEXT    NOT NULL DEFAULT '',
+      raw_text        TEXT    NOT NULL DEFAULT '',
+      structured_json TEXT    NOT NULL DEFAULT '{}',
+      provider        TEXT    NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      version         INTEGER NOT NULL DEFAULT 0,
+      is_dirty        INTEGER NOT NULL DEFAULT 1,
+      sync_at         INTEGER NOT NULL DEFAULT 0
     );
 ''';
+

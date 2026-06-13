@@ -1,11 +1,11 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
 import 'key_vault.dart';
 
-/// 客户端加密载荷。
+/// 端到端加密载荷。
 ///
 /// - [cipher] 密文（AES-256-GCM）
 /// - [iv] 12 字节随机 IV
@@ -41,7 +41,7 @@ class EncryptedPayload {
   }
 }
 
-/// 客户端加密接口。
+/// 端到端加密接口。
 ///
 /// 所有上传到云端的敏感字段（健康指标、报告、计划、备注等）必须先经过本接口加密；
 /// 服务端 **不持有** 用户主密钥（UMK），因此对密文不可见。
@@ -114,3 +114,4 @@ class AesGcmCryptoService implements CryptoService {
     return Uint8List.fromList(clear);
   }
 }
+

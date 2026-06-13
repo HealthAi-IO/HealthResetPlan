@@ -51,28 +51,34 @@ void main() {
     expect(meals.where((item) => item.type == 'exercise'), hasLength(7));
   });
 
-  test('system health snapshot is ingested as sync indicators', () async {
+  test('report record is saved as dirty sync data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
     await repo.initialize();
 
     final recordedAt = DateTime(2026, 6, 9, 8);
-    final inserted = await repo.ingestSystemHealthSnapshot(
-      steps: 6200,
-      heartRateBpm: 72,
-      sleepHours: 7.5,
-      recordedAt: recordedAt,
+    await repo.saveReportRecord(
+      clientId: 'report-1',
+      imagePath: '',
+      reportTime: recordedAt,
+      summary: 'Blood pressure noted',
+      rawText: 'BP 120/80',
+      structured: {
+        'indicators': [
+          {'name': 'BP', 'value': '120/80'},
+        ],
+      },
+      provider: 'qwen-vl',
     );
 
-    expect(inserted, 3);
-    final steps = (await repo.loadIndicators(type: 'steps')).first;
-    final heartRate = (await repo.loadIndicators(type: 'heart_rate')).first;
-    final sleep = (await repo.loadIndicators(type: 'sleep')).first;
+    final reports = await repo.loadReportRecords();
+    final report = reports.single;
 
-    expect(steps.payload['steps'], 6200);
-    expect(heartRate.payload['bpm'], 72);
-    expect(sleep.payload['sleepHours'], 7.5);
-    expect(steps.source, 'system_health');
-    expect(steps.measuredAt, recordedAt.millisecondsSinceEpoch);
+    expect(report.clientId, 'report-1');
+    expect(report.reportTime, recordedAt.millisecondsSinceEpoch);
+    expect(report.version, 1);
+    expect(report.isDirty, 1);
+    expect(report.syncAt, 0);
+    expect(report.indicatorCount, 1);
   });
 }
 
@@ -84,6 +90,7 @@ class _MemoryAppDatabase implements AppDatabase {
     'clock_record',
     'reminder',
     'sync_queue',
+    'health_report',
   ];
 
   final Map<String, List<Map<String, Object?>>> _data = {
