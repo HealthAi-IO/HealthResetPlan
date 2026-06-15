@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
@@ -47,7 +47,8 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
     if (value) {
       // 必须先登录账号 + 已开通会员
       if (!mounted) return;
-      final ok = await requireAccountAndMember(context, PaywallFeature.cloudSync);
+      final ok =
+          await requireAccountAndMember(context, PaywallFeature.cloudSync);
       if (!ok) {
         await _load();
         return;
@@ -104,9 +105,15 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
     setState(() {
       _syncing = false;
       _lastSyncMs = lastMs;
-      _syncMessage = result.hasError
-          ? '同步失败：${result.error}'
-          : '同步完成：上传 ${result.pushed} 条，拉取 ${result.pulled} 条';
+      if (result.hasError) {
+        _syncMessage = '同步失败：${result.error}';
+      } else if (result.pushed == 0 && result.pulled == 0) {
+        _syncMessage = '同步完成：云端没有可拉取的新数据，本地也没有待上传数据'
+            '${result.attempts > 1 ? '（重试后成功）' : ''}';
+      } else {
+        _syncMessage = '同步完成：上传 ${result.pushed} 条，拉取 ${result.pulled} 条'
+            '${result.attempts > 1 ? '（重试后成功）' : ''}';
+      }
     });
   }
 
@@ -132,6 +139,12 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
           ),
           const SizedBox(height: 16),
           if (_syncEnabled) ...[
+            const Text(
+              '立即同步会把本机未上传的数据加密上传，并从云端拉取可解密的新数据。',
+              style:
+                  TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4),
+            ),
+            const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -203,7 +216,7 @@ class _SyncToggleCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            enabled ? '上次同步：$lastSync' : '关闭状态：数据仅保存在本地设备。',
+            enabled ? '上次同步：$lastSync' : '关闭状态：免费版数据仅保存在本地轻量 SQLite 数据库。',
             style: const TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
           if (!enabled) ...[
@@ -361,4 +374,3 @@ class _E2eeNote extends StatelessWidget {
     );
   }
 }
-

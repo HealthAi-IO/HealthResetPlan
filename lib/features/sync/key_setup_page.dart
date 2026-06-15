@@ -26,6 +26,8 @@ class _KeySetupPageState extends State<KeySetupPage> {
   bool _backedUp = false;
   bool _busy = false;
   String? _restoreMnemonicError;
+  String? _restoreStatusMessage;
+  bool _restoreStatusError = false;
 
   @override
   void initState() {
@@ -76,6 +78,8 @@ class _KeySetupPageState extends State<KeySetupPage> {
     setState(() {
       _busy = true;
       _restoreMnemonicError = null;
+      _restoreStatusMessage = '正在校验助记词并写入本地安全存储...';
+      _restoreStatusError = false;
     });
     try {
       final umk = await _vault.restoreFromMnemonic(text);
@@ -84,6 +88,7 @@ class _KeySetupPageState extends State<KeySetupPage> {
         _umk = umk;
         _mnemonic = _vault.exportMnemonic(umk);
         _confirmed = true;
+        _restoreStatusMessage = '主密钥已写入本地，正在检查云同步权限...';
       });
       await _vault.markBackedUp();
       sl<HealthRepository>().signalChanged();
@@ -95,6 +100,10 @@ class _KeySetupPageState extends State<KeySetupPage> {
       if (!canSync) {
         await sl<SyncService>().setSyncEnabled(false);
         if (!mounted) return;
+        setState(() {
+          _restoreStatusMessage = '主密钥已恢复到本地。登录账号并开通会员后，可在云同步页拉取云端数据。';
+          _restoreStatusError = false;
+        });
         messenger.showSnackBar(
           const SnackBar(
             content: Text('主密钥已恢复到本地。登录账号并开通会员后，可在云同步页拉取云端数据。'),
@@ -105,21 +114,32 @@ class _KeySetupPageState extends State<KeySetupPage> {
 
       final sync = sl<SyncService>();
       await sync.setSyncEnabled(true);
+      setState(() {
+        _restoreStatusMessage = '主密钥已恢复到本地，正在从云端拉取加密数据...';
+        _restoreStatusError = false;
+      });
       final result = await sync.restoreFromCloud();
       if (!mounted) return;
+      final message = result.hasError
+          ? _restoreSyncFailureMessage(result.error)
+          : result.pulled == 0
+              ? '主密钥已恢复，云端没有可拉取的数据。请确认之前已成功开启云同步并上传过数据。'
+              : '主密钥已恢复，并已拉取云端数据 ${result.pulled} 条';
+      setState(() {
+        _restoreStatusMessage = message;
+        _restoreStatusError = result.hasError;
+      });
       messenger.showSnackBar(
         SnackBar(
-          content: Text(
-            result.hasError
-                ? '主密钥已恢复，但云端同步失败：${result.error}'
-                : '主密钥已恢复，并已拉取云端数据 ${result.pulled} 条',
-          ),
+          content: Text(message),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _restoreMnemonicError = e.toString();
+        _restoreMnemonicError = _friendlyRestoreError(e);
+        _restoreStatusMessage = _friendlyRestoreError(e);
+        _restoreStatusError = true;
       });
     } finally {
       if (mounted) {
@@ -144,6 +164,28 @@ class _KeySetupPageState extends State<KeySetupPage> {
     await _refreshBackupState();
     if (!mounted) return;
     messenger.showSnackBar(const SnackBar(content: Text('已确认备份，可以开启云同步')));
+  }
+
+  String _friendlyRestoreError(Object e) {
+    final text = e.toString();
+    if (text.contains('助记词') || text.contains('Mnemonic')) {
+      return '助记词不匹配，请核对';
+    }
+    if (text.contains('本地存储') ||
+        text.contains('secure storage') ||
+        text.contains('KeyStore') ||
+        text.contains('Keychain')) {
+      return '本地存储异常，无法恢复密钥';
+    }
+    return text.replaceFirst('Exception: ', '');
+  }
+
+  String _restoreSyncFailureMessage(String? error) {
+    final text = error ?? '';
+    if (text.contains('密钥异常') || text.contains('密钥错误')) {
+      return '主密钥已恢复到本地，但云端数据无法用这组助记词解密。请确认使用最初开启云同步时备份的助记词。';
+    }
+    return '主密钥已恢复，但云端同步失败：$text';
   }
 
   @override
@@ -256,12 +298,26 @@ class _KeySetupPageState extends State<KeySetupPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    if (_restoreStatusMessage != null) ...[
+                      _RestoreStatusCard(
+                        message: _restoreStatusMessage!,
+                        isError: _restoreStatusError,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: _busy ? null : _restore,
-                        icon: const Icon(Icons.restore_outlined),
-                        label: const Text('恢复到本地'),
+                        icon: _busy
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.restore_outlined),
+                        label: Text(_busy ? '恢复中...' : '恢复到本地'),
                       ),
                     ),
                   ],
@@ -374,6 +430,49 @@ class _Panel extends StatelessWidget {
               style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
           const SizedBox(height: 16),
           child,
+        ],
+      ),
+    );
+  }
+}
+
+class _RestoreStatusCard extends StatelessWidget {
+  const _RestoreStatusCard({
+    required this.message,
+    required this.isError,
+  });
+
+  final String message;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isError ? Colors.red.shade700 : Colors.green.shade700;
+    final bg = isError ? Colors.red.shade50 : Colors.green.shade50;
+    final border = isError ? Colors.red.shade100 : Colors.green.shade100;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            isError ? Icons.error_outline : Icons.check_circle_outline,
+            color: color,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(color: color, fontSize: 12, height: 1.45),
+            ),
+          ),
         ],
       ),
     );

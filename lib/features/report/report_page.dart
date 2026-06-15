@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
@@ -106,7 +110,7 @@ class _ReportPageState extends State<ReportPage> {
   bool _saving = false;
   XFile? _pickedImage;
   _OcrResult? _ocrResult;
-  List<HealthIndicatorEntry> _recent = const [];
+  List<HealthReportRecord> _reports = const [];
 
   @override
   void initState() {
@@ -125,10 +129,10 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _load({bool silent = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
-    final indicators = await _repo.loadIndicators(limit: 10);
+    final reports = await _repo.loadReportRecords(limit: 50);
     if (!mounted) return;
     setState(() {
-      _recent = indicators;
+      _reports = reports;
       _loading = false;
     });
   }
@@ -225,6 +229,69 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  void _showReportDetail(HealthReportRecord record) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ReportDetailSheet(record: record),
+    );
+  }
+
+  Future<void> _deleteReport(HealthReportRecord record) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除报告'),
+        content: const Text('删除后本地报告历史中将不再显示，已开启云同步时会同步删除云端记录。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _repo.deleteReportRecord(record.clientId);
+      await _deleteReportImage(record.imagePath);
+
+      var syncMessage = '';
+      if (await _syncService.isSyncEnabled()) {
+        final syncResult = await _syncService.sync();
+        if (syncResult.hasError) {
+          syncMessage = '，云同步失败：${syncResult.error}';
+        }
+      }
+
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('报告已删除$syncMessage'),
+          backgroundColor: syncMessage.isEmpty ? Colors.green : Colors.orange,
+        ),
+      );
+      _load(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('删除失败：$e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _saveResult(_OcrResult result) async {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
@@ -232,10 +299,11 @@ class _ReportPageState extends State<ReportPage> {
     try {
       final reportTime = _parseReportDate(result.reportDate) ?? DateTime.now();
       final clientId = const Uuid().v4();
+      final imagePath = await _persistReportImage(clientId);
 
       await _repo.saveReportRecord(
         clientId: clientId,
-        imagePath: '',
+        imagePath: imagePath,
         reportTime: reportTime,
         summary: result.summary,
         rawText: result.rawText,
@@ -418,6 +486,48 @@ class _ReportPageState extends State<ReportPage> {
     if (tasks.isNotEmpty) await Future.wait(tasks);
   }
 
+  Future<String> _persistReportImage(String clientId) async {
+    final image = _pickedImage;
+    if (image == null || image.path.isBlank) return '';
+
+    try {
+      final source = File(image.path);
+      if (!await source.exists()) return image.path;
+
+      final dir = await getApplicationDocumentsDirectory();
+      final reportDir = Directory(p.join(dir.path, 'private_reports'));
+      if (!await reportDir.exists()) {
+        await reportDir.create(recursive: true);
+      }
+
+      final nameExt = p.extension(image.name);
+      final pathExt = p.extension(image.path);
+      final ext = (nameExt.isNotEmpty ? nameExt : pathExt).toLowerCase();
+      final target = File(
+          p.join(reportDir.path, '$clientId${ext.isEmpty ? '.jpg' : ext}'));
+      await source.copy(target.path);
+      return target.path;
+    } catch (_) {
+      return image.path;
+    }
+  }
+
+  Future<void> _deleteReportImage(String imagePath) async {
+    if (imagePath.isBlank) return;
+
+    final segments = p.normalize(imagePath).split(RegExp(r'[\\/]+'));
+    if (!segments.contains('private_reports')) return;
+
+    try {
+      final file = File(imagePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // 删除图片失败不影响报告记录删除。
+    }
+  }
+
   String _mimeType(String filename) {
     final ext = filename.toLowerCase().split('.').last;
     return switch (ext) {
@@ -517,7 +627,11 @@ class _ReportPageState extends State<ReportPage> {
               const _ProgressCard(),
             ],
             const SizedBox(height: 16),
-            _RecentPanel(items: _recent),
+            _ReportHistoryPanel(
+              records: _reports,
+              onOpen: _showReportDetail,
+              onDelete: _deleteReport,
+            ),
           ],
         ),
       ),
@@ -542,6 +656,9 @@ class _PickCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pickedFile =
+        pickedImage == null ? null : _existingImageFile(pickedImage!.path);
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -600,6 +717,14 @@ class _PickCard extends StatelessWidget {
               ),
             ),
           ]),
+          if (pickedFile != null) ...[
+            const SizedBox(height: 12),
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => _showImagePreview(context, pickedFile),
+              child: _ReportImagePreview(file: pickedFile, height: 220),
+            ),
+          ],
         ],
       ]),
     );
@@ -864,24 +989,285 @@ class _OcrReviewSheet extends StatelessWidget {
   }
 }
 
-class _RecentPanel extends StatefulWidget {
-  const _RecentPanel({required this.items});
+class _ReportDetailSheet extends StatelessWidget {
+  const _ReportDetailSheet({required this.record});
 
-  final List<HealthIndicatorEntry> items;
+  final HealthReportRecord record;
+
+  Color _statusColor(String status) => switch (status) {
+        'high' => Colors.red.shade600,
+        'low' => Colors.orange.shade700,
+        'normal' => Colors.green.shade700,
+        _ => AppTheme.muted,
+      };
+
+  String _statusLabel(String status) => switch (status) {
+        'high' => '偏高',
+        'low' => '偏低',
+        'normal' => '正常',
+        _ => '待核对',
+      };
 
   @override
-  State<_RecentPanel> createState() => _RecentPanelState();
+  Widget build(BuildContext context) {
+    final result = _OcrResult.fromJson(record.structured);
+    final summary = record.summary.trim().isNotEmpty
+        ? record.summary.trim()
+        : result.summary.trim();
+    final rawText = record.rawText.trim().isNotEmpty
+        ? record.rawText.trim()
+        : result.rawText.trim();
+    final imageFile = _existingImageFile(record.imagePath);
+    final imageHeight =
+        (MediaQuery.sizeOf(context).height * 0.38).clamp(240.0, 380.0);
+
+    final byCategory = <String, List<_OcrIndicator>>{};
+    for (final indicator in result.indicators) {
+      (byCategory[indicator.category.isEmpty ? '其他' : indicator.category] ??=
+              [])
+          .add(indicator);
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 56),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const SizedBox(height: 12),
+        Container(
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade300,
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+          child: Row(children: [
+            const Icon(Icons.description_outlined, color: AppTheme.deepBlue),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '报告详情',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${DateFormat('yyyy-MM-dd HH:mm').format(record.reportDateTime)} · ${record.provider.isBlank ? 'AI识别' : record.provider}',
+                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: '关闭',
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close),
+            ),
+          ]),
+        ),
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            children: [
+              if (imageFile != null) ...[
+                const Text(
+                  '报告原图',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => _showImagePreview(context, imageFile),
+                  child: Stack(
+                    children: [
+                      _ReportImagePreview(
+                        file: imageFile,
+                        height: imageHeight.toDouble(),
+                      ),
+                      Positioned(
+                        right: 10,
+                        top: 10,
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.open_in_full,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (summary.isNotEmpty) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.green.shade200),
+                  ),
+                  child: Text(
+                    summary,
+                    style: const TextStyle(color: AppTheme.muted, height: 1.5),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              Row(children: [
+                const Expanded(
+                  child: Text(
+                    '识别指标',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text(
+                  '${result.indicators.length} 项',
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              if (result.indicators.isEmpty)
+                const Text(
+                  '这份报告未识别到具体指标。',
+                  style: TextStyle(color: AppTheme.muted),
+                )
+              else
+                for (final entry in byCategory.entries) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12, bottom: 6),
+                    child: Text(
+                      entry.key,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.muted,
+                      ),
+                    ),
+                  ),
+                  for (final indicator in entry.value)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.pageBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Expanded(
+                              child: Text(
+                                indicator.name,
+                                style: const TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                            Text(
+                              '${indicator.value} ${indicator.unit}'.trim(),
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: _statusColor(indicator.status)
+                                    .withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                _statusLabel(indicator.status),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: _statusColor(indicator.status),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ]),
+                          if (indicator.referenceRange.trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '参考范围：${indicator.referenceRange}',
+                              style: const TextStyle(
+                                  color: AppTheme.muted, fontSize: 11),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              if (rawText.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text(
+                    '识别原文',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        rawText,
+                        style: const TextStyle(
+                            color: AppTheme.muted, height: 1.45),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ]),
+    );
+  }
 }
 
-class _RecentPanelState extends State<_RecentPanel> {
-  static const _defaultShow = 3;
+class _ReportHistoryPanel extends StatefulWidget {
+  const _ReportHistoryPanel({
+    required this.records,
+    required this.onOpen,
+    required this.onDelete,
+  });
+
+  final List<HealthReportRecord> records;
+  final ValueChanged<HealthReportRecord> onOpen;
+  final ValueChanged<HealthReportRecord> onDelete;
+
+  @override
+  State<_ReportHistoryPanel> createState() => _ReportHistoryPanelState();
+}
+
+class _ReportHistoryPanelState extends State<_ReportHistoryPanel> {
+  static const _defaultShow = 4;
   bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    final hasMore = widget.items.length > _defaultShow;
+    final hasMore = widget.records.length > _defaultShow;
     final visible =
-        _expanded ? widget.items : widget.items.take(_defaultShow).toList();
+        _expanded ? widget.records : widget.records.take(_defaultShow).toList();
 
     return Container(
       width: double.infinity,
@@ -899,27 +1285,32 @@ class _RecentPanelState extends State<_RecentPanel> {
               Text('最近识别结果',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
               SizedBox(height: 2),
-              Text('已存入本地健康指标库',
+              Text('每次识别都会保存一条报告记录',
                   style: TextStyle(color: AppTheme.muted, fontSize: 12)),
             ]),
           ),
-          if (widget.items.isNotEmpty)
-            Text('共 ${widget.items.length} 条',
+          if (widget.records.isNotEmpty)
+            Text('共 ${widget.records.length} 份',
                 style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
         ]),
         const SizedBox(height: 14),
-        if (widget.items.isEmpty)
-          const Text('暂无识别结果。', style: TextStyle(color: AppTheme.muted))
+        if (widget.records.isEmpty)
+          const Text('暂无报告历史。保存一次识别结果后会显示在这里。',
+              style: TextStyle(color: AppTheme.muted))
         else
           AnimatedSize(
             duration: const Duration(milliseconds: 250),
             curve: Curves.easeInOut,
             child: Column(
               children: [
-                for (final item in visible)
+                for (final record in visible)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
-                    child: _IndicatorRow(item: item),
+                    child: _ReportHistoryRow(
+                      record: record,
+                      onOpen: () => widget.onOpen(record),
+                      onDelete: () => widget.onDelete(record),
+                    ),
                   ),
               ],
             ),
@@ -940,7 +1331,7 @@ class _RecentPanelState extends State<_RecentPanel> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    _expanded ? '收起' : '展开全部 ${widget.items.length} 条',
+                    _expanded ? '收起' : '展开全部 ${widget.records.length} 份',
                     style: const TextStyle(
                       fontSize: 13,
                       color: AppTheme.deepBlue,
@@ -964,56 +1355,162 @@ class _RecentPanelState extends State<_RecentPanel> {
   }
 }
 
-class _IndicatorRow extends StatelessWidget {
-  const _IndicatorRow({required this.item});
+class _ReportHistoryRow extends StatelessWidget {
+  const _ReportHistoryRow({
+    required this.record,
+    required this.onOpen,
+    required this.onDelete,
+  });
 
-  final HealthIndicatorEntry item;
+  final HealthReportRecord record;
+  final VoidCallback onOpen;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.pageBg,
+    final summary = record.summary.trim();
+    final title = summary.isNotEmpty ? summary : '体检/检验报告';
+    final provider = record.provider.isBlank ? 'AI识别' : record.provider;
+    final imageFile = _existingImageFile(record.imagePath);
+
+    return Material(
+      color: AppTheme.pageBg,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
         borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(_iconFor(item.type), color: AppTheme.deepBlue, size: 18),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(item.label,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-            Text(item.displayValue,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(children: [
+            if (imageFile != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.file(
+                  imageFile,
+                  width: 46,
+                  height: 54,
+                  fit: BoxFit.cover,
+                ),
+              )
+            else
+              Container(
+                width: 46,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryBlue.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.description_outlined,
+                  color: AppTheme.deepBlue,
+                  size: 20,
+                ),
+              ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${DateFormat('MM/dd HH:mm').format(record.reportDateTime)} · ${record.indicatorCount} 项指标 · $provider',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: AppTheme.muted, fontSize: 12),
+                    ),
+                  ]),
+            ),
+            IconButton(
+              tooltip: '删除报告',
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+            ),
           ]),
         ),
-        Text(
-          DateFormat('MM/dd').format(item.measuredTime),
-          style: const TextStyle(color: AppTheme.muted, fontSize: 11),
-        ),
-      ]),
+      ),
     );
   }
 }
 
-IconData _iconFor(String type) => switch (type) {
-      'bp' => Icons.favorite_outline,
-      'weight' => Icons.scale_outlined,
-      'glucose' => Icons.monitor_heart_outlined,
-      'lipid' => Icons.science_outlined,
-      _ => Icons.fiber_manual_record_outlined,
-    };
+class _ReportImagePreview extends StatelessWidget {
+  const _ReportImagePreview({required this.file, required this.height});
+
+  final File file;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: height,
+        width: double.infinity,
+        color: AppTheme.pageBg,
+        alignment: Alignment.center,
+        child: Image.file(
+          file,
+          width: double.infinity,
+          height: height,
+          fit: BoxFit.contain,
+        ),
+      ),
+    );
+  }
+}
+
+class _ImagePreviewPage extends StatelessWidget {
+  const _ImagePreviewPage({required this.file});
+
+  final File file;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('报告原图'),
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+      ),
+      body: SafeArea(
+        child: InteractiveViewer(
+          minScale: 0.6,
+          maxScale: 4,
+          child: Center(
+            child: Image.file(
+              file,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _showImagePreview(BuildContext context, File file) {
+  Navigator.of(context).push(
+    MaterialPageRoute(builder: (_) => _ImagePreviewPage(file: file)),
+  );
+}
+
+File? _existingImageFile(String imagePath) {
+  if (imagePath.isBlank) return null;
+  try {
+    final file = File(imagePath);
+    return file.existsSync() ? file : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 extension on String {
   bool get isBlank => trim().isEmpty;

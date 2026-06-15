@@ -176,6 +176,7 @@ class _PlanPageState extends State<PlanPage> {
     final riskAlert = parsed['riskAlert'] as String?;
     final targetCal = _intValue(parsed['targetCalories']);
     final days = _mapList(parsed['days']);
+    final rawFallback = days.isEmpty ? _cleanAiText(result.rawJson) : '';
 
     await showModalBottomSheet(
       context: context,
@@ -286,13 +287,19 @@ class _PlanPageState extends State<PlanPage> {
               const Divider(height: 20),
               // 7天内容
               Expanded(
-                child: ListView.separated(
-                  controller: ctrl,
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 80),
-                  itemCount: days.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (_, i) => _AiDayCard(day: days[i]),
-                ),
+                child: days.isEmpty
+                    ? SingleChildScrollView(
+                        controller: ctrl,
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 80),
+                        child: _RawAiPlanCard(text: rawFallback),
+                      )
+                    : ListView.separated(
+                        controller: ctrl,
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 80),
+                        itemCount: days.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 12),
+                        itemBuilder: (_, i) => _AiDayCard(day: days[i]),
+                      ),
               ),
               // 底部按钮
               Padding(
@@ -324,8 +331,12 @@ class _PlanPageState extends State<PlanPage> {
                                 if (mounted) {
                                   await _load(silent: true);
                                   messenger.showSnackBar(
-                                    const SnackBar(
-                                      content: Text('AI 方案已应用到本地计划'),
+                                    SnackBar(
+                                      content: const Text('AI 方案已应用到打卡任务'),
+                                      action: SnackBarAction(
+                                        label: '去打卡',
+                                        onPressed: () => context.push('/clock'),
+                                      ),
                                     ),
                                   );
                                 }
@@ -337,7 +348,7 @@ class _PlanPageState extends State<PlanPage> {
                               }
                             },
                       icon: const Icon(Icons.sync, size: 16),
-                      label: Text(days.isEmpty ? '无法应用' : '应用到计划'),
+                      label: Text(days.isEmpty ? '无法应用' : '应用方案'),
                     ),
                   ),
                 ]),
@@ -370,6 +381,18 @@ class _PlanPageState extends State<PlanPage> {
       } catch (_) {}
     }
     return <String, dynamic>{};
+  }
+
+  String _cleanAiText(String raw) {
+    var text = raw.trim();
+    if (text.startsWith('```')) {
+      final start = text.indexOf('\n');
+      final end = text.lastIndexOf('```');
+      if (start >= 0 && end > start) {
+        text = text.substring(start + 1, end).trim();
+      }
+    }
+    return text.isEmpty ? '方案生成完成，但未返回可解析内容。请重试。' : text;
   }
 
   List<Map<String, dynamic>> _mapList(Object? raw) {
@@ -1166,9 +1189,10 @@ class _AiDayCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final weekDay = day['weekDay'] as String? ?? '';
-    final diet = day['diet'] as Map<String, dynamic>? ?? {};
-    final exercise = day['exercise'] as Map<String, dynamic>? ?? {};
-    final reminders = (day['reminders'] as List?)?.cast<String>() ?? [];
+    final diet = _asMap(day['diet']);
+    final exercise = _asMap(day['exercise']);
+    final reminders =
+        (day['reminders'] as List?)?.map((item) => '$item').toList() ?? [];
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -1286,4 +1310,45 @@ class _SectionRow extends StatelessWidget {
               fontSize: 12, fontWeight: FontWeight.w700, color: color)),
     ]);
   }
+}
+
+class _RawAiPlanCard extends StatelessWidget {
+  const _RawAiPlanCard({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '原始方案',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          Text(text, style: const TextStyle(height: 1.55, fontSize: 13)),
+          const SizedBox(height: 10),
+          const Text(
+            '当前内容无法解析为应用可执行任务，可重试生成。',
+            style: TextStyle(color: AppTheme.muted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Map<String, dynamic> _asMap(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return value.map((key, val) => MapEntry('$key', val));
+  return <String, dynamic>{};
 }

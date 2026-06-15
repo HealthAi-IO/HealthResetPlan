@@ -77,6 +77,7 @@ Future<void> setupServiceLocator() async {
   sl.registerSingleton<SyncService>(SyncService(
     apiClient: apiClient,
     cryptoService: sl<CryptoService>(),
+    keyVault: keyVault,
     database: appDatabase,
     repository: healthRepository,
   ));

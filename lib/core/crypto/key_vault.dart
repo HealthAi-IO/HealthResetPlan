@@ -26,7 +26,12 @@ class KeyVault {
   Future<Uint8List?> readUmk() async {
     final encoded = await storage.read(key: _umkKey);
     if (encoded == null || encoded.isEmpty) return null;
-    return Uint8List.fromList(base64Decode(encoded));
+    try {
+      final decoded = Uint8List.fromList(base64Decode(encoded));
+      return decoded.length == 32 ? decoded : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 生成新的 UMK（32 字节 / 256 bit）并写入安全存储。
@@ -38,8 +43,7 @@ class KeyVault {
     for (var i = 0; i < bytes.length; i++) {
       bytes[i] = rand.nextInt(256);
     }
-    await storage.write(key: _umkKey, value: base64Encode(bytes));
-    await storage.write(key: _backedUpKey, value: 'false');
+    await _writeAndVerify(bytes, backedUp: false);
     return bytes;
   }
 
@@ -47,17 +51,22 @@ class KeyVault {
   Future<Uint8List> restoreFromMnemonic(String mnemonic) async {
     final normalized = mnemonic.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (!bip39.validateMnemonic(normalized)) {
-      throw ArgumentError('助记词无效，请检查后重新输入');
+      throw const KeyVaultException('助记词不匹配，请核对');
     }
     final entropyHex = bip39.mnemonicToEntropy(normalized);
     final umk = Uint8List.fromList(
       List<int>.generate(
         entropyHex.length ~/ 2,
-        (index) => int.parse(entropyHex.substring(index * 2, index * 2 + 2), radix: 16),
+        (index) => int.parse(
+          entropyHex.substring(index * 2, index * 2 + 2),
+          radix: 16,
+        ),
       ),
     );
-    await storage.write(key: _umkKey, value: base64Encode(umk));
-    await storage.write(key: _backedUpKey, value: 'true');
+    if (umk.length != 32) {
+      throw const KeyVaultException('助记词不匹配，请核对');
+    }
+    await _writeAndVerify(umk, backedUp: true);
     return umk;
   }
 
@@ -69,11 +78,25 @@ class KeyVault {
     return bip39.entropyToMnemonic(_bytesToHex(umk));
   }
 
-  Future<void> markBackedUp() => storage.write(key: _backedUpKey, value: 'true');
+  Future<void> markBackedUp() =>
+      storage.write(key: _backedUpKey, value: 'true');
 
   Future<bool> isBackedUp() async {
     final v = await storage.read(key: _backedUpKey);
     return v == 'true';
+  }
+
+  /// 公开密钥指纹，仅用于服务端判断同一把 UMK 是否仍在使用。
+  ///
+  /// 指纹是 SHA-256(固定前缀 + UMK) 的摘要，不能用于解密数据。
+  Future<String?> publicFingerprint() async {
+    final umk = await readUmk();
+    if (umk == null) return null;
+    final hash = await Sha256().hash([
+      ...utf8.encode('hrp-umk-public-fingerprint:v1:'),
+      ...umk,
+    ]);
+    return _bytesToHex(Uint8List.fromList(hash.bytes));
   }
 
   // ── 文件加密密钥派生（HKDF） ──────────────────────────────────
@@ -152,6 +175,34 @@ class KeyVault {
     await storage.delete(key: _backedUpKey);
   }
 
+  Future<void> _writeAndVerify(
+    Uint8List umk, {
+    required bool backedUp,
+  }) async {
+    try {
+      await storage.write(key: _umkKey, value: base64Encode(umk));
+      await storage.write(
+          key: _backedUpKey, value: backedUp ? 'true' : 'false');
+      final saved = await readUmk();
+      if (saved == null || !_bytesEqual(saved, umk)) {
+        throw const KeyVaultException('本地存储异常，无法恢复密钥');
+      }
+    } on KeyVaultException {
+      rethrow;
+    } catch (_) {
+      throw const KeyVaultException('本地存储异常，无法恢复密钥');
+    }
+  }
+
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
+  }
+
   String _bytesToHex(Uint8List bytes) {
     final sb = StringBuffer();
     for (final b in bytes) {
@@ -159,4 +210,13 @@ class KeyVault {
     }
     return sb.toString();
   }
+}
+
+class KeyVaultException implements Exception {
+  const KeyVaultException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }

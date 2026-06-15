@@ -61,6 +61,11 @@ class AuthApi {
     }
   }
 
+  /// 注销账号：服务端停用账号，并让该账号云端密文进入 90 天保留期。
+  Future<void> cancelAccount() async {
+    await _client.dio.post('/auth/cancel-account');
+  }
+
   Future<PasswordResetCodeResult> sendPasswordResetCode({
     required String credType,
     required String identifier,

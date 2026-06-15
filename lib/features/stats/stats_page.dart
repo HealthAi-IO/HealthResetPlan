@@ -14,6 +14,7 @@ import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/sync/sync_service.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -116,6 +117,60 @@ class _StatsPageState extends State<StatsPage> {
       _accountInfo = null;
     });
     await _load(silent: true);
+  }
+
+  Future<void> _cancelAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('注销账号'),
+        content: const Text(
+          '注销后账号将无法继续登录，云端加密数据会保留 90 天。\n\n'
+          '90 天内如果使用同一组助记词恢复并同步，可继续看到原云端数据；'
+          '超过 90 天未使用该密钥，云端数据会永久清空，之后无法恢复。\n\n'
+          '本机本地数据不会自动删除，如需删除请到档案页使用“清空全部本地数据”。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认注销'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await sl<AuthApi>().cancelAccount();
+      await UserSession.instance.signOut();
+      sl<ApiClient>().setAccessToken(null);
+      await sl<SyncService>().setSyncEnabled(false);
+      await sl<SyncService>().resetLastSyncMs();
+      _membership.invalidateCache();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('账号已注销，云端加密数据进入 90 天保留期')),
+      );
+      setState(() {
+        _memberStatus = MembershipStatus.free;
+        _accountInfo = null;
+      });
+      await _load(silent: true);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('注销账号失败：$e'),
+          backgroundColor: Colors.red.shade600,
+        ),
+      );
+    }
   }
 
   @override
@@ -225,6 +280,7 @@ class _StatsPageState extends State<StatsPage> {
               if (mounted) _load(silent: true);
             }),
             onSignOut: _signOut,
+            onCancelAccount: _cancelAccount,
             onEditProfile: () => context.go('/profile'),
           ),
           const SizedBox(height: 14),
@@ -300,7 +356,7 @@ class _StatsPageState extends State<StatsPage> {
   }
 }
 
-// ── 账号状态卡�?──────────────────────────────────────────────
+// ── 账号状态卡片 ──────────────────────────────────────────────
 class _UnifiedProfileCard extends StatelessWidget {
   const _UnifiedProfileCard({
     required this.accountInfo,
@@ -310,6 +366,7 @@ class _UnifiedProfileCard extends StatelessWidget {
     required this.onLogin,
     required this.onMembership,
     required this.onSignOut,
+    required this.onCancelAccount,
     required this.onEditProfile,
   });
 
@@ -320,6 +377,7 @@ class _UnifiedProfileCard extends StatelessWidget {
   final VoidCallback onLogin;
   final VoidCallback onMembership;
   final VoidCallback onSignOut;
+  final VoidCallback onCancelAccount;
   final VoidCallback onEditProfile;
 
   @override
@@ -502,6 +560,16 @@ class _UnifiedProfileCard extends StatelessWidget {
                 icon: const Icon(Icons.logout, size: 18),
                 label: const Text('退出登录'),
                 style: TextButton.styleFrom(foregroundColor: Colors.white70),
+              ),
+            ),
+            Center(
+              child: TextButton.icon(
+                onPressed: onCancelAccount,
+                icon: const Icon(Icons.person_remove_outlined, size: 18),
+                label: const Text('注销账号'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade100,
+                ),
               ),
             ),
           ],
@@ -1482,7 +1550,7 @@ class _UserCard extends StatelessWidget {
   }
 }
 
-// ── 概要卡片�?────────────────────────────────────────────────
+// ── 概要卡片行 ────────────────────────────────────────────────
 class _SummaryRow extends StatelessWidget {
   const _SummaryRow({required this.profile, required this.data});
   final UserProfileData? profile;
@@ -1573,7 +1641,7 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-// ── 打卡完成�?────────────────────────────────────────────────
+// ── 打卡完成率 ────────────────────────────────────────────────
 class _ClockRateSection extends StatefulWidget {
   const _ClockRateSection({required this.stats});
   final ClockStats? stats;
@@ -1692,7 +1760,7 @@ class _RateBar extends StatelessWidget {
   }
 }
 
-// ── 体重�?────────────────────────────────────────────────────
+// ── 体重图表 ─────────────────────────────────────────────────
 class _WeightChart extends StatelessWidget {
   const _WeightChart({required this.entries});
   final List<HealthIndicatorEntry> entries;
@@ -1743,7 +1811,7 @@ class _BpChart extends StatelessWidget {
         _Legend(color: AppTheme.deepBlue, label: '舒张压'),
       ]),
       const SizedBox(height: 4),
-      const Text('正常参考：收缩�?<140  舒张�?<90 mmHg',
+      const Text('正常参考：收缩压 <140  舒张压 <90 mmHg',
           style: TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
@@ -1791,7 +1859,7 @@ class _GlucoseChart extends StatelessWidget {
         _Legend(color: Colors.orange, label: '血糖'),
         if (fastingAvg > 0) ...[
           const SizedBox(width: 12),
-          Text('空腹均�?${fastingAvg.toStringAsFixed(1)} mmol/L',
+          Text('空腹均值 ${fastingAvg.toStringAsFixed(1)} mmol/L',
               style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
         ],
       ]),
@@ -1968,7 +2036,7 @@ class _Legend extends StatelessWidget {
   }
 }
 
-// ── 通用折线�?Painter ────────────────────────────────────────
+// ── 通用折线图 Painter ────────────────────────────────────────
 class _Series {
   const _Series({required this.values, required this.color, this.label = ''});
   final List<double> values;
@@ -2075,7 +2143,7 @@ class _LineChartPainter extends CustomPainter {
       }
     }
 
-    // 选中点高�?
+    // 选中点高亮
     if (selectedIndex != null) {
       final si = selectedIndex!;
       final n = longest;
@@ -2154,7 +2222,7 @@ class _EmptyChart extends StatelessWidget {
   }
 }
 
-// ── 最近指标列�?──────────────────────────────────────────────
+// ── 最近指标列表 ──────────────────────────────────────────────
 class _RecentIndicators extends StatelessWidget {
   const _RecentIndicators(
       {required this.items, required this.bmi, required this.onAdd});
@@ -2336,7 +2404,7 @@ class _MembershipBanner extends StatelessWidget {
           const SizedBox(width: 8),
           const Expanded(
             child: Text(
-              '开通会�?· 解锁云同步、AI无限次等权益',
+              '开通会员 · 解锁云同步、AI无限次等权益',
               style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,

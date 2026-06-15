@@ -563,6 +563,11 @@ class HealthRepository extends ChangeNotifier {
 
     await db.transaction((txn) async {
       await txn.delete('plan', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn.delete(
+        'reminder',
+        where: 'user_id = ? AND channel = ?',
+        whereArgs: [kLocalUserId, 'ai-plan'],
+      );
 
       for (var i = 0; i < days.length && i < 7; i++) {
         final day = days[i];
@@ -622,6 +627,16 @@ class HealthRepository extends ChangeNotifier {
             isDirty: 1,
           ).toRow(),
           replace: true,
+        );
+
+        await _insertAiPlanReminders(
+          txn,
+          date: date,
+          diet: diet,
+          exercise: exercise,
+          reminders: reminders,
+          timestamp: timestamp,
+          dayIndex: i + 1,
         );
       }
 
@@ -716,6 +731,79 @@ class HealthRepository extends ChangeNotifier {
     };
   }
 
+  Future<void> _insertAiPlanReminders(
+    AppDatabase txn, {
+    required DateTime date,
+    required Map<String, dynamic> diet,
+    required Map<String, dynamic> exercise,
+    required List<String> reminders,
+    required int timestamp,
+    required int dayIndex,
+  }) async {
+    final tasks = <({String type, DateTime at, String note})>[];
+    final breakfast = _aiStringList(diet['breakfast']);
+    final lunch = _aiStringList(diet['lunch']);
+    final dinner = _aiStringList(diet['dinner']);
+    final exerciseSummary =
+        _aiExercisePayload(exercise)['summary'] as String? ?? '';
+
+    if (breakfast.isNotEmpty) {
+      tasks.add((
+        type: 'meal',
+        at: DateTime(date.year, date.month, date.day, 8),
+        note: '第 $dayIndex 天早餐：${breakfast.join('；')}',
+      ));
+    }
+    if (lunch.isNotEmpty) {
+      tasks.add((
+        type: 'meal',
+        at: DateTime(date.year, date.month, date.day, 12),
+        note: '第 $dayIndex 天午餐：${lunch.join('；')}',
+      ));
+    }
+    if (dinner.isNotEmpty) {
+      tasks.add((
+        type: 'meal',
+        at: DateTime(date.year, date.month, date.day, 18),
+        note: '第 $dayIndex 天晚餐：${dinner.join('；')}',
+      ));
+    }
+    if (exerciseSummary.isNotEmpty) {
+      tasks.add((
+        type: 'exercise',
+        at: DateTime(date.year, date.month, date.day, 19, 30),
+        note: '第 $dayIndex 天运动：$exerciseSummary',
+      ));
+    }
+    for (final reminder in reminders.take(3)) {
+      tasks.add((
+        type: _inferReminderType(reminder),
+        at: DateTime(date.year, date.month, date.day, 20, 30),
+        note: '第 $dayIndex 天提醒：$reminder',
+      ));
+    }
+
+    final seen = <String>{};
+    for (final task in tasks) {
+      final key = '${task.type}-${task.at.millisecondsSinceEpoch}-${task.note}';
+      if (!seen.add(key)) continue;
+      await txn.insert(
+        'reminder',
+        ReminderData(
+          type: task.type,
+          remindAt: task.at.millisecondsSinceEpoch,
+          payload: {'note': task.note, 'source': 'ai-plan'},
+          channel: 'ai-plan',
+          status: 'pending',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          version: 1,
+          isDirty: 1,
+        ).toRow(),
+      );
+    }
+  }
+
   Map<String, dynamic> _aiMap(Object? raw) {
     if (raw is Map<String, dynamic>) return raw;
     if (raw is Map) return raw.map((key, value) => MapEntry('$key', value));
@@ -729,6 +817,18 @@ class HealthRepository extends ChangeNotifier {
     final text = _aiText(raw);
     if (text.isEmpty) return <String>[];
     return [text];
+  }
+
+  String _inferReminderType(String text) {
+    if (text.contains('血压')) return 'bp';
+    if (text.contains('血糖')) return 'glucose';
+    if (text.contains('体重') || text.contains('称重')) return 'weight';
+    if (text.contains('运动') || text.contains('快走') || text.contains('步行')) {
+      return 'exercise';
+    }
+    if (text.contains('药')) return 'medicine';
+    if (text.contains('水')) return 'water';
+    return 'meal';
   }
 
   String _aiText(Object? raw) {

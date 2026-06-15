@@ -8,6 +8,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/sync/sync_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -45,7 +46,7 @@ class _ProfilePageState extends State<ProfilePage> {
     super.initState();
     _repo.addListener(_onRepoChanged);
     _load();
-    // 任意字段变化则标�?有未保存改动"，防止后�?repo 变更覆盖用户编辑
+    // 任意字段变化则标记为“有未保存改动”，防止后续 repo 变更覆盖用户编辑
     for (final ctrl in [
       _nicknameController,
       _birthYearController,
@@ -91,7 +92,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _syncControllers(UserProfileData? profile) {
     if (profile == null) return;
-    // 同步时暂�?dirty 监听，避免赋值本身触�?_markDirty
+    // 同步时暂时关闭 dirty 监听，避免赋值本身触发 _markDirty
     _dirty = false;
     _nicknameController.text = profile.nickname;
     _birthYearController.text =
@@ -106,7 +107,7 @@ class _ProfilePageState extends State<ProfilePage> {
     _goal = profile.goal;
     _exerciseBase = profile.exerciseBase;
     _dietPreference = profile.dietPreference;
-    // 同步完成�?dirty 保持 false，下一帧用户操作再触发
+    // 同步完成后 dirty 保持 false，下一帧用户操作再触发
   }
 
   Future<void> _saveProfile() async {
@@ -141,7 +142,7 @@ class _ProfilePageState extends State<ProfilePage> {
         await sl<AuthApi>().updateAccountProfile(nickname: nickname);
       }
       if (!mounted) return;
-      _dirty = false; // 保存成功后清除脏标记，允许后�?repo 变更同步表单
+      _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
       messenger.showSnackBar(const SnackBar(content: Text('健康档案已保存到本地')));
     } catch (_) {
       if (!mounted) return;
@@ -459,9 +460,10 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     if (confirmed != true || !mounted) return;
     await _repo.clearAllData();
+    await sl<SyncService>().resetLastSyncMs();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('本地健康数据已清空，账号登录状态已保留')),
+      const SnackBar(content: Text('本地健康数据已清空，账号登录状态已保留；下次同步会重新拉取云端数据')),
     );
     setState(() {});
   }
@@ -787,7 +789,7 @@ IconData _iconFor(String type) {
   };
 }
 
-// ── 账号操作�?─────────────────────────────────────────────────────
+// ── 账号操作区 ───────────────────────────────────────────────────
 
 // ignore: unused_element
 class _AccountSignOutSection extends StatelessWidget {
@@ -835,7 +837,7 @@ class _AccountSignOutSection extends StatelessWidget {
   }
 }
 
-// ── 危险操作�?─────────────────────────────────────────────────────
+// ── 危险操作区 ───────────────────────────────────────────────────
 
 class _DangerZone extends StatelessWidget {
   const _DangerZone({required this.onClearAll});

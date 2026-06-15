@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:path/path.dart' as p;
@@ -8,17 +9,24 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../crypto/crypto_service.dart';
+import '../crypto/key_vault.dart';
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import '../network/api_client.dart';
 import '../storage/app_database.dart';
 
 class SyncResult {
-  const SyncResult({required this.pushed, required this.pulled, this.error});
+  const SyncResult({
+    required this.pushed,
+    required this.pulled,
+    this.error,
+    this.attempts = 1,
+  });
 
   final int pushed;
   final int pulled;
   final String? error;
+  final int attempts;
 
   bool get hasError => error != null;
 }
@@ -43,12 +51,14 @@ class SyncService {
   SyncService({
     required this.apiClient,
     required this.cryptoService,
+    required this.keyVault,
     required this.database,
     required this.repository,
   });
 
   final ApiClient apiClient;
   final CryptoService cryptoService;
+  final KeyVault keyVault;
   final AppDatabase database;
   final HealthRepository repository;
 
@@ -124,45 +134,62 @@ class SyncService {
     return next;
   }
 
+  Future<String> _keyFingerprintOrEmpty() async =>
+      await keyVault.publicFingerprint() ?? '';
+
   Future<SyncResult> sync() async {
     try {
-      final pushed = await _push();
-      final pulled = await _pull();
-      return SyncResult(pushed: pushed, pulled: pulled);
-    } on DioException catch (e) {
-      final body = e.response?.data;
-      final msg = body is Map
-          ? (body['message'] as String? ??
-              body['msg'] as String? ??
-              e.message ??
-              '缃戠粶閿欒')
-          : (e.message ?? '缃戠粶閿欒');
-      return SyncResult(pushed: 0, pulled: 0, error: msg);
+      return await _runWithRetry(() async {
+        final pushed = await _push();
+        final pulled = await _pull();
+        return SyncResult(pushed: pushed, pulled: pulled);
+      });
     } catch (e) {
-      return SyncResult(pushed: 0, pulled: 0, error: '$e');
+      return SyncResult(pushed: 0, pulled: 0, error: _friendlySyncError(e));
     }
   }
 
   Future<SyncResult> restoreFromCloud({bool replaceLocal = false}) async {
     try {
-      await resetLastSyncMs();
-      if (replaceLocal) {
-        await _clearLocalSyncedData();
-      }
-      final pulled = await _pull();
-      return SyncResult(pushed: 0, pulled: pulled);
-    } on DioException catch (e) {
-      final body = e.response?.data;
-      final msg = body is Map
-          ? (body['message'] as String? ??
-              body['msg'] as String? ??
-              e.message ??
-              '缃戠粶閿欒')
-          : (e.message ?? '缃戠粶閿欒');
-      return SyncResult(pushed: 0, pulled: 0, error: msg);
+      return await _runWithRetry(() async {
+        await resetLastSyncMs();
+        if (replaceLocal) {
+          await _clearLocalSyncedData();
+        }
+        final pulled = await _pull();
+        return SyncResult(pushed: 0, pulled: pulled);
+      });
     } catch (e) {
-      return SyncResult(pushed: 0, pulled: 0, error: '$e');
+      return SyncResult(pushed: 0, pulled: 0, error: _friendlySyncError(e));
     }
+  }
+
+  Future<SyncResult> _runWithRetry(
+    Future<SyncResult> Function() action,
+  ) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        final result = await action();
+        return SyncResult(
+          pushed: result.pushed,
+          pulled: result.pulled,
+          error: result.error,
+          attempts: attempt,
+        );
+      } catch (e) {
+        lastError = e;
+        if (!_isRetryable(e) || attempt == 3) break;
+        await Future<void>.delayed(
+            Duration(milliseconds: 450 * pow(2, attempt - 1).toInt()));
+      }
+    }
+    return SyncResult(
+      pushed: 0,
+      pulled: 0,
+      error: _friendlySyncError(lastError),
+      attempts: 3,
+    );
   }
 
   Future<void> _clearLocalSyncedData() async {
@@ -210,6 +237,7 @@ class SyncService {
 
       final resp = await apiClient.dio.post('/sync/push', data: {
         'deviceId': await _getDeviceId(),
+        'keyFingerprint': await _keyFingerprintOrEmpty(),
         'items': items,
       });
       final data = _responseData(resp.data);
@@ -269,6 +297,7 @@ class SyncService {
 
     final resp = await apiClient.dio.post('/sync/push', data: {
       'deviceId': await _getDeviceId(),
+      'keyFingerprint': await _keyFingerprintOrEmpty(),
       'items': items,
     });
     final data = _responseData(resp.data);
@@ -283,6 +312,9 @@ class SyncService {
     final since = await getLastSyncMs();
     final resp = await apiClient.dio.get(
       '/sync/pull',
+      options: Options(headers: {
+        'X-Key-Fingerprint': await _keyFingerprintOrEmpty(),
+      }),
       queryParameters: {'since': since, 'limit': 500},
     );
 
@@ -294,6 +326,8 @@ class SyncService {
     if (rawItems.isNotEmpty) {
       final db = await database.open();
       final now = DateTime.now().millisecondsSinceEpoch;
+      var decryptableRows = 0;
+      var decryptFailures = 0;
 
       for (final raw in rawItems) {
         final item = raw as Map<String, dynamic>;
@@ -315,6 +349,7 @@ class SyncService {
             continue;
           }
 
+          decryptableRows++;
           final enc = EncryptedPayload.fromJson(item);
           final plaintext = await cryptoService.decryptToString(enc);
           final payload = _decodePayload(table, plaintext, item);
@@ -353,10 +388,18 @@ class SyncService {
             );
             merged++;
           }
-        } catch (_) {
+        } catch (e) {
+          if (_isDecryptError(e)) {
+            decryptFailures++;
+            continue;
+          }
           // A single corrupt or incompatible row should not break all sync.
           continue;
         }
+      }
+
+      if (decryptableRows > 0 && decryptFailures == decryptableRows) {
+        throw StateError('数据损坏或密钥错误');
       }
 
       repository.signalChanged();
@@ -590,6 +633,74 @@ class SyncService {
       return Map<String, dynamic>.from(body);
     }
     return {};
+  }
+
+  bool _isRetryable(Object? error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      if (status == 503 || status == 502 || status == 504) return true;
+      final body = error.response?.data;
+      if (body is Map) {
+        final code = (body['code'] as num?)?.toInt() ?? 0;
+        if (code == 50001 || code == 50301) return true;
+      }
+      return error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError;
+    }
+    final text = '$error';
+    return text.contains('系统繁忙') ||
+        text.contains('503') ||
+        text.contains('50001');
+  }
+
+  String _friendlySyncError(Object? error) {
+    if (error is DioException) {
+      final status = error.response?.statusCode;
+      final body = error.response?.data;
+      if (status == 503 ||
+          (body is Map && ((body['code'] as num?)?.toInt() == 50001))) {
+        return '系统繁忙，请稍后再试';
+      }
+      if (body is Map) {
+        final code = (body['code'] as num?)?.toInt() ?? 0;
+        final message = (body['message'] ?? body['msg'])?.toString();
+        if (code == 40301) return message ?? '云同步功能需要开通会员，免费版数据仅保存在本地设备';
+        if (code == 50301) return '系统繁忙，请稍后再试';
+        if (message != null && message.isNotEmpty) return message;
+      }
+      if (error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.type == DioExceptionType.connectionError) {
+        return '网络异常，请检查网络后重试';
+      }
+      return error.message ?? '网络异常，请检查网络后重试';
+    }
+    if (_isDecryptError(error)) {
+      return '密钥异常，请检查主密钥状态';
+    }
+    final text = '$error';
+    if (text.contains('系统繁忙') ||
+        text.contains('50001') ||
+        text.contains('503')) {
+      return '系统繁忙，请稍后再试';
+    }
+    if (text.contains('UMK') || text.contains('主密钥')) {
+      return '密钥异常，请检查主密钥状态';
+    }
+    return text.isEmpty ? '云同步请求失败' : text;
+  }
+
+  bool _isDecryptError(Object? error) {
+    final text = '$error';
+    return text.contains('SecretBox') ||
+        text.contains('authentication') ||
+        text.contains('mac') ||
+        text.contains('数据损坏') ||
+        text.contains('密钥错误') ||
+        text.contains('Invalid argument(s): Invalid or corrupted pad block');
   }
 
   static const _localOnlyColumns = {
