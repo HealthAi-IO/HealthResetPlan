@@ -141,15 +141,28 @@ class _ProfilePageState extends State<ProfilePage> {
       if (UserSession.instance.isAccountLogin) {
         await sl<AuthApi>().updateAccountProfile(nickname: nickname);
       }
+      final syncMessage = await _syncProfileIfEnabled();
       if (!mounted) return;
       _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
-      messenger.showSnackBar(const SnackBar(content: Text('健康档案已保存到本地')));
+      messenger.showSnackBar(
+        SnackBar(content: Text(syncMessage ?? '健康档案已保存到本地')),
+      );
     } catch (_) {
       if (!mounted) return;
       messenger.showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<String?> _syncProfileIfEnabled() async {
+    final sync = sl<SyncService>();
+    if (!await sync.isSyncEnabled()) return null;
+    final result = await sync.sync();
+    if (result.hasError) {
+      return '健康档案已保存到本地，云同步失败：${result.error}';
+    }
+    return '健康档案已保存并同步到云端';
   }
 
   Future<void> _addIndicatorDialog(String type) async {

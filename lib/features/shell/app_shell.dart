@@ -3,9 +3,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
-import '../../core/data/health_repository.dart';
-import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 
 class AppShell extends StatelessWidget {
   const AppShell({
@@ -111,29 +108,12 @@ class AppShell extends StatelessWidget {
                     context.push('/onboarding');
                   } else if (value == 'security') {
                     context.push('/sync');
-                  } else if (value == 'reset') {
-                    await sl<HealthRepository>().resetDemoData();
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('已恢复本地示例数据')),
-                    );
-                  } else if (value == 'dev_reset_member') {
-                    await sl<MembershipService>().deactivate();
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('[测试] 会员状态已重置为免费版')),
-                    );
                   }
                 },
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'membership', child: Text('会员中心')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
-                  PopupMenuItem(value: 'reset', child: Text('[测试] 恢复默认数据')),
-                  PopupMenuItem(
-                    value: 'dev_reset_member',
-                    child: Text('[测试] 重置为免费版'),
-                  ),
                 ],
               ),
               const SizedBox(width: 8),

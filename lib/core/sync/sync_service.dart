@@ -197,6 +197,7 @@ class SyncService {
     for (final config in _tables) {
       await db.delete(config.table);
     }
+    await db.delete('sync_queue');
     repository.signalChanged();
   }
 

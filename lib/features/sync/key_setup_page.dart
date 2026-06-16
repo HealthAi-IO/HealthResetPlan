@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/auth/user_session.dart';
 import '../../core/crypto/key_vault.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
@@ -118,7 +119,8 @@ class _KeySetupPageState extends State<KeySetupPage> {
         _restoreStatusMessage = '主密钥已恢复到本地，正在从云端拉取加密数据...';
         _restoreStatusError = false;
       });
-      final result = await sync.restoreFromCloud();
+      final result = await sync.restoreFromCloud(replaceLocal: true);
+      await _refreshSessionNameFromProfile();
       if (!mounted) return;
       final message = result.hasError
           ? _restoreSyncFailureMessage(result.error)
@@ -145,6 +147,14 @@ class _KeySetupPageState extends State<KeySetupPage> {
       if (mounted) {
         setState(() => _busy = false);
       }
+    }
+  }
+
+  Future<void> _refreshSessionNameFromProfile() async {
+    final profile = await sl<HealthRepository>().loadProfile();
+    final nickname = profile?.nickname.trim() ?? '';
+    if (nickname.isNotEmpty) {
+      await UserSession.instance.setName(nickname);
     }
   }
 
