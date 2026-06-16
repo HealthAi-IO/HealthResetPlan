@@ -1,8 +1,10 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/crypto/key_vault.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
 import '../../core/sync/sync_service.dart';
@@ -66,13 +68,7 @@ class _MembershipPageState extends State<MembershipPage> {
     );
 
     if (confirmed == true) {
-      await _syncLocalData();
-      await _load();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('会员已开通，享受所有权益！')),
-        );
-      }
+      await _handleActivationSuccess('会员已开通，享受所有权益！');
     }
   }
 
@@ -154,12 +150,7 @@ class _MembershipPageState extends State<MembershipPage> {
                     final messenger = ScaffoldMessenger.of(context);
                     try {
                       await _service.activateWithCode(code);
-                      await _syncLocalData();
-                      if (!mounted) return;
-                      await _load();
-                      messenger.showSnackBar(
-                        const SnackBar(content: Text('激活成功，会员权益已开通！')),
-                      );
+                      await _handleActivationSuccess('激活成功，会员权益已开通！');
                     } on StateError catch (e) {
                       if (!mounted) return;
                       messenger.showSnackBar(
@@ -184,14 +175,68 @@ class _MembershipPageState extends State<MembershipPage> {
     );
   }
 
-  Future<void> _syncLocalData() async {
+  Future<void> _handleActivationSuccess(String message) async {
+    final shouldPromptRestoreKey = await _syncLocalData();
+    if (!mounted) return;
+    await _load();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+
+    if (!shouldPromptRestoreKey) return;
+    final restoreNow = await _showRestoreKeyDialog();
+    if (!mounted) return;
+    if (restoreNow == true) {
+      await context.push('/sync/key-setup');
+      if (!mounted) return;
+      await _load();
+    }
+  }
+
+  Future<bool> _syncLocalData() async {
     try {
       final sync = sl<SyncService>();
       await sync.setSyncEnabled(true);
-      await sync.sync();
+      final umk = await sl<KeyVault>().readUmk();
+      if (umk == null) return true;
+      final result = await sync.sync();
+      return result.hasError && _isKeyRestoreRequired(result.error);
     } catch (_) {
       // 会员激活不因同步失败中断；用户可稍后在云同步页手动重试。
+      return false;
     }
+  }
+
+  bool _isKeyRestoreRequired(String? error) {
+    final text = error ?? '';
+    return text.contains('主密钥') ||
+        text.contains('助记词') ||
+        text.contains('密钥异常') ||
+        text.contains('UMK');
+  }
+
+  Future<bool?> _showRestoreKeyDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('需要恢复云端密钥'),
+        content: const Text(
+          '会员权益已开通，但这台设备还没有恢复之前备份的助记词。\n\n云同步数据是端到端加密的，不恢复同一把主密钥就无法读取旧设备上传的数据。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('稍后再说'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('现在恢复'),
+          ),
+        ],
+      ),
+    );
   }
 
   String _friendly(Object e) {

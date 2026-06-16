@@ -25,7 +25,7 @@ class _PlanPageState extends State<PlanPage> {
 
   bool _loading = true;
   bool _aiGenerating = false;
-  String _selectedProvider = 'deepseek';
+  String _selectedProvider = 'doubao';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
   PlanRecordData? _riskPlan;
@@ -144,8 +144,8 @@ class _PlanPageState extends State<PlanPage> {
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
             const SizedBox(height: 16),
             for (final p in [
+              ('doubao', '🫘', '豆包（火山方舟）', '响应更快，适合生成 7 天计划'),
               ('deepseek', '🤖', 'DeepSeek', '推理能力强，方案逻辑严密'),
-              ('doubao', '🫘', '豆包（火山方舟）', '中文表达自然，建议贴近生活'),
               ('qwen', '🌟', '通义千问', '医疗健康垂直训练，参考价值高'),
             ])
               ListTile(
@@ -176,7 +176,9 @@ class _PlanPageState extends State<PlanPage> {
     final riskAlert = parsed['riskAlert'] as String?;
     final targetCal = _intValue(parsed['targetCalories']);
     final days = _mapList(parsed['days']);
-    final rawFallback = days.isEmpty ? _cleanAiText(result.rawJson) : '';
+    final hasExecutablePlan = days.length == 7;
+    final invalidMessage =
+        hasExecutablePlan ? '' : _invalidAiPlanMessage(result.rawJson);
 
     await showModalBottomSheet(
       context: context,
@@ -287,11 +289,11 @@ class _PlanPageState extends State<PlanPage> {
               const Divider(height: 20),
               // 7天内容
               Expanded(
-                child: days.isEmpty
+                child: !hasExecutablePlan
                     ? SingleChildScrollView(
                         controller: ctrl,
                         padding: const EdgeInsets.fromLTRB(20, 0, 20, 80),
-                        child: _RawAiPlanCard(text: rawFallback),
+                        child: _InvalidAiPlanCard(message: invalidMessage),
                       )
                     : ListView.separated(
                         controller: ctrl,
@@ -318,7 +320,7 @@ class _PlanPageState extends State<PlanPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: days.isEmpty
+                      onPressed: !hasExecutablePlan
                           ? null
                           : () async {
                               final messenger = ScaffoldMessenger.of(context);
@@ -348,7 +350,7 @@ class _PlanPageState extends State<PlanPage> {
                               }
                             },
                       icon: const Icon(Icons.sync, size: 16),
-                      label: Text(days.isEmpty ? '无法应用' : '应用方案'),
+                      label: Text(!hasExecutablePlan ? '无法应用' : '应用方案'),
                     ),
                   ),
                 ]),
@@ -374,13 +376,47 @@ class _PlanPageState extends State<PlanPage> {
     for (final candidate in candidates) {
       try {
         final decoded = jsonDecode(candidate);
-        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map<String, dynamic>) return _normalizePlanMap(decoded);
         if (decoded is Map) {
-          return decoded.map((key, value) => MapEntry('$key', value));
+          return _normalizePlanMap(
+            decoded.map((key, value) => MapEntry('$key', value)),
+          );
         }
       } catch (_) {}
     }
     return <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _normalizePlanMap(Map<String, dynamic> map) {
+    if (map['days'] is List) return map;
+
+    for (final key in const ['plan', 'data', 'result', 'weeklyPlan']) {
+      final nested = map[key];
+      if (nested is Map<String, dynamic>) return _normalizePlanMap(nested);
+      if (nested is Map) {
+        return _normalizePlanMap(
+          nested.map((k, v) => MapEntry('$k', v)),
+        );
+      }
+    }
+
+    for (final key in const ['rawJson', 'content', 'text']) {
+      final nested = map[key];
+      if (nested is String && nested.trim().isNotEmpty) {
+        final parsed = _parseAiPlanJson(nested);
+        if (parsed['days'] is List) return parsed;
+      }
+    }
+
+    return map;
+  }
+
+  String _invalidAiPlanMessage(String raw) {
+    final text = _cleanAiText(raw);
+    if (text.contains('"days"') && !text.trimRight().endsWith('}')) {
+      return 'AI 返回内容被截断，未形成完整 7 天方案。请重新生成，或切换 DeepSeek / 通义千问。';
+    }
+    return 'AI 返回格式不完整，未能转换为可执行的 7 天打卡任务。请重新生成，或切换模型。';
   }
 
   String _cleanAiText(String raw) {
@@ -1312,10 +1348,10 @@ class _SectionRow extends StatelessWidget {
   }
 }
 
-class _RawAiPlanCard extends StatelessWidget {
-  const _RawAiPlanCard({required this.text});
+class _InvalidAiPlanCard extends StatelessWidget {
+  const _InvalidAiPlanCard({required this.message});
 
-  final String text;
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -1330,16 +1366,22 @@ class _RawAiPlanCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '原始方案',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-          ),
+          const Row(children: [
+            Icon(Icons.error_outline, size: 18, color: Colors.orange),
+            SizedBox(width: 8),
+            Text(
+              '方案格式异常',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            ),
+          ]),
           const SizedBox(height: 8),
-          Text(text, style: const TextStyle(height: 1.55, fontSize: 13)),
-          const SizedBox(height: 10),
-          const Text(
-            '当前内容无法解析为应用可执行任务，可重试生成。',
-            style: TextStyle(color: AppTheme.muted, fontSize: 12),
+          Text(
+            message,
+            style: const TextStyle(
+              color: AppTheme.muted,
+              height: 1.55,
+              fontSize: 13,
+            ),
           ),
         ],
       ),

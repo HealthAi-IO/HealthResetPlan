@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
+import '../../core/crypto/key_vault.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
@@ -129,7 +130,16 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
 
-      await _syncLocalDataIfMember();
+      final shouldPromptRestoreKey = await _syncLocalDataIfMember();
+      if (!mounted) return;
+      if (shouldPromptRestoreKey) {
+        final restoreNow = await _showRestoreKeyDialog();
+        if (!mounted) return;
+        if (restoreNow == true) {
+          await context.push('/sync/key-setup');
+          if (!mounted) return;
+        }
+      }
 
       if (!mounted) return;
       context.go('/home');
@@ -147,17 +157,56 @@ class _LoginPageState extends State<LoginPage> {
     return value.contains('@') ? value.toLowerCase() : value;
   }
 
-  Future<void> _syncLocalDataIfMember() async {
+  Future<bool> _syncLocalDataIfMember() async {
     try {
       final status =
           await sl<MembershipService>().getStatus(forceRefresh: true);
-      if (!status.isActive) return;
+      if (!status.isActive) return false;
+
       final sync = sl<SyncService>();
       await sync.setSyncEnabled(true);
-      await sync.sync();
+
+      final umk = await sl<KeyVault>().readUmk();
+      if (umk == null) {
+        return true;
+      }
+
+      final result = await sync.sync();
+      return result.hasError && _isKeyRestoreRequired(result.error);
     } catch (_) {
       // 登录流程不因同步失败中断；用户仍可在云同步页手动重试。
+      return false;
     }
+  }
+
+  bool _isKeyRestoreRequired(String? error) {
+    final text = error ?? '';
+    return text.contains('主密钥') ||
+        text.contains('助记词') ||
+        text.contains('密钥异常') ||
+        text.contains('UMK');
+  }
+
+  Future<bool?> _showRestoreKeyDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('需要恢复云端密钥'),
+        content: const Text(
+          '你当前登录的是同一个账号，但这台设备还没有恢复之前备份的助记词。\n\n云同步数据是端到端加密的，不恢复同一把主密钥就无法读取旧设备上传的数据。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('稍后再说'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('现在恢复'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showForgotPasswordDialog() async {
