@@ -11,6 +11,12 @@ class AiApi {
 
   final ApiClient _client;
 
+  static final Options _aiRequestOptions = Options(
+    connectTimeout: const Duration(seconds: 15),
+    sendTimeout: const Duration(seconds: 45),
+    receiveTimeout: const Duration(minutes: 3),
+  );
+
   Future<AiPlanResult> generatePlan({
     required UserProfileData profile,
     required List<HealthIndicatorEntry> recentIndicators,
@@ -28,10 +34,7 @@ class AiApi {
     final resp = await _client.dio.post(
       '/ai/plan/generate',
       data: body,
-      options: Options(
-        sendTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 120),
-      ),
+      options: _aiRequestOptions,
     );
     final data = _unwrapData(resp.data);
 
@@ -47,11 +50,15 @@ class AiApi {
     String? profileSummary,
   }) async {
     final apiProvider = _normalizeProvider(provider);
-    final resp = await _client.dio.post('/ai/chat', data: {
-      if (apiProvider != null) 'provider': apiProvider,
-      'messages': messages,
-      if (profileSummary != null) 'profileSummary': profileSummary,
-    });
+    final resp = await _client.dio.post(
+      '/ai/chat',
+      data: {
+        if (apiProvider != null) 'provider': apiProvider,
+        'messages': messages,
+        if (profileSummary != null) 'profileSummary': profileSummary,
+      },
+      options: _aiRequestOptions,
+    );
     final data = _unwrapData(resp.data);
 
     return AiChatReply(
@@ -88,6 +95,8 @@ class AiApi {
         options: Options(
           responseType: ResponseType.stream,
           headers: {'Accept': 'text/event-stream'},
+          connectTimeout: const Duration(seconds: 15),
+          sendTimeout: const Duration(seconds: 45),
           receiveTimeout: const Duration(minutes: 3),
         ),
       );

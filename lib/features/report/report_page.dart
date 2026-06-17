@@ -183,8 +183,9 @@ class _ReportPageState extends State<ReportPage> {
         data: formData,
         options: Options(
           contentType: 'multipart/form-data',
+          connectTimeout: const Duration(seconds: 15),
           sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 120),
+          receiveTimeout: const Duration(minutes: 3),
         ),
       );
       final result = _OcrResult.fromJson(_unwrapResponseData(response.data));
