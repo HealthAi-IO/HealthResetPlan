@@ -129,6 +129,8 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
             lastSyncMs: _lastSyncMs,
             onToggle: _toggleSync,
           ),
+          const SizedBox(height: 12),
+          const _UsageGuideCard(),
           const SizedBox(height: 16),
           _KeyStatusCard(
             backedUp: _backedUp,
@@ -167,6 +169,54 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
           if (_syncMessage != null) _MessageCard(message: _syncMessage!),
           const SizedBox(height: 20),
           const _E2eeNote(),
+        ],
+      ),
+    );
+  }
+}
+
+class _UsageGuideCard extends StatelessWidget {
+  const _UsageGuideCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.blue.shade100),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info_outline, size: 18, color: AppTheme.deepBlue),
+              SizedBox(width: 8),
+              Text(
+                '云同步功能使用方法',
+                style: TextStyle(
+                  color: AppTheme.deepBlue,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 10),
+          Text(
+            '1. 旧手机先登录同一个账号，生成并备份主密钥助记词。\n'
+            '2. 旧手机开启云同步，点击“立即同步”，确认数据已上传。\n'
+            '3. 新手机登录同一个账号，在“数据安全与密钥”里恢复同一组助记词。\n'
+            '4. 新手机恢复成功后会自动拉取云端数据，也可以回到本页点“立即同步”。\n'
+            '5. 如果旧手机重新生成过主密钥，需要先在旧手机用新密钥重新同步一次。',
+            style: TextStyle(
+              color: AppTheme.ink,
+              fontSize: 12,
+              height: 1.55,
+            ),
+          ),
         ],
       ),
     );

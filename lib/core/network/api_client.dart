@@ -12,7 +12,7 @@ class ApiClient {
   ApiClient({
     String baseUrl = const String.fromEnvironment(
       'API_BASE_URL',
-      defaultValue: 'http://192.168.1.188:8080/api/v1',
+      defaultValue: 'https://api.jkcqplan.com/api/v1',
     ),
   })  : _refreshDio = Dio(
           BaseOptions(

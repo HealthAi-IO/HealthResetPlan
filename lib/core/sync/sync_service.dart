@@ -65,6 +65,7 @@ class SyncService {
   static const String _kLastSyncMs = 'sync_last_ms';
   static const String _kSyncEnabled = 'sync_enabled';
   static const String _kDeviceId = 'sync_device_id';
+  static const String _kLastKeyFingerprint = 'sync_last_key_fingerprint';
   static const _uuid = Uuid();
 
   static const _tables = [
@@ -124,6 +125,29 @@ class SyncService {
     await prefs.setInt(_kLastSyncMs, ms);
   }
 
+  Future<void> _saveLastKeyFingerprint(String keyFingerprint) async {
+    if (keyFingerprint.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kLastKeyFingerprint, keyFingerprint);
+  }
+
+  Future<void> _prepareKeyFingerprintChange(String keyFingerprint) async {
+    if (keyFingerprint.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final lastKeyFingerprint = prefs.getString(_kLastKeyFingerprint) ?? '';
+    if (lastKeyFingerprint == keyFingerprint) {
+      return;
+    }
+
+    if (lastKeyFingerprint.isEmpty && await getLastSyncMs() == 0) {
+      return;
+    }
+
+    await resetLastSyncMs();
+    await _markAllLocalRowsDirty();
+  }
+
   Future<String> _getDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
     final existing = prefs.getString(_kDeviceId);
@@ -140,8 +164,11 @@ class SyncService {
   Future<SyncResult> sync() async {
     try {
       return await _runWithRetry(() async {
+        final keyFingerprint = await _keyFingerprintOrEmpty();
+        await _prepareKeyFingerprintChange(keyFingerprint);
         final pushed = await _push();
         final pulled = await _pull();
+        await _saveLastKeyFingerprint(keyFingerprint);
         return SyncResult(pushed: pushed, pulled: pulled);
       });
     } catch (e) {
@@ -199,6 +226,18 @@ class SyncService {
     }
     await db.delete('sync_queue');
     repository.signalChanged();
+  }
+
+  Future<void> _markAllLocalRowsDirty() async {
+    final db = await database.open();
+    for (final config in _tables) {
+      await db.update(
+        config.table,
+        {'is_dirty': 1},
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+    }
   }
 
   Future<int> _push() async {

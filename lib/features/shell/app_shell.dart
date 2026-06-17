@@ -98,7 +98,11 @@ class AppShell extends StatelessWidget {
               PopupMenuButton<String>(
                 tooltip: '更多操作',
                 onSelected: (value) async {
-                  if (value == 'membership') {
+                  if (value == 'chat') {
+                    context.push('/chat');
+                  } else if (value == 'report') {
+                    context.push('/report');
+                  } else if (value == 'membership') {
                     if (!UserSession.instance.isAccountLogin) {
                       context.push('/login', extra: true);
                     } else {
@@ -111,6 +115,8 @@ class AppShell extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'chat', child: Text('AI 健康顾问')),
+                  PopupMenuItem(value: 'report', child: Text('报告识别')),
                   PopupMenuItem(value: 'membership', child: Text('会员中心')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),

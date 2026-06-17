@@ -17,7 +17,6 @@ class HealthRepository extends ChangeNotifier {
   Future<void> initialize() async {
     if (_ready) return;
     await database.open();
-    await _seedIfEmpty();
     _ready = true;
   }
 
@@ -1142,23 +1141,6 @@ class HealthRepository extends ChangeNotifier {
     );
   }
 
-  Future<void> resetDemoData() async {
-    final db = await database.open();
-    await db.transaction((txn) async {
-      for (final table in [
-        'user_profile',
-        'health_indicator',
-        'plan',
-        'clock_record',
-        'reminder'
-      ]) {
-        await txn.delete(table);
-      }
-    });
-    await _seedIfEmpty(force: true);
-    notifyListeners();
-  }
-
   void signalChanged() => notifyListeners();
 
   // ── 数据导出 ─────────────────────────────────────────────────────
@@ -1321,142 +1303,6 @@ class HealthRepository extends ChangeNotifier {
 
     notifyListeners();
     return indicatorCount;
-  }
-
-  Future<void> _seedIfEmpty({bool force = false}) async {
-    final db = await database.open();
-    final count = await db.count('user_profile');
-    if (!force && count > 0) return;
-
-    final now = DateTime.now();
-    final midnight = DateTime(now.year, now.month, now.day);
-    final timestamp = now.millisecondsSinceEpoch;
-
-    // ── 国际标准参考值档案 ──────────────────────────────────────
-    // 身高 175 cm，体重 70.0 kg → BMI 22.9（WHO 正常范围 18.5–24.9）
-    await db.insert(
-      'user_profile',
-      UserProfileData(
-        nickname: '演示用户',
-        gender: 'male',
-        birthYear: 1985, // 约 41 岁
-        heightCm: 175,
-        weightKg: 70.0,
-        medicalHistory: '各项指标处于正常参考范围，定期监测维持健康状态',
-        medications: '暂无长期用药',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ).toRow(),
-    );
-
-    // ── 7 天血压趋势（正常范围：收缩压 < 120 且舒张压 < 80，ACC/AHA 2017） ──
-    // 注意：舒张压 = 80 即触发 Stage 1，故示例值全部 < 80
-    final bpReadings = [
-      (116, 74), // 6天前
-      (114, 73), // 5天前
-      (117, 75), // 4天前
-      (115, 74), // 3天前
-      (118, 76), // 2天前
-      (115, 75), // 昨天
-      (116, 75), // 今天（正常范围内）
-    ];
-
-    // ── 7 天体重趋势（BMI 22.9，每日自然波动 ±0.3 kg） ───────────
-    final weightReadings = [70.4, 70.2, 70.5, 70.1, 70.3, 70.0, 70.0];
-
-    final samples = [
-      for (var i = 0; i < 7; i++) ...[
-        HealthIndicatorEntry(
-          type: 'bp',
-          payload: {
-            'systolic': bpReadings[i].$1,
-            'diastolic': bpReadings[i].$2,
-            'heartRate': 68 + (i % 3), // 心率 68–70 bpm（正常静息心率）
-          },
-          source: 'manual',
-          measuredAt:
-              midnight.subtract(Duration(days: 6 - i)).millisecondsSinceEpoch,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        ),
-        HealthIndicatorEntry(
-          type: 'weight',
-          payload: {'weightKg': weightReadings[i]},
-          source: 'manual',
-          measuredAt:
-              midnight.subtract(Duration(days: 6 - i)).millisecondsSinceEpoch,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        ),
-      ],
-      // 空腹血糖：5.0 mmol/L（正常；ADA 糖前期起点为 5.6，故示例取 5.0）
-      HealthIndicatorEntry(
-        type: 'glucose',
-        payload: {'glucoseMmol': 5.0, 'mealType': 'fasting'},
-        source: 'report',
-        measuredAt:
-            midnight.subtract(const Duration(days: 3)).millisecondsSinceEpoch,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ),
-      // 血脂四项（NCEP ATP III，均低于边界高值阈值）
-      //   TC  4.8 mmol/L（< 5.18 合适值，阈值以内）
-      //   LDL 2.8 mmol/L（< 3.37 近优值，阈值以内）
-      //   HDL 1.4 mmol/L（> 1.30 对男女均安全）
-      //   TG  1.3 mmol/L（< 2.26 正常）
-      HealthIndicatorEntry(
-        type: 'lipid',
-        payload: {'tc': 4.8, 'ldl': 2.8, 'hdl': 1.4, 'tg': 1.3},
-        source: 'report',
-        measuredAt:
-            midnight.subtract(const Duration(days: 5)).millisecondsSinceEpoch,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ),
-      // 血氧：98%（正常 95–100%）
-      HealthIndicatorEntry(
-        type: 'spo2',
-        payload: {'spo2Pct': 98},
-        source: 'manual',
-        measuredAt:
-            midnight.subtract(const Duration(days: 1)).millisecondsSinceEpoch,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ),
-      // 昨日步数：8000 步（WHO 推荐目标 ≥ 10000 步）
-      HealthIndicatorEntry(
-        type: 'steps',
-        payload: {'steps': 8000},
-        source: 'manual',
-        measuredAt:
-            midnight.subtract(const Duration(days: 1)).millisecondsSinceEpoch,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ),
-    ];
-    for (final item in samples) {
-      await db.insert('health_indicator', item.toRow());
-    }
-
-    for (final type in ['meal', 'exercise', 'medicine']) {
-      await db.insert(
-        'clock_record',
-        ClockRecordData(
-          type: type,
-          status: 'done',
-          clockAt: now
-              .subtract(Duration(hours: type == 'meal' ? 2 : 5))
-              .millisecondsSinceEpoch,
-          note: type == 'meal' ? '午餐选择低盐高蛋白' : '',
-          photoPath: '',
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        ).toRow(),
-      );
-    }
-
-    await _insertDefaultReminders(db, timestamp);
-    await generateWeeklyPlan();
   }
 
   Future<void> _insertDefaultReminders(AppDatabase db, int timestamp) async {

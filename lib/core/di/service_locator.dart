@@ -23,7 +23,7 @@ final GetIt sl = GetIt.instance;
 /// 1. 同步注册不依赖 IO 的轻量级单例（Logger / SecureStorage / KeyVault 等）
 /// 2. **并行执行**两个最耗时的步骤：
 ///    - SharedPreferences 初始化（UserSession.load）
-///    - 数据库迁移 + seed（HealthRepository.initialize）
+///    - 数据库打开/迁移（HealthRepository.initialize）
 /// 3. 其余 API/Service 立即注册（构造函数都不阻塞）
 Future<void> setupServiceLocator() async {
   // ── 同步注册（瞬时） ─────────────────────────────────────────
@@ -52,7 +52,7 @@ Future<void> setupServiceLocator() async {
 
   // ── 并行执行 IO 密集的初始化 ────────────────────────────────
   // 1. UserSession 从 SharedPreferences/SecureStorage 加载
-  // 2. HealthRepository 打开数据库 + 种子数据
+  // 2. HealthRepository 打开数据库
   final healthRepository = HealthRepository(database: appDatabase);
   await Future.wait([
     UserSession.instance.load(),

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
@@ -19,6 +20,10 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const _profilePromptDismissedKey = 'home_profile_prompt_dismissed_v1';
+  static const _indicatorPromptDismissedKey =
+      'home_indicator_prompt_dismissed_v1';
+
   final HealthRepository _repo = sl<HealthRepository>();
   final MembershipService _membership = sl<MembershipService>();
 
@@ -26,6 +31,7 @@ class _HomePageState extends State<HomePage> {
   List<HealthIndicatorEntry> _recentIndicators = const [];
   MembershipStatus _memberStatus = MembershipStatus.free;
   bool _loading = true;
+  bool _promptOpen = false;
 
   @override
   void initState() {
@@ -58,6 +64,75 @@ class _HomePageState extends State<HomePage> {
       _memberStatus = results[2] as MembershipStatus;
       _loading = false;
     });
+    _maybeShowNextPrompt(results[0] as HealthDashboardData);
+  }
+
+  Future<void> _maybeShowNextPrompt(HealthDashboardData data) async {
+    if (!mounted || _promptOpen) return;
+
+    final prompt = _nextPrompt(data);
+    if (prompt == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(prompt.dismissedKey) == true) return;
+    if (!mounted) return;
+
+    _promptOpen = true;
+    final action = await showDialog<_HomePromptAction>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(prompt.title),
+        content: Text(prompt.content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _HomePromptAction.later),
+            child: const Text('稍后'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, _HomePromptAction.dismiss),
+            child: const Text('删除提醒'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, prompt.confirmAction),
+            child: Text(prompt.confirmText),
+          ),
+        ],
+      ),
+    );
+    _promptOpen = false;
+    if (!mounted) return;
+
+    if (action == _HomePromptAction.dismiss) {
+      await prefs.setBool(prompt.dismissedKey, true);
+    } else if (action == _HomePromptAction.profile) {
+      context.go('/profile');
+    } else if (action == _HomePromptAction.indicator) {
+      context.push('/indicators/input').then((_) {
+        if (mounted) _load(silent: true);
+      });
+    }
+  }
+
+  _HomePrompt? _nextPrompt(HealthDashboardData data) {
+    final profile = data.profile;
+    if (profile == null || !profile.isComplete) {
+      return const _HomePrompt(
+        dismissedKey: _profilePromptDismissedKey,
+        title: '先填写你的健康数据',
+        content: '当前还没有完整健康档案。完善档案后，系统会基于你的年龄、身高、体重和目标生成更准确的建议。',
+        confirmText: '去填写',
+        confirmAction: _HomePromptAction.profile,
+      );
+    }
+    if (data.indicators.isEmpty) {
+      return const _HomePrompt(
+        dismissedKey: _indicatorPromptDismissedKey,
+        title: '录入一条健康指标',
+        content: '档案已经完成。再录入体重、血压、血糖等健康指标后，趋势统计和计划建议会更贴合你的真实状态。',
+        confirmText: '去录入',
+        confirmAction: _HomePromptAction.indicator,
+      );
+    }
+    return null;
   }
 
   @override
@@ -70,9 +145,6 @@ class _HomePageState extends State<HomePage> {
     final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
     final now = DateTime.now();
     final todayLabel = DateFormat('MM月dd日 EEEE', 'zh_CN').format(now);
-    final needsSetup = profile == null ||
-        !profile.isComplete ||
-        ((data?.indicators.isEmpty ?? true) && (data?.plans.isEmpty ?? true));
 
     // 今日计划
     final todayPlans = (data?.plans ?? []).where((p) {
@@ -106,24 +178,6 @@ class _HomePageState extends State<HomePage> {
             onClockTap: () => context.go('/clock'),
           ),
           const SizedBox(height: 14),
-
-          if (needsSetup) ...[
-            _SetupGuideCard(
-              onProfile: () => context.go('/profile'),
-              onIndicator: () => context.push('/indicators/input').then((_) {
-                if (mounted) _load(silent: true);
-              }),
-              onDemo: () async {
-                final messenger = ScaffoldMessenger.of(context);
-                await _repo.resetDemoData();
-                if (!mounted) return;
-                messenger.showSnackBar(
-                  const SnackBar(content: Text('已恢复本地示例数据')),
-                );
-              },
-            ),
-            const SizedBox(height: 14),
-          ],
 
           // 今日关键指标
           _TodayMetricsRow(
@@ -294,63 +348,23 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class _SetupGuideCard extends StatelessWidget {
-  const _SetupGuideCard({
-    required this.onProfile,
-    required this.onIndicator,
-    required this.onDemo,
+class _HomePrompt {
+  const _HomePrompt({
+    required this.dismissedKey,
+    required this.title,
+    required this.content,
+    required this.confirmText,
+    required this.confirmAction,
   });
 
-  final VoidCallback onProfile;
-  final VoidCallback onIndicator;
-  final VoidCallback onDemo;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Row(children: [
-          Icon(Icons.assignment_ind_outlined,
-              color: AppTheme.deepBlue, size: 20),
-          SizedBox(width: 8),
-          Text(
-            '先填写你的健康数据',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-          ),
-        ]),
-        const SizedBox(height: 8),
-        const Text(
-          '当前还没有可用于分析的数据。完善档案和录入指标后，计划、趋势和会员功能会沿用同一份数据。',
-          style: TextStyle(color: AppTheme.muted, fontSize: 13, height: 1.5),
-        ),
-        const SizedBox(height: 14),
-        Wrap(spacing: 10, runSpacing: 10, children: [
-          FilledButton.icon(
-            onPressed: onProfile,
-            icon: const Icon(Icons.edit_outlined, size: 18),
-            label: const Text('完善档案'),
-          ),
-          OutlinedButton.icon(
-            onPressed: onIndicator,
-            icon: const Icon(Icons.add_chart_outlined, size: 18),
-            label: const Text('录入指标'),
-          ),
-          TextButton.icon(
-            onPressed: onDemo,
-            icon: const Icon(Icons.science_outlined, size: 18),
-            label: const Text('使用测试数据'),
-          ),
-        ]),
-      ]),
-    );
-  }
+  final String dismissedKey;
+  final String title;
+  final String content;
+  final String confirmText;
+  final _HomePromptAction confirmAction;
 }
+
+enum _HomePromptAction { later, dismiss, profile, indicator }
 
 // ── 仪表盘 Hero（进度环 + 今日打卡状态） ────────────────────────
 class _DashboardHero extends StatelessWidget {

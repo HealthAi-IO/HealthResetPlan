@@ -1,24 +1,35 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:health_reset_plan/core/data/health_models.dart';
 import 'package:health_reset_plan/core/data/health_repository.dart';
 import 'package:health_reset_plan/core/storage/app_database.dart';
 
 void main() {
-  test('initialize seeds local dashboard data', () async {
+  test('initialize starts with empty local dashboard data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
 
     await repo.initialize();
     final dashboard = await repo.loadDashboard();
 
-    expect(dashboard.profile?.nickname, '演示用户');
-    expect(dashboard.plans, isNotEmpty);
-    expect(dashboard.reminders, hasLength(4));
-    expect(dashboard.clockRecords, hasLength(3));
-    expect(dashboard.weightTrend(), hasLength(5));
+    expect(dashboard.profile, isNull);
+    expect(dashboard.indicators, isEmpty);
+    expect(dashboard.plans, isEmpty);
+    expect(dashboard.reminders, isEmpty);
+    expect(dashboard.clockRecords, isEmpty);
+    expect(dashboard.weightTrend(), isEmpty);
   });
 
   test('weight indicator updates profile weight', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
     await repo.initialize();
+    await repo.saveProfile(
+      UserProfileData.empty().copyWith(
+        nickname: '测试用户',
+        gender: 'female',
+        birthYear: 1990,
+        heightCm: 165,
+        weightKg: 70,
+      ),
+    );
 
     await repo.addIndicator(
       type: 'weight',
@@ -34,11 +45,16 @@ void main() {
   test('weekly plan adapts to obesity and high blood pressure data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
     await repo.initialize();
-
-    final existing = await repo.loadProfile();
     await repo.saveProfile(
-      existing!.copyWith(heightCm: 168, weightKg: 90),
+      UserProfileData.empty().copyWith(
+        nickname: '测试用户',
+        gender: 'male',
+        birthYear: 1988,
+        heightCm: 168,
+        weightKg: 90,
+      ),
     );
+
     await repo.addIndicator(
       type: 'bp',
       payload: {'systolic': 150, 'diastolic': 95},
