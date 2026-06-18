@@ -201,7 +201,14 @@ class _MembershipPageState extends State<MembershipPage> {
       await sync.setSyncEnabled(true);
       final umk = await sl<KeyVault>().readUmk();
       if (umk == null) return true;
-      final result = await sync.sync();
+      final result = await sync.sync().timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => const SyncResult(
+              pushed: 0,
+              pulled: 0,
+              error: 'Cloud sync timeout. Try manual sync later.',
+            ),
+          );
       return result.hasError && _isKeyRestoreRequired(result.error);
     } catch (_) {
       // 会员激活不因同步失败中断；用户可稍后在云同步页手动重试。

@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -28,10 +26,10 @@ class ReminderScheduler {
 
   bool get _supported =>
       !kIsWeb &&
-      (Platform.isAndroid ||
-          Platform.isIOS ||
-          Platform.isMacOS ||
-          Platform.isLinux);
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS ||
+          defaultTargetPlatform == TargetPlatform.linux);
 
   // ── 初始化 ─────────────────────────────────────────────────
 
@@ -48,8 +46,7 @@ class ReminderScheduler {
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
-    const linux =
-        LinuxInitializationSettings(defaultActionName: '打开健康重启计划');
+    const linux = LinuxInitializationSettings(defaultActionName: '打开健康重启计划');
 
     const settings = InitializationSettings(
       android: android,
@@ -67,17 +64,17 @@ class ReminderScheduler {
   Future<void> requestPermission() async {
     if (!_supported || !_initialized) return;
 
-    if (Platform.isAndroid) {
+    if (defaultTargetPlatform == TargetPlatform.android) {
       await _plugin
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
-    } else if (Platform.isIOS) {
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
       await _plugin
           .resolvePlatformSpecificImplementation<
               IOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(alert: true, badge: true, sound: true);
-    } else if (Platform.isMacOS) {
+    } else if (defaultTargetPlatform == TargetPlatform.macOS) {
       await _plugin
           .resolvePlatformSpecificImplementation<
               MacOSFlutterLocalNotificationsPlugin>()

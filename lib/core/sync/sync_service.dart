@@ -1,10 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -14,6 +11,7 @@ import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import '../network/api_client.dart';
 import '../storage/app_database.dart';
+import '../storage/report_image_storage.dart';
 
 class SyncResult {
   const SyncResult({
@@ -481,10 +479,10 @@ class SyncService {
 
     if (table == 'health_report') {
       final imagePath = row['image_path'] as String? ?? '';
-      final imageFile = File(imagePath);
-      if (imagePath.isNotEmpty && await imageFile.exists()) {
-        payload['image_base64'] = base64Encode(await imageFile.readAsBytes());
-        payload['image_ext'] = p.extension(imagePath);
+      final imageBytes = await readReportImage(imagePath);
+      if (imageBytes != null) {
+        payload['image_base64'] = base64Encode(imageBytes);
+        payload['image_ext'] = _imageExtension(imagePath);
       }
     }
 
@@ -578,17 +576,17 @@ class SyncService {
       return payload['image_path'] as String? ?? '';
     }
 
-    final dir = await getApplicationDocumentsDirectory();
-    final reportDir = Directory(p.join(dir.path, 'private_reports'));
-    if (!await reportDir.exists()) {
-      await reportDir.create(recursive: true);
-    }
     final ext = (payload['image_ext'] as String?)?.isNotEmpty == true
         ? payload['image_ext'] as String
         : '.jpg';
-    final file = File(p.join(reportDir.path, '$clientId$ext'));
-    await file.writeAsBytes(base64Decode(imageBase64), flush: true);
-    return file.path;
+    return restoreReportImage(base64Decode(imageBase64), clientId, ext);
+  }
+
+  String _imageExtension(String imagePath) {
+    if (imagePath.startsWith('data:image/png')) return '.png';
+    if (imagePath.startsWith('data:image/webp')) return '.webp';
+    final match = RegExp(r'\.[a-zA-Z0-9]+$').firstMatch(imagePath);
+    return match?.group(0) ?? '.jpg';
   }
 
   Map<String, dynamic> _decodePayload(

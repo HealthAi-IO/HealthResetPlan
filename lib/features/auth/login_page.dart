@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -130,19 +132,10 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
 
-      final shouldPromptRestoreKey = await _syncLocalDataIfMember();
       if (!mounted) return;
-      if (shouldPromptRestoreKey) {
-        final restoreNow = await _showRestoreKeyDialog();
-        if (!mounted) return;
-        if (restoreNow == true) {
-          await context.push('/sync/key-setup');
-          if (!mounted) return;
-        }
-      }
-
-      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
       context.go('/home');
+      unawaited(_syncLocalDataAfterLogin(messenger));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -157,25 +150,104 @@ class _LoginPageState extends State<LoginPage> {
     return value.contains('@') ? value.toLowerCase() : value;
   }
 
-  Future<bool> _syncLocalDataIfMember() async {
+/*
+  Future<void> _syncLocalDataAfterLogin(ScaffoldMessengerState messenger) async {
     try {
       final status =
           await sl<MembershipService>().getStatus(forceRefresh: true);
-      if (!status.isActive) return false;
+      if (!status.isActive) return;
 
       final sync = sl<SyncService>();
       await sync.setSyncEnabled(true);
 
       final umk = await sl<KeyVault>().readUmk();
       if (umk == null) {
-        return true;
+        messenger.showSnackBar(
+          const SnackBar(content: Text('登录成功。云同步需要先恢复主密钥助记词。')),
+        );
+        return;
       }
 
-      final result = await sync.sync();
-      return result.hasError && _isKeyRestoreRequired(result.error);
+      final result = await sync.sync().timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => const SyncResult(
+              pushed: 0,
+              pulled: 0,
+              error: '云同步仍在后台处理，可稍后手动同步',
+            ),
+          );
+      if (result.hasError) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(_isKeyRestoreRequired(result.error)
+                ? '登录成功。云端数据需要恢复主密钥后才能读取。'
+                : '登录成功，云同步稍后可重试：${result.error}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (result.pushed + result.pulled > 0) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('登录成功，云同步完成：${result.pushed + result.pulled} 条'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } catch (_) {
       // 登录流程不因同步失败中断；用户仍可在云同步页手动重试。
       return false;
+    }
+  }
+
+*/
+  Future<void> _syncLocalDataAfterLogin(ScaffoldMessengerState messenger) async {
+    try {
+      final status =
+          await sl<MembershipService>().getStatus(forceRefresh: true);
+      if (!status.isActive) return;
+
+      final sync = sl<SyncService>();
+      await sync.setSyncEnabled(true);
+
+      final umk = await sl<KeyVault>().readUmk();
+      if (umk == null) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Login ok. Restore master key before cloud sync.'),
+          ),
+        );
+        return;
+      }
+
+      final result = await sync.sync().timeout(
+            const Duration(seconds: 8),
+            onTimeout: () => const SyncResult(
+              pushed: 0,
+              pulled: 0,
+              error: 'Cloud sync is still running. Try manual sync later.',
+            ),
+          );
+      if (result.hasError) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(_isKeyRestoreRequired(result.error)
+                ? 'Login ok. Restore master key to read cloud data.'
+                : 'Login ok. Cloud sync can retry later: ${result.error}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (result.pushed + result.pulled > 0) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Login ok. Cloud sync finished: ${result.pushed + result.pulled} items',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (_) {
+      // Login has already succeeded; background sync must not block the app.
     }
   }
 
@@ -187,6 +259,7 @@ class _LoginPageState extends State<LoginPage> {
         text.contains('UMK');
   }
 
+  // ignore: unused_element
   Future<bool?> _showRestoreKeyDialog() {
     return showDialog<bool>(
       context: context,

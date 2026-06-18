@@ -28,5 +28,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于拍摄体检或检验报告并进行健康指标识别</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于选择体检或检验报告图片并进行健康指标识别</string>
 </dict>
 </plist>

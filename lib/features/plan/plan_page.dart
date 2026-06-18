@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -25,7 +26,7 @@ class _PlanPageState extends State<PlanPage> {
 
   bool _loading = true;
   bool _aiGenerating = false;
-  String _selectedProvider = 'doubao';
+  String _selectedProvider = 'qwen';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
   PlanRecordData? _riskPlan;
@@ -86,7 +87,17 @@ class _PlanPageState extends State<PlanPage> {
       _selectedProvider = provider;
     });
 
+    Timer? slowNotice;
     try {
+      final messenger = ScaffoldMessenger.of(context);
+      slowNotice = Timer(const Duration(seconds: 20), () {
+        if (!mounted) return;
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('AI is still generating. A local fallback is ready if needed.'),
+          ),
+        );
+      });
       // 3. 拉取最近指标
       final indicators = await _repo.loadIndicators(limit: 20);
 
@@ -96,7 +107,7 @@ class _PlanPageState extends State<PlanPage> {
         recentIndicators: indicators,
         provider: provider,
         goal: _profile?.goal ?? 'general',
-      );
+      ).timeout(const Duration(seconds: 75));
 
       if (!mounted) return;
 
@@ -113,6 +124,7 @@ class _PlanPageState extends State<PlanPage> {
         ),
       );
     } finally {
+      slowNotice?.cancel();
       if (mounted) setState(() => _aiGenerating = false);
     }
   }

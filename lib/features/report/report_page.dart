@@ -1,11 +1,9 @@
-import 'dart:io';
+import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
@@ -14,6 +12,7 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
+import '../../core/storage/report_image_storage.dart';
 import '../../core/sync/sync_service.dart';
 
 class _OcrIndicator {
@@ -108,6 +107,7 @@ class _ReportPageState extends State<ReportPage> {
   bool _loading = true;
   bool _analyzing = false;
   bool _saving = false;
+  String _analyzeStage = '';
   XFile? _pickedImage;
   _OcrResult? _ocrResult;
   List<HealthReportRecord> _reports = const [];
@@ -145,9 +145,9 @@ class _ReportPageState extends State<ReportPage> {
     try {
       file = await _picker.pickImage(
         source: source,
-        maxWidth: 2048,
-        maxHeight: 2048,
-        imageQuality: 88,
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageQuality: 78,
       );
     } catch (e) {
       if (!mounted) return;
@@ -166,10 +166,15 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _analyzeImage(XFile file) async {
-    setState(() => _analyzing = true);
+    setState(() {
+      _analyzing = true;
+      _analyzeStage = 'Preparing image...';
+    });
 
     try {
       final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      setState(() => _analyzeStage = 'Uploading report for AI recognition...');
       final formData = FormData.fromMap({
         'file': MultipartFile.fromBytes(
           bytes,
@@ -185,20 +190,26 @@ class _ReportPageState extends State<ReportPage> {
           contentType: 'multipart/form-data',
           connectTimeout: const Duration(seconds: 15),
           sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(minutes: 3),
+          receiveTimeout: const Duration(seconds: 90),
         ),
       );
+      if (!mounted) return;
+      setState(() => _analyzeStage = 'Extracting health indicators...');
       final result = _OcrResult.fromJson(_unwrapResponseData(response.data));
 
       if (!mounted) return;
       setState(() {
         _ocrResult = result;
         _analyzing = false;
+        _analyzeStage = '';
       });
       _showReviewSheet(result);
     } on DioException catch (e) {
       if (!mounted) return;
-      setState(() => _analyzing = false);
+      setState(() {
+        _analyzing = false;
+        _analyzeStage = '';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('识别失败：${_friendlyError(e)}'),
@@ -207,7 +218,10 @@ class _ReportPageState extends State<ReportPage> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _analyzing = false);
+      setState(() {
+        _analyzing = false;
+        _analyzeStage = '';
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('识别异常：$e')),
       );
@@ -268,7 +282,14 @@ class _ReportPageState extends State<ReportPage> {
 
       var syncMessage = '';
       if (await _syncService.isSyncEnabled()) {
-        final syncResult = await _syncService.sync();
+        final syncResult = await _syncService.sync().timeout(
+              const Duration(seconds: 10),
+              onTimeout: () => const SyncResult(
+                pushed: 0,
+                pulled: 0,
+                error: 'Cloud sync timeout; delete was saved locally.',
+              ),
+            );
         if (syncResult.hasError) {
           syncMessage = '，云同步失败：${syncResult.error}';
         }
@@ -313,23 +334,16 @@ class _ReportPageState extends State<ReportPage> {
       );
       await _saveIndicatorsLocally(result, reportTime);
 
-      var syncMessage = '';
-      if (await _syncService.isSyncEnabled()) {
-        final syncResult = await _syncService.sync();
-        syncMessage = syncResult.hasError
-            ? '，云同步失败：${syncResult.error}'
-            : '，已同步 ${syncResult.pushed + syncResult.pulled} 条';
-      }
-
       if (!mounted) return;
       setState(() => _saving = false);
       messenger.showSnackBar(
-        SnackBar(
-          content: Text('报告已保存$syncMessage'),
-          backgroundColor: Colors.green,
-        ),
+        const SnackBar(content: Text('报告已保存'), backgroundColor: Colors.green),
       );
       _load(silent: true);
+
+      if (await _syncService.isSyncEnabled()) {
+        unawaited(_syncAfterReportSave(messenger));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -338,6 +352,40 @@ class _ReportPageState extends State<ReportPage> {
           content: Text('保存失败：$e'),
           backgroundColor: Colors.red,
         ),
+      );
+    }
+  }
+
+  Future<void> _syncAfterReportSave(ScaffoldMessengerState messenger) async {
+    try {
+      final syncResult = await _syncService.sync().timeout(
+            const Duration(seconds: 20),
+            onTimeout: () => const SyncResult(
+              pushed: 0,
+              pulled: 0,
+              error: '云同步超时，报告已先保存到本地',
+            ),
+          );
+      if (!mounted) return;
+      if (syncResult.hasError) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('云同步失败：${syncResult.error}'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (syncResult.pushed + syncResult.pulled > 0) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('云同步完成：${syncResult.pushed + syncResult.pulled} 条'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('云同步失败：$e'), backgroundColor: Colors.orange),
       );
     }
   }
@@ -489,41 +537,20 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<String> _persistReportImage(String clientId) async {
     final image = _pickedImage;
-    if (image == null || image.path.isBlank) return '';
+    if (image == null) return '';
 
     try {
-      final source = File(image.path);
-      if (!await source.exists()) return image.path;
-
-      final dir = await getApplicationDocumentsDirectory();
-      final reportDir = Directory(p.join(dir.path, 'private_reports'));
-      if (!await reportDir.exists()) {
-        await reportDir.create(recursive: true);
-      }
-
-      final nameExt = p.extension(image.name);
-      final pathExt = p.extension(image.path);
-      final ext = (nameExt.isNotEmpty ? nameExt : pathExt).toLowerCase();
-      final target = File(
-          p.join(reportDir.path, '$clientId${ext.isEmpty ? '.jpg' : ext}'));
-      await source.copy(target.path);
-      return target.path;
+      return await persistReportImage(image, clientId);
     } catch (_) {
-      return image.path;
+      return '';
     }
   }
 
   Future<void> _deleteReportImage(String imagePath) async {
     if (imagePath.isBlank) return;
 
-    final segments = p.normalize(imagePath).split(RegExp(r'[\\/]+'));
-    if (!segments.contains('private_reports')) return;
-
     try {
-      final file = File(imagePath);
-      if (await file.exists()) {
-        await file.delete();
-      }
+      await deleteReportImage(imagePath);
     } catch (_) {
       // 删除图片失败不影响报告记录删除。
     }
@@ -616,6 +643,7 @@ class _ReportPageState extends State<ReportPage> {
               pickedImage: _pickedImage,
               analyzing: _analyzing,
               saving: _saving,
+              analyzeStage: _analyzeStage,
               onPickGallery: () => _pickImage(ImageSource.gallery),
               onPickCamera: () => _pickImage(ImageSource.camera),
             ),
@@ -645,6 +673,7 @@ class _PickCard extends StatelessWidget {
     required this.pickedImage,
     required this.analyzing,
     required this.saving,
+    required this.analyzeStage,
     required this.onPickGallery,
     required this.onPickCamera,
   });
@@ -652,13 +681,14 @@ class _PickCard extends StatelessWidget {
   final XFile? pickedImage;
   final bool analyzing;
   final bool saving;
+  final String analyzeStage;
   final VoidCallback onPickGallery;
   final VoidCallback onPickCamera;
 
   @override
   Widget build(BuildContext context) {
     final pickedFile =
-        pickedImage == null ? null : _existingImageFile(pickedImage!.path);
+        pickedImage == null ? null : reportImageProvider(pickedImage!.path);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -682,6 +712,13 @@ class _PickCard extends StatelessWidget {
           style: TextStyle(color: AppTheme.muted, height: 1.5),
         ),
         const SizedBox(height: 16),
+        if (analyzing && analyzeStage.isNotEmpty) ...[
+          _StatusRow(
+            text: analyzeStage,
+            color: const Color(0xFF0277BD),
+          ),
+          const SizedBox(height: 8),
+        ],
         if (analyzing)
           const _StatusRow(
             text: 'AI 正在识别报告指标...',
@@ -807,16 +844,11 @@ class _ProgressCard extends StatelessWidget {
             Border.all(color: const Color(0xFF0277BD).withValues(alpha: 0.2)),
       ),
       child: const Row(children: [
-        SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(
-              strokeWidth: 2, color: Color(0xFF0277BD)),
-        ),
+        Icon(Icons.info_outline, size: 18, color: Color(0xFF0277BD)),
         SizedBox(width: 12),
         Expanded(
           child: Text(
-            '正在写入本地报告库和健康指标库',
+            '确认保存后会写入本地报告库和健康指标库',
             style: TextStyle(
                 fontSize: 12,
                 color: Color(0xFF0277BD),
@@ -1018,7 +1050,7 @@ class _ReportDetailSheet extends StatelessWidget {
     final rawText = record.rawText.trim().isNotEmpty
         ? record.rawText.trim()
         : result.rawText.trim();
-    final imageFile = _existingImageFile(record.imagePath);
+    final imageFile = reportImageProvider(record.imagePath);
     final imageHeight =
         (MediaQuery.sizeOf(context).height * 0.38).clamp(240.0, 380.0);
 
@@ -1372,7 +1404,7 @@ class _ReportHistoryRow extends StatelessWidget {
     final summary = record.summary.trim();
     final title = summary.isNotEmpty ? summary : '体检/检验报告';
     final provider = record.provider.isBlank ? 'AI识别' : record.provider;
-    final imageFile = _existingImageFile(record.imagePath);
+    final imageFile = reportImageProvider(record.imagePath);
 
     return Material(
       color: AppTheme.pageBg,
@@ -1386,8 +1418,8 @@ class _ReportHistoryRow extends StatelessWidget {
             if (imageFile != null)
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
-                child: Image.file(
-                  imageFile,
+                child: Image(
+                  image: imageFile,
                   width: 46,
                   height: 54,
                   fit: BoxFit.cover,
@@ -1444,7 +1476,7 @@ class _ReportHistoryRow extends StatelessWidget {
 class _ReportImagePreview extends StatelessWidget {
   const _ReportImagePreview({required this.file, required this.height});
 
-  final File file;
+  final ImageProvider<Object> file;
   final double height;
 
   @override
@@ -1456,8 +1488,8 @@ class _ReportImagePreview extends StatelessWidget {
         width: double.infinity,
         color: AppTheme.pageBg,
         alignment: Alignment.center,
-        child: Image.file(
-          file,
+        child: Image(
+          image: file,
           width: double.infinity,
           height: height,
           fit: BoxFit.contain,
@@ -1470,7 +1502,7 @@ class _ReportImagePreview extends StatelessWidget {
 class _ImagePreviewPage extends StatelessWidget {
   const _ImagePreviewPage({required this.file});
 
-  final File file;
+  final ImageProvider<Object> file;
 
   @override
   Widget build(BuildContext context) {
@@ -1486,8 +1518,8 @@ class _ImagePreviewPage extends StatelessWidget {
           minScale: 0.6,
           maxScale: 4,
           child: Center(
-            child: Image.file(
-              file,
+            child: Image(
+              image: file,
               fit: BoxFit.contain,
             ),
           ),
@@ -1497,20 +1529,10 @@ class _ImagePreviewPage extends StatelessWidget {
   }
 }
 
-void _showImagePreview(BuildContext context, File file) {
+void _showImagePreview(BuildContext context, ImageProvider<Object> file) {
   Navigator.of(context).push(
     MaterialPageRoute(builder: (_) => _ImagePreviewPage(file: file)),
   );
-}
-
-File? _existingImageFile(String imagePath) {
-  if (imagePath.isBlank) return null;
-  try {
-    final file = File(imagePath);
-    return file.existsSync() ? file : null;
-  } catch (_) {
-    return null;
-  }
 }
 
 extension on String {

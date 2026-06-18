@@ -98,7 +98,14 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
       _syncMessage = null;
     });
 
-    final result = await _syncService.sync();
+    final result = await _syncService.sync().timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => const SyncResult(
+            pushed: 0,
+            pulled: 0,
+            error: 'Cloud sync timeout. Local data is safe; try again later.',
+          ),
+        );
     final lastMs = await _syncService.getLastSyncMs();
 
     if (!mounted) return;

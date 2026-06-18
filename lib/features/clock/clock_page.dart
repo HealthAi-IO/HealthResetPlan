@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:android_intent_plus/android_intent.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -74,7 +73,8 @@ class _ClockPageState extends State<ClockPage> {
         title: const Text('用药打卡'),
         content: const Text('请选择本次用药状态：'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           OutlinedButton(
             onPressed: () => Navigator.pop(ctx, 'skip'),
             child: const Text('跳过'),
@@ -103,7 +103,9 @@ class _ClockPageState extends State<ClockPage> {
         content: TextField(
           controller: ctrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))
+          ],
           decoration: const InputDecoration(
             labelText: '当前体重',
             hintText: '例如 70.5',
@@ -111,7 +113,8 @@ class _ClockPageState extends State<ClockPage> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () {
               final v = double.tryParse(ctrl.text);
@@ -140,7 +143,7 @@ class _ClockPageState extends State<ClockPage> {
   }
 
   Future<void> _syncToAlarm(int hour, int minute, String label) async {
-    if (!Platform.isAndroid) return;
+    if (defaultTargetPlatform != TargetPlatform.android) return;
     final intent = AndroidIntent(
       action: 'android.intent.action.SET_ALARM',
       arguments: <String, dynamic>{
@@ -161,15 +164,20 @@ class _ClockPageState extends State<ClockPage> {
     );
     if (result == null) return;
     await _repo.addReminder(type: type, time: result.time, note: result.note);
-    try { await _scheduler.syncAll(); } catch (_) {}
+    try {
+      await _scheduler.syncAll();
+    } catch (_) {}
     if (result.syncAlarm) {
-      try { await _syncToAlarm(result.time.hour, result.time.minute, result.note); } catch (_) {}
+      try {
+        await _syncToAlarm(result.time.hour, result.time.minute, result.note);
+      } catch (_) {}
     }
     if (!mounted) return;
     _showSnack(result.syncAlarm ? '提醒规则已保存，已同步到系统闹钟' : '提醒规则已保存');
   }
 
-  Future<String?> _showNoteDialog({required String title, required String hint}) async {
+  Future<String?> _showNoteDialog(
+      {required String title, required String hint}) async {
     final ctrl = TextEditingController();
     final result = await showDialog<String>(
       context: context,
@@ -181,7 +189,8 @@ class _ClockPageState extends State<ClockPage> {
           decoration: InputDecoration(hintText: hint),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('保存'),
@@ -234,11 +243,31 @@ class _ClockPageState extends State<ClockPage> {
                 crossAxisSpacing: 10,
                 childAspectRatio: 0.95,
                 children: [
-                  _ClockTile(icon: Icons.restaurant_outlined, label: '饮食', color: Colors.orange, onTap: () => _clockWithNote('meal')),
-                  _ClockTile(icon: Icons.directions_run_outlined, label: '运动', color: Colors.green, onTap: () => _clockWithNote('exercise')),
-                  _ClockTile(icon: Icons.medication_outlined, label: '用药', color: Colors.redAccent, onTap: _clockMedicine),
-                  _ClockTile(icon: Icons.scale_outlined, label: '称重', color: AppTheme.deepBlue, onTap: _clockWeight),
-                  _ClockTile(icon: Icons.water_drop_outlined, label: '饮水', color: Colors.lightBlue, onTap: () => _clockWithNote('water')),
+                  _ClockTile(
+                      icon: Icons.restaurant_outlined,
+                      label: '饮食',
+                      color: Colors.orange,
+                      onTap: () => _clockWithNote('meal')),
+                  _ClockTile(
+                      icon: Icons.directions_run_outlined,
+                      label: '运动',
+                      color: Colors.green,
+                      onTap: () => _clockWithNote('exercise')),
+                  _ClockTile(
+                      icon: Icons.medication_outlined,
+                      label: '用药',
+                      color: Colors.redAccent,
+                      onTap: _clockMedicine),
+                  _ClockTile(
+                      icon: Icons.scale_outlined,
+                      label: '称重',
+                      color: AppTheme.deepBlue,
+                      onTap: _clockWeight),
+                  _ClockTile(
+                      icon: Icons.water_drop_outlined,
+                      label: '饮水',
+                      color: Colors.lightBlue,
+                      onTap: () => _clockWithNote('water')),
                 ],
               );
             }),
@@ -253,11 +282,26 @@ class _ClockPageState extends State<ClockPage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _ReminderChip(label: '称重提醒', icon: Icons.scale_outlined, onTap: () => _addReminder('weight')),
-                _ReminderChip(label: '饮食提醒', icon: Icons.restaurant_outlined, onTap: () => _addReminder('meal')),
-                _ReminderChip(label: '运动提醒', icon: Icons.directions_run_outlined, onTap: () => _addReminder('exercise')),
-                _ReminderChip(label: '用药提醒', icon: Icons.medication_outlined, onTap: () => _addReminder('medicine')),
-                _ReminderChip(label: '饮水提醒', icon: Icons.water_drop_outlined, onTap: () => _addReminder('water')),
+                _ReminderChip(
+                    label: '称重提醒',
+                    icon: Icons.scale_outlined,
+                    onTap: () => _addReminder('weight')),
+                _ReminderChip(
+                    label: '饮食提醒',
+                    icon: Icons.restaurant_outlined,
+                    onTap: () => _addReminder('meal')),
+                _ReminderChip(
+                    label: '运动提醒',
+                    icon: Icons.directions_run_outlined,
+                    onTap: () => _addReminder('exercise')),
+                _ReminderChip(
+                    label: '用药提醒',
+                    icon: Icons.medication_outlined,
+                    onTap: () => _addReminder('medicine')),
+                _ReminderChip(
+                    label: '饮水提醒',
+                    icon: Icons.water_drop_outlined,
+                    onTap: () => _addReminder('water')),
               ],
             ),
           ),
@@ -269,7 +313,10 @@ class _ClockPageState extends State<ClockPage> {
             final recentPanel = _Panel(
               title: '今日打卡记录',
               subtitle: '${DateFormat('MM月dd日').format(now)} · 共 $todayTotal 条',
-              child: _RecordList(records: todayRecords.isEmpty ? _records.take(8).toList() : todayRecords),
+              child: _RecordList(
+                  records: todayRecords.isEmpty
+                      ? _records.take(8).toList()
+                      : todayRecords),
             );
             final reminderPanel = _Panel(
               title: '提醒规则',
@@ -278,19 +325,28 @@ class _ClockPageState extends State<ClockPage> {
                 reminders: _reminders,
                 onDelete: (id) async {
                   await _repo.deleteReminder(id);
-                  try { await _scheduler.syncAll(); } catch (_) {}
+                  try {
+                    await _scheduler.syncAll();
+                  } catch (_) {}
                 },
-                onSyncAlarm: (r) => _syncToAlarm(r.remindTime.hour, r.remindTime.minute, r.label),
+                onSyncAlarm: (r) => _syncToAlarm(
+                    r.remindTime.hour, r.remindTime.minute, r.label),
               ),
             );
             if (wide) {
-              return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: recentPanel),
-                const SizedBox(width: 12),
-                Expanded(child: reminderPanel),
-              ]);
+              return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: recentPanel),
+                    const SizedBox(width: 12),
+                    Expanded(child: reminderPanel),
+                  ]);
             }
-            return Column(children: [recentPanel, const SizedBox(height: 14), reminderPanel]);
+            return Column(children: [
+              recentPanel,
+              const SizedBox(height: 14),
+              reminderPanel
+            ]);
           }),
           const SizedBox(height: 20),
         ],
@@ -313,7 +369,10 @@ class _TodayProgressCard extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppTheme.deepBlue.withValues(alpha: 0.9), AppTheme.primaryBlue],
+          colors: [
+            AppTheme.deepBlue.withValues(alpha: 0.9),
+            AppTheme.primaryBlue
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -321,11 +380,16 @@ class _TodayProgressCard extends StatelessWidget {
       ),
       child: Row(children: [
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('今日打卡进度', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('今日打卡进度',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
             const SizedBox(height: 6),
             Text('$done / $total 条完成',
-                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800)),
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(999),
@@ -340,7 +404,10 @@ class _TodayProgressCard extends StatelessWidget {
         ),
         const SizedBox(width: 16),
         Text('$pct%',
-            style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w900)),
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 36,
+                fontWeight: FontWeight.w900)),
       ]),
     );
   }
@@ -348,7 +415,11 @@ class _TodayProgressCard extends StatelessWidget {
 
 // ── 打卡按钮 ─────────────────────────────────────────────────
 class _ClockTile extends StatelessWidget {
-  const _ClockTile({required this.icon, required this.label, required this.color, required this.onTap});
+  const _ClockTile(
+      {required this.icon,
+      required this.label,
+      required this.color,
+      required this.onTap});
   final IconData icon;
   final String label;
   final Color color;
@@ -368,12 +439,17 @@ class _ClockTile extends StatelessWidget {
         ),
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
           Container(
-            width: 42, height: 42,
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12)),
             child: Icon(icon, color: color, size: 22),
           ),
           const SizedBox(height: 8),
-          Text(label, style: TextStyle(fontWeight: FontWeight.w700, color: color, fontSize: 13)),
+          Text(label,
+              style: TextStyle(
+                  fontWeight: FontWeight.w700, color: color, fontSize: 13)),
         ]),
       ),
     );
@@ -382,7 +458,8 @@ class _ClockTile extends StatelessWidget {
 
 // ── 提醒快捷芯片 ──────────────────────────────────────────────
 class _ReminderChip extends StatelessWidget {
-  const _ReminderChip({required this.label, required this.icon, required this.onTap});
+  const _ReminderChip(
+      {required this.label, required this.icon, required this.onTap});
   final String label;
   final IconData icon;
   final VoidCallback onTap;
@@ -395,7 +472,8 @@ class _ReminderChip extends StatelessWidget {
       onPressed: onTap,
       backgroundColor: AppTheme.pageBg,
       side: const BorderSide(color: AppTheme.cardBorder),
-      labelStyle: const TextStyle(color: AppTheme.deepBlue, fontWeight: FontWeight.w700, fontSize: 13),
+      labelStyle: const TextStyle(
+          color: AppTheme.deepBlue, fontWeight: FontWeight.w700, fontSize: 13),
     );
   }
 }
@@ -410,7 +488,8 @@ class _RecordList extends StatelessWidget {
     if (records.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 12),
-        child: Text('暂无打卡记录，点击上方按钮开始打卡。', style: TextStyle(color: AppTheme.muted)),
+        child:
+            Text('暂无打卡记录，点击上方按钮开始打卡。', style: TextStyle(color: AppTheme.muted)),
       );
     }
     return Column(children: [
@@ -425,33 +504,49 @@ class _RecordList extends StatelessWidget {
             ),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Container(
-                width: 38, height: 38,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: _typeColor(r.type).withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(_typeIcon(r.type), color: _typeColor(r.type), size: 19),
+                child: Icon(_typeIcon(r.type),
+                    color: _typeColor(r.type), size: 19),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Text('${r.label}  ', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                    if (r.status == 'skip')
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(6)),
-                        child: const Text('跳过', style: TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.w700)),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Text('${r.label}  ',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 14)),
+                        if (r.status == 'skip')
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                                color: Colors.orange.shade50,
+                                borderRadius: BorderRadius.circular(6)),
+                            child: const Text('跳过',
+                                style: TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700)),
+                          ),
+                      ]),
+                      const SizedBox(height: 3),
+                      Text(
+                        r.note.isNotEmpty
+                            ? r.note
+                            : DateFormat('MM月dd日 HH:mm').format(r.clockTime),
+                        style: const TextStyle(
+                            color: AppTheme.muted, fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                  ]),
-                  const SizedBox(height: 3),
-                  Text(
-                    r.note.isNotEmpty ? r.note : DateFormat('MM月dd日 HH:mm').format(r.clockTime),
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ]),
+                    ]),
               ),
               Text(
                 DateFormat('HH:mm').format(r.clockTime),
@@ -466,7 +561,10 @@ class _RecordList extends StatelessWidget {
 
 // ── 提醒规则列表 ──────────────────────────────────────────────
 class _ReminderList extends StatelessWidget {
-  const _ReminderList({required this.reminders, required this.onDelete, required this.onSyncAlarm});
+  const _ReminderList(
+      {required this.reminders,
+      required this.onDelete,
+      required this.onSyncAlarm});
   final List<ReminderData> reminders;
   final Future<void> Function(int) onDelete;
   final Future<void> Function(ReminderData) onSyncAlarm;
@@ -485,28 +583,37 @@ class _ReminderList extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 10),
           child: Container(
             padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-            decoration: BoxDecoration(color: AppTheme.pageBg, borderRadius: BorderRadius.circular(14)),
+            decoration: BoxDecoration(
+                color: AppTheme.pageBg,
+                borderRadius: BorderRadius.circular(14)),
             child: Row(children: [
               Container(
-                width: 38, height: 38,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: AppTheme.primaryBlue.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.notifications_active_outlined, color: AppTheme.deepBlue, size: 19),
+                child: const Icon(Icons.notifications_active_outlined,
+                    color: AppTheme.deepBlue, size: 19),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${r.label}  ${r.timeText}',
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  Text(r.payload['note'] as String? ?? '本地规则',
-                      style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
-                ]),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${r.label}  ${r.timeText}',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 14)),
+                      Text(r.payload['note'] as String? ?? '本地规则',
+                          style: const TextStyle(
+                              color: AppTheme.muted, fontSize: 12)),
+                    ]),
               ),
-              if (Platform.isAndroid)
+              if (defaultTargetPlatform == TargetPlatform.android)
                 IconButton(
-                  icon: const Icon(Icons.alarm_add_outlined, size: 18, color: AppTheme.deepBlue),
+                  icon: const Icon(Icons.alarm_add_outlined,
+                      size: 18, color: AppTheme.deepBlue),
                   tooltip: '同步到手机闹钟',
                   onPressed: () => onSyncAlarm(r),
                 ),
@@ -523,7 +630,8 @@ class _ReminderList extends StatelessWidget {
 
 // ── 面板容器 ──────────────────────────────────────────────────
 class _Panel extends StatelessWidget {
-  const _Panel({required this.title, required this.subtitle, required this.child});
+  const _Panel(
+      {required this.title, required this.subtitle, required this.child});
   final String title;
   final String subtitle;
   final Widget child;
@@ -539,9 +647,11 @@ class _Panel extends StatelessWidget {
         border: Border.all(color: AppTheme.cardBorder),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        Text(title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
         const SizedBox(height: 3),
-        Text(subtitle, style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+        Text(subtitle,
+            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
         const SizedBox(height: 14),
         child,
       ]),
@@ -570,13 +680,13 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   }
 
   String get _title => switch (widget.type) {
-    'meal' => '饮食提醒',
-    'exercise' => '运动提醒',
-    'medicine' => '用药提醒',
-    'weight' => '称重提醒',
-    'water' => '饮水提醒',
-    _ => '提醒',
-  };
+        'meal' => '饮食提醒',
+        'exercise' => '运动提醒',
+        'medicine' => '用药提醒',
+        'weight' => '称重提醒',
+        'water' => '饮水提醒',
+        _ => '提醒',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -596,12 +706,13 @@ class _ReminderDialogState extends State<_ReminderDialog> {
             subtitle: Text(_time.format(context)),
             trailing: TextButton(onPressed: _pickTime, child: const Text('选择')),
           ),
-          if (Platform.isAndroid) ...[
+          if (defaultTargetPlatform == TargetPlatform.android) ...[
             const Divider(height: 1),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('同步到手机闹钟', style: TextStyle(fontSize: 14)),
-              subtitle: const Text('将该时间写入系统时钟App', style: TextStyle(fontSize: 12)),
+              subtitle:
+                  const Text('将该时间写入系统时钟App', style: TextStyle(fontSize: 12)),
               value: _syncAlarm,
               onChanged: (v) => setState(() => _syncAlarm = v),
             ),
@@ -609,13 +720,18 @@ class _ReminderDialogState extends State<_ReminderDialog> {
         ]),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: const Text('取消')),
         FilledButton(
-          onPressed: () => Navigator.pop(context, _ReminderDraft(
-            time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
-            note: _noteCtrl.text.trim().isEmpty ? _title : _noteCtrl.text.trim(),
-            syncAlarm: _syncAlarm,
-          )),
+          onPressed: () => Navigator.pop(
+              context,
+              _ReminderDraft(
+                time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
+                note: _noteCtrl.text.trim().isEmpty
+                    ? _title
+                    : _noteCtrl.text.trim(),
+                syncAlarm: _syncAlarm,
+              )),
           child: const Text('保存'),
         ),
       ],
@@ -630,7 +746,8 @@ class _ReminderDialogState extends State<_ReminderDialog> {
 }
 
 class _ReminderDraft {
-  const _ReminderDraft({required this.time, required this.note, this.syncAlarm = false});
+  const _ReminderDraft(
+      {required this.time, required this.note, this.syncAlarm = false});
   final TimeOfDayValue time;
   final String note;
   final bool syncAlarm;
@@ -638,33 +755,33 @@ class _ReminderDraft {
 
 // ── 工具函数 ──────────────────────────────────────────────────
 IconData _typeIcon(String type) => switch (type) {
-  'meal' => Icons.restaurant_outlined,
-  'exercise' => Icons.directions_run_outlined,
-  'medicine' => Icons.medication_outlined,
-  'weight' => Icons.scale_outlined,
-  'water' => Icons.water_drop_outlined,
-  _ => Icons.check_circle_outline,
-};
+      'meal' => Icons.restaurant_outlined,
+      'exercise' => Icons.directions_run_outlined,
+      'medicine' => Icons.medication_outlined,
+      'weight' => Icons.scale_outlined,
+      'water' => Icons.water_drop_outlined,
+      _ => Icons.check_circle_outline,
+    };
 
 Color _typeColor(String type) => switch (type) {
-  'meal' => Colors.orange,
-  'exercise' => Colors.green,
-  'medicine' => Colors.redAccent,
-  'weight' => AppTheme.deepBlue,
-  'water' => Colors.lightBlue,
-  _ => AppTheme.deepBlue,
-};
+      'meal' => Colors.orange,
+      'exercise' => Colors.green,
+      'medicine' => Colors.redAccent,
+      'weight' => AppTheme.deepBlue,
+      'water' => Colors.lightBlue,
+      _ => AppTheme.deepBlue,
+    };
 
 String _clockTitle(String type) => switch (type) {
-  'meal' => '饮食打卡',
-  'exercise' => '运动打卡',
-  'water' => '饮水打卡',
-  _ => '打卡',
-};
+      'meal' => '饮食打卡',
+      'exercise' => '运动打卡',
+      'water' => '饮水打卡',
+      _ => '打卡',
+    };
 
 String _clockHint(String type) => switch (type) {
-  'meal' => '例如"低盐便当"、"清蒸鱼 + 杂粮饭"',
-  'exercise' => '例如"快走 30 分钟"、"瑜伽 20 分钟"',
-  'water' => '例如"200ml 温水"，或直接空白保存',
-  _ => '可填写备注',
-};
+      'meal' => '例如"低盐便当"、"清蒸鱼 + 杂粮饭"',
+      'exercise' => '例如"快走 30 分钟"、"瑜伽 20 分钟"',
+      'water' => '例如"200ml 温水"，或直接空白保存',
+      _ => '可填写备注',
+    };
