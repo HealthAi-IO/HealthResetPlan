@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../auth/user_session.dart';
 import '../crypto/crypto_service.dart';
@@ -65,6 +68,17 @@ Future<void> setupServiceLocator() async {
 
   // ── 网络相关 ─────────────────────────────────────────────────
   final apiClient = ApiClient();
+  final prefs = await SharedPreferences.getInstance();
+  var deviceId = prefs.getString('client_device_id');
+  if (deviceId == null || deviceId.isEmpty) {
+    deviceId = const Uuid().v4();
+    await prefs.setString('client_device_id', deviceId);
+  }
+  apiClient.setDeviceHeaders(
+    deviceId: deviceId,
+    platform: _platformName(),
+    appVersion: '0.1.0',
+  );
   sl.registerSingleton<ApiClient>(apiClient);
 
   // 启动时若已有 Token，立即注入 ApiClient，让后续 API 调用都带上认证
@@ -92,4 +106,16 @@ Future<void> setupServiceLocator() async {
   sl.registerLazySingleton<ReminderScheduler>(
     () => ReminderScheduler(repository: healthRepository),
   );
+}
+
+String _platformName() {
+  if (kIsWeb) return 'web';
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.android => 'android',
+    TargetPlatform.iOS => 'ios',
+    TargetPlatform.windows => 'windows',
+    TargetPlatform.macOS => 'macos',
+    TargetPlatform.linux => 'linux',
+    TargetPlatform.fuchsia => 'fuchsia',
+  };
 }

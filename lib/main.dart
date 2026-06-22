@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/app_router.dart';
@@ -7,6 +8,8 @@ import 'core/auth/user_session.dart';
 import 'core/data/health_repository.dart';
 import 'core/di/service_locator.dart';
 import 'core/notification/reminder_scheduler.dart';
+
+ThemeMode get _themeMode => kIsWeb ? ThemeMode.light : ThemeMode.system;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,7 +75,7 @@ class _AppLoaderState extends State<_AppLoader> {
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
-        themeMode: ThemeMode.system,
+        themeMode: _themeMode,
         home: Scaffold(
           body: Center(
             child: Padding(
@@ -108,7 +111,7 @@ class _AppLoaderState extends State<_AppLoader> {
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
-        themeMode: ThemeMode.system,
+        themeMode: _themeMode,
         home: Scaffold(
           backgroundColor: const Color(0xFFF5F8FF),
           body: Center(
@@ -172,7 +175,7 @@ class HealthResetPlanApp extends StatelessWidget {
       title: '健康重启计划',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.system,
+      themeMode: _themeMode,
       routerConfig: AppRouter.router,
       debugShowCheckedModeBanner: false,
       supportedLocales: const [

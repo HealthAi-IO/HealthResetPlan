@@ -200,7 +200,8 @@ class _LoginPageState extends State<LoginPage> {
   }
 
 */
-  Future<void> _syncLocalDataAfterLogin(ScaffoldMessengerState messenger) async {
+  Future<void> _syncLocalDataAfterLogin(
+      ScaffoldMessengerState messenger) async {
     try {
       final status =
           await sl<MembershipService>().getStatus(forceRefresh: true);
@@ -213,26 +214,19 @@ class _LoginPageState extends State<LoginPage> {
       if (umk == null) {
         messenger.showSnackBar(
           const SnackBar(
-            content: Text('Login ok. Restore master key before cloud sync.'),
+            content: Text('登录成功。云同步前请先恢复主密钥。'),
           ),
         );
         return;
       }
 
-      final result = await sync.sync().timeout(
-            const Duration(seconds: 8),
-            onTimeout: () => const SyncResult(
-              pushed: 0,
-              pulled: 0,
-              error: 'Cloud sync is still running. Try manual sync later.',
-            ),
-          );
+      final result = await sync.sync();
       if (result.hasError) {
         messenger.showSnackBar(
           SnackBar(
             content: Text(_isKeyRestoreRequired(result.error)
-                ? 'Login ok. Restore master key to read cloud data.'
-                : 'Login ok. Cloud sync can retry later: ${result.error}'),
+                ? '登录成功。请恢复主密钥后读取云端数据。'
+                : '登录成功，云同步失败：${result.error}'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -240,7 +234,7 @@ class _LoginPageState extends State<LoginPage> {
         messenger.showSnackBar(
           SnackBar(
             content: Text(
-              'Login ok. Cloud sync finished: ${result.pushed + result.pulled} items',
+              '登录成功，云同步完成：${result.pushed + result.pulled} 条',
             ),
             backgroundColor: Colors.green,
           ),

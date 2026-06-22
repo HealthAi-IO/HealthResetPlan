@@ -59,6 +59,7 @@ class SyncService {
   final KeyVault keyVault;
   final AppDatabase database;
   final HealthRepository repository;
+  Future<SyncResult>? _activeSync;
 
   static const String _kLastSyncMs = 'sync_last_ms';
   static const String _kSyncEnabled = 'sync_enabled';
@@ -159,7 +160,16 @@ class SyncService {
   Future<String> _keyFingerprintOrEmpty() async =>
       await keyVault.publicFingerprint() ?? '';
 
-  Future<SyncResult> sync() async {
+  Future<SyncResult> sync() {
+    final active = _activeSync;
+    if (active != null) return active;
+
+    final task = _performSync();
+    _activeSync = task;
+    return task.whenComplete(() => _activeSync = null);
+  }
+
+  Future<SyncResult> _performSync() async {
     try {
       return await _runWithRetry(() async {
         final keyFingerprint = await _keyFingerprintOrEmpty();
@@ -273,23 +283,21 @@ class SyncService {
         rowsToMark.add(clientId);
       }
 
-      final resp = await apiClient.dio.post('/sync/push', data: {
-        'deviceId': await _getDeviceId(),
-        'keyFingerprint': await _keyFingerprintOrEmpty(),
-        'items': items,
-      });
-      final data = _responseData(resp.data);
-      final accepted = (data['accepted'] as num?)?.toInt() ?? items.length;
-      totalAccepted += accepted;
+      final batchSize = config.table == 'health_report' ? 1 : 50;
+      for (var start = 0; start < items.length; start += batchSize) {
+        final end = min(start + batchSize, items.length);
+        final batch = items.sublist(start, end);
+        totalAccepted += await _pushItems(batch);
 
-      final now = DateTime.now().millisecondsSinceEpoch;
-      for (final clientId in rowsToMark) {
-        await db.update(
-          config.table,
-          {'is_dirty': 0, 'sync_at': now},
-          where: 'client_id = ?',
-          whereArgs: [clientId],
-        );
+        final now = DateTime.now().millisecondsSinceEpoch;
+        for (final clientId in rowsToMark.sublist(start, end)) {
+          await db.update(
+            config.table,
+            {'is_dirty': 0, 'sync_at': now},
+            where: 'client_id = ?',
+            whereArgs: [clientId],
+          );
+        }
       }
     }
 
@@ -333,26 +341,43 @@ class SyncService {
     }
     if (items.isEmpty) return 0;
 
-    final resp = await apiClient.dio.post('/sync/push', data: {
-      'deviceId': await _getDeviceId(),
-      'keyFingerprint': await _keyFingerprintOrEmpty(),
-      'items': items,
-    });
-    final data = _responseData(resp.data);
-    final accepted = (data['accepted'] as num?)?.toInt() ?? items.length;
-    for (final id in queuedIds) {
-      await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+    var accepted = 0;
+    const batchSize = 50;
+    for (var start = 0; start < items.length; start += batchSize) {
+      final end = min(start + batchSize, items.length);
+      accepted += await _pushItems(items.sublist(start, end));
+      for (final id in queuedIds.sublist(start, end)) {
+        await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+      }
     }
     return accepted;
+  }
+
+  Future<int> _pushItems(List<Map<String, dynamic>> items) async {
+    final resp = await apiClient.dio.post(
+      '/sync/push',
+      data: {
+        'deviceId': await _getDeviceId(),
+        'keyFingerprint': await _keyFingerprintOrEmpty(),
+        'items': items,
+      },
+      options: _syncRequestOptions(),
+    );
+    final data = _responseData(resp.data);
+    return (data['accepted'] as num?)?.toInt() ?? items.length;
   }
 
   Future<int> _pull() async {
     final since = await getLastSyncMs();
     final resp = await apiClient.dio.get(
       '/sync/pull',
-      options: Options(headers: {
-        'X-Key-Fingerprint': await _keyFingerprintOrEmpty(),
-      }),
+      options: Options(
+          headers: {
+            'X-Key-Fingerprint': await _keyFingerprintOrEmpty(),
+          },
+          connectTimeout: const Duration(seconds: 15),
+          sendTimeout: const Duration(seconds: 90),
+          receiveTimeout: const Duration(seconds: 90)),
       queryParameters: {'since': since, 'limit': 500},
     );
 
@@ -446,6 +471,12 @@ class SyncService {
     if (serverTime != null) await _saveLastSyncMs(serverTime);
     return merged;
   }
+
+  Options _syncRequestOptions() => Options(
+        connectTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 90),
+        receiveTimeout: const Duration(seconds: 90),
+      );
 
   Future<Map<String, Object?>> _ensureClientId(
     AppDatabase db,

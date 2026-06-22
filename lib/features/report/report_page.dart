@@ -282,14 +282,7 @@ class _ReportPageState extends State<ReportPage> {
 
       var syncMessage = '';
       if (await _syncService.isSyncEnabled()) {
-        final syncResult = await _syncService.sync().timeout(
-              const Duration(seconds: 10),
-              onTimeout: () => const SyncResult(
-                pushed: 0,
-                pulled: 0,
-                error: 'Cloud sync timeout; delete was saved locally.',
-              ),
-            );
+        final syncResult = await _syncService.sync();
         if (syncResult.hasError) {
           syncMessage = '，云同步失败：${syncResult.error}';
         }
@@ -358,14 +351,7 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _syncAfterReportSave(ScaffoldMessengerState messenger) async {
     try {
-      final syncResult = await _syncService.sync().timeout(
-            const Duration(seconds: 20),
-            onTimeout: () => const SyncResult(
-              pushed: 0,
-              pulled: 0,
-              error: '云同步超时，报告已先保存到本地',
-            ),
-          );
+      final syncResult = await _syncService.sync();
       if (!mounted) return;
       if (syncResult.hasError) {
         messenger.showSnackBar(
