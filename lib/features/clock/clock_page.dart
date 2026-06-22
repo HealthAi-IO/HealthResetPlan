@@ -560,7 +560,7 @@ class _RecordList extends StatelessWidget {
 }
 
 // ── 提醒规则列表 ──────────────────────────────────────────────
-class _ReminderList extends StatelessWidget {
+class _ReminderList extends StatefulWidget {
   const _ReminderList(
       {required this.reminders,
       required this.onDelete,
@@ -570,15 +570,27 @@ class _ReminderList extends StatelessWidget {
   final Future<void> Function(ReminderData) onSyncAlarm;
 
   @override
+  State<_ReminderList> createState() => _ReminderListState();
+}
+
+class _ReminderListState extends State<_ReminderList> {
+  static const _collapsedCount = 4;
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final reminders = widget.reminders;
     if (reminders.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
         child: Text('暂无提醒规则。', style: TextStyle(color: AppTheme.muted)),
       );
     }
+    final visible = _expanded
+        ? reminders
+        : reminders.take(_collapsedCount).toList(growable: false);
     return Column(children: [
-      for (final r in reminders)
+      for (final r in visible)
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Container(
@@ -615,14 +627,21 @@ class _ReminderList extends StatelessWidget {
                   icon: const Icon(Icons.alarm_add_outlined,
                       size: 18, color: AppTheme.deepBlue),
                   tooltip: '同步到手机闹钟',
-                  onPressed: () => onSyncAlarm(r),
+                  onPressed: () => widget.onSyncAlarm(r),
                 ),
               IconButton(
                 icon: const Icon(Icons.close, size: 18, color: AppTheme.muted),
-                onPressed: r.id == null ? null : () => onDelete(r.id!),
+                onPressed: r.id == null ? null : () => widget.onDelete(r.id!),
               ),
             ]),
           ),
+        ),
+      if (reminders.length > _collapsedCount)
+        TextButton.icon(
+          onPressed: () => setState(() => _expanded = !_expanded),
+          icon: Icon(
+              _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
+          label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
         ),
     ]);
   }
@@ -642,9 +661,20 @@ class _Panel extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          colors: [Colors.white, Color(0xFFFDFEFF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.cardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.deepBlue.withValues(alpha: 0.05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title,

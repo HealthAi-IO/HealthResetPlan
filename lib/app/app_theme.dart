@@ -7,7 +7,7 @@ class AppTheme {
   static const Color deepBlue = Color(0xFF0277BD);
   static const Color ink = Color(0xFF172033);
   static const Color muted = Color(0xFF64748B);
-  static const Color pageBg = Color(0xFFF5FAFF);
+  static const Color pageBg = Color(0xFFF4F8FC);
   static const Color cardBorder = Color(0xFFE2EEF8);
 
   static const Color healthGreen = primaryBlue;
@@ -22,6 +22,11 @@ class AppTheme {
         ),
         scaffoldBackgroundColor: pageBg,
         visualDensity: VisualDensity.standard,
+        dividerTheme: DividerThemeData(
+          color: cardBorder.withValues(alpha: 0.75),
+          space: 1,
+          thickness: 1,
+        ),
         appBarTheme: const AppBarTheme(
           centerTitle: false,
           backgroundColor: Colors.white,
@@ -37,27 +42,27 @@ class AppTheme {
         ),
         cardTheme: CardThemeData(
           color: Colors.white,
-          elevation: 0,
+          elevation: 0.5,
           surfaceTintColor: Colors.white,
           margin: EdgeInsets.zero,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(20),
             side: const BorderSide(color: cardBorder),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.white,
+          fillColor: const Color(0xFFFBFDFF),
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             borderSide: const BorderSide(color: cardBorder),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             borderSide: const BorderSide(color: cardBorder),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             borderSide: const BorderSide(color: deepBlue, width: 1.4),
           ),
           contentPadding:
@@ -68,8 +73,9 @@ class AppTheme {
             backgroundColor: deepBlue,
             foregroundColor: Colors.white,
             minimumSize: const Size(44, 44),
+            elevation: 0,
             shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
@@ -77,6 +83,13 @@ class AppTheme {
             foregroundColor: deepBlue,
             minimumSize: const Size(44, 44),
             side: const BorderSide(color: cardBorder),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            foregroundColor: deepBlue,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),

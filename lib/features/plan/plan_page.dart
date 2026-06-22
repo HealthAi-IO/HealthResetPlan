@@ -94,7 +94,8 @@ class _PlanPageState extends State<PlanPage> {
         if (!mounted) return;
         messenger.showSnackBar(
           const SnackBar(
-            content: Text('AI is still generating. A local fallback is ready if needed.'),
+            content: Text(
+                'AI is still generating. A local fallback is ready if needed.'),
           ),
         );
       });
@@ -102,12 +103,14 @@ class _PlanPageState extends State<PlanPage> {
       final indicators = await _repo.loadIndicators(limit: 20);
 
       // 4. 调用 AI
-      final result = await _aiApi.generatePlan(
-        profile: _profile ?? UserProfileData.empty(),
-        recentIndicators: indicators,
-        provider: provider,
-        goal: _profile?.goal ?? 'general',
-      ).timeout(const Duration(seconds: 75));
+      final result = await _aiApi
+          .generatePlan(
+            profile: _profile ?? UserProfileData.empty(),
+            recentIndicators: indicators,
+            provider: provider,
+            goal: _profile?.goal ?? 'general',
+          )
+          .timeout(const Duration(seconds: 75));
 
       if (!mounted) return;
 
@@ -1230,24 +1233,47 @@ class _EmptyState extends StatelessWidget {
 
 // ── AI 方案每日卡片 ───────────────────────────────────────────
 
-class _AiDayCard extends StatelessWidget {
+class _AiDayCard extends StatefulWidget {
   const _AiDayCard({required this.day});
   final Map<String, dynamic> day;
 
   @override
+  State<_AiDayCard> createState() => _AiDayCardState();
+}
+
+class _AiDayCardState extends State<_AiDayCard> {
+  static const _collapsedReminderCount = 3;
+  bool _remindersExpanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final weekDay = day['weekDay'] as String? ?? '';
-    final diet = _asMap(day['diet']);
-    final exercise = _asMap(day['exercise']);
+    final weekDay = widget.day['weekDay'] as String? ?? '';
+    final diet = _asMap(widget.day['diet']);
+    final exercise = _asMap(widget.day['exercise']);
     final reminders =
-        (day['reminders'] as List?)?.map((item) => '$item').toList() ?? [];
+        (widget.day['reminders'] as List?)?.map((item) => '$item').toList() ??
+            [];
+    final visibleReminders = _remindersExpanded
+        ? reminders
+        : reminders.take(_collapsedReminderCount).toList(growable: false);
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          colors: [Colors.white, Color(0xFFFDFEFF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppTheme.cardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.deepBlue.withValues(alpha: 0.04),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1318,7 +1344,7 @@ class _AiDayCard extends StatelessWidget {
             const _SectionRow(
                 Icons.notifications_outlined, '提醒', Colors.orange),
             const SizedBox(height: 6),
-            for (final r in reminders)
+            for (final r in visibleReminders)
               Padding(
                 padding: const EdgeInsets.only(bottom: 3),
                 child: Row(children: [
@@ -1327,6 +1353,20 @@ class _AiDayCard extends StatelessWidget {
                   Expanded(
                       child: Text(r, style: const TextStyle(fontSize: 13))),
                 ]),
+              ),
+            if (reminders.length > _collapsedReminderCount)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () =>
+                      setState(() => _remindersExpanded = !_remindersExpanded),
+                  icon: Icon(_remindersExpanded
+                      ? Icons.keyboard_arrow_up
+                      : Icons.keyboard_arrow_down),
+                  label: Text(_remindersExpanded
+                      ? '收起提醒'
+                      : '展开全部 ${reminders.length} 条'),
+                ),
               ),
           ],
         ],

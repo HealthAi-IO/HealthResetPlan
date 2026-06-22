@@ -894,42 +894,76 @@ class _RecentClockList extends StatelessWidget {
 }
 
 // ── 提醒预览 ──────────────────────────────────────────────────
-class _ReminderPreview extends StatelessWidget {
+class _ReminderPreview extends StatefulWidget {
   const _ReminderPreview({required this.reminders});
   final List<ReminderData> reminders;
 
   @override
+  State<_ReminderPreview> createState() => _ReminderPreviewState();
+}
+
+class _ReminderPreviewState extends State<_ReminderPreview> {
+  static const _collapsedCount = 3;
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final reminders = widget.reminders;
     if (reminders.isEmpty) {
-      return const Text('暂无提醒，在打卡页添加。',
-          style: TextStyle(color: AppTheme.muted, fontSize: 13));
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        decoration: BoxDecoration(
+          color: AppTheme.pageBg,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: const Text('暂无提醒，在打卡页添加。',
+            style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+      );
     }
+    final visible = _expanded
+        ? reminders
+        : reminders.take(_collapsedCount).toList(growable: false);
     return Column(children: [
-      for (final r in reminders.take(5))
+      for (final r in visible)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: Row(children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryBlue.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: const Icon(Icons.notifications_active_outlined,
-                  color: AppTheme.deepBlue, size: 17),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.pageBg,
+              borderRadius: BorderRadius.circular(14),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-                child: Text(r.label,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 13))),
-            Text(r.timeText,
-                style: const TextStyle(
-                    color: AppTheme.deepBlue,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13)),
-          ]),
+            child: Row(children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryBlue.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.notifications_active_outlined,
+                    color: AppTheme.deepBlue, size: 17),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: Text(r.label,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 13))),
+              Text(r.timeText,
+                  style: const TextStyle(
+                      color: AppTheme.deepBlue,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13)),
+            ]),
+          ),
+        ),
+      if (reminders.length > _collapsedCount)
+        TextButton.icon(
+          onPressed: () => setState(() => _expanded = !_expanded),
+          icon: Icon(
+              _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
+          label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
         ),
     ]);
   }
@@ -1076,9 +1110,20 @@ class _Panel extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: const LinearGradient(
+          colors: [Colors.white, Color(0xFFFDFEFF)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.cardBorder),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.deepBlue.withValues(alpha: 0.05),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
