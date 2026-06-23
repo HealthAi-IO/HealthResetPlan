@@ -52,7 +52,7 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     if (!silent) setState(() => _loading = true);
     final cutoff = DateTime.now().subtract(const Duration(days: 3));
-    final results = await Future.wait([
+    final results = await Future.wait<Object?>([
       _repo.loadDashboard(),
       _repo.loadIndicatorsSince(cutoff),
       _membership.getStatus(),
@@ -138,7 +138,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     if (_loading && _data == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const _HomeLoadingView();
     }
     final data = _data;
     final profile = data?.profile;
@@ -167,7 +167,9 @@ class _HomePageState extends State<HomePage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        key: const PageStorageKey('home-scroll'),
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
+        cacheExtent: 900,
         children: [
           // 顶部仪表盘 Hero
           _DashboardHero(
@@ -343,6 +345,42 @@ class _HomePageState extends State<HomePage> {
           }),
           const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+}
+
+class _HomeLoadingView extends StatelessWidget {
+  const _HomeLoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: const [
+        _SkeletonBlock(height: 188),
+        SizedBox(height: 14),
+        _SkeletonBlock(height: 220),
+        SizedBox(height: 14),
+        _SkeletonBlock(height: 130),
+      ],
+    );
+  }
+}
+
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({required this.height});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
       ),
     );
   }

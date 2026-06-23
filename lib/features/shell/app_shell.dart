@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 
-class AppShell extends StatelessWidget {
+class AppShell extends StatefulWidget {
   const AppShell({
     super.key,
     required this.child,
@@ -13,6 +13,74 @@ class AppShell extends StatelessWidget {
 
   final Widget child;
   final String location;
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  final Map<String, Widget> _cachedChildren = <String, Widget>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _cacheCurrentChild();
+  }
+
+  @override
+  void didUpdateWidget(covariant AppShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _cacheCurrentChild();
+  }
+
+  void _cacheCurrentChild() {
+    final activeKey = _cacheKey(widget.location);
+    _cachedChildren[activeKey] = widget.child;
+  }
+
+  String _cacheKey(String location) {
+    for (final tab in _tabs) {
+      if (location == tab.path || location.startsWith('${tab.path}/')) {
+        return tab.path;
+      }
+    }
+    return location;
+  }
+
+  Widget _cachedPageHost() {
+    final activeKey = _cacheKey(widget.location);
+    final entries = _orderedCachedEntries();
+    final activeIndex = entries.indexWhere((entry) => entry.key == activeKey);
+
+    return IndexedStack(
+      index: activeIndex < 0 ? 0 : activeIndex,
+      sizing: StackFit.expand,
+      children: [
+        for (final entry in entries)
+          TickerMode(
+            enabled: entry.key == activeKey,
+            child: RepaintBoundary(
+              child: KeyedSubtree(
+                key: ValueKey(entry.key),
+                child: entry.value,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  List<MapEntry<String, Widget>> _orderedCachedEntries() {
+    final entries = <MapEntry<String, Widget>>[];
+    for (final tab in _tabs) {
+      final child = _cachedChildren[tab.path];
+      if (child != null) entries.add(MapEntry(tab.path, child));
+    }
+    for (final entry in _cachedChildren.entries) {
+      if (!_tabs.any((tab) => tab.path == entry.key)) entries.add(entry);
+    }
+    return entries;
+  }
 
   static const _tabs = [
     _TabItem(
@@ -54,17 +122,22 @@ class AppShell extends StatelessWidget {
 
   int get _index {
     for (var i = 0; i < _tabs.length; i++) {
-      if (location == _tabs[i].path ||
-          location.startsWith('${_tabs[i].path}/')) {
+      if (widget.location == _tabs[i].path ||
+          widget.location.startsWith('${_tabs[i].path}/')) {
         return i;
       }
     }
     return 0;
   }
 
+  void _goTab(BuildContext context, int value) {
+    if (value == _index) return;
+    context.go(_tabs[value].path);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final current = _tabs[_index];
+    final pageHost = _cachedPageHost();
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 960;
@@ -72,7 +145,7 @@ class AppShell extends StatelessWidget {
           backgroundColor: AppTheme.pageBg,
           resizeToAvoidBottomInset: false,
           appBar: AppBar(
-            title: Text(current.title),
+            title: const Text('健康重启计划'),
             actions: [
               IconButton(
                 tooltip: '报告识别',
@@ -133,7 +206,7 @@ class AppShell extends StatelessWidget {
                       NavigationRail(
                         selectedIndex: _index,
                         onDestinationSelected: (value) =>
-                            context.go(_tabs[value].path),
+                            _goTab(context, value),
                         extended: constraints.maxWidth >= 1180,
                         minExtendedWidth: 184,
                         backgroundColor: Colors.white,
@@ -158,17 +231,16 @@ class AppShell extends StatelessWidget {
                         width: 1,
                         color: AppTheme.cardBorder,
                       ),
-                      Expanded(child: child),
+                      Expanded(child: pageHost),
                     ],
                   )
-                : child,
+                : pageHost,
           ),
           bottomNavigationBar: wide
               ? null
               : NavigationBar(
                   selectedIndex: _index,
-                  onDestinationSelected: (value) =>
-                      context.go(_tabs[value].path),
+                  onDestinationSelected: (value) => _goTab(context, value),
                   destinations: [
                     for (final tab in _tabs)
                       NavigationDestination(

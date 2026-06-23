@@ -10,6 +10,17 @@ import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 
+const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
+
+String _withAiDoctorDisclaimer(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return _aiDoctorDisclaimer;
+  if (text.contains('不能代替医生') || text.contains('不代替医生')) {
+    return text;
+  }
+  return '$text\n\n$_aiDoctorDisclaimer';
+}
+
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
 
@@ -346,10 +357,13 @@ class _ChatPageState extends State<ChatPage> {
         if (!mounted) return;
         final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
         if (idx >= 0) {
-          final finalContent = _messages[idx].content;
+          final finalContent = _withAiDoctorDisclaimer(_messages[idx].content);
           // 流结束，标记非 streaming，并把最终内容写库
           setState(() {
-            _messages[idx] = _messages[idx].copyWith(streaming: false);
+            _messages[idx] = _messages[idx].copyWith(
+              content: finalContent,
+              streaming: false,
+            );
             _sending = false;
           });
           await _chatRepo.updateMessageContent(

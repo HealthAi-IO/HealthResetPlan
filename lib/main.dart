@@ -1,15 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/app_router.dart';
 import 'app/app_theme.dart';
 import 'core/auth/user_session.dart';
+import 'core/data/health_models.dart';
 import 'core/data/health_repository.dart';
 import 'core/di/service_locator.dart';
 import 'core/notification/reminder_scheduler.dart';
 
-ThemeMode get _themeMode => kIsWeb ? ThemeMode.light : ThemeMode.system;
+ThemeMode get _themeMode => ThemeMode.light;
+final GlobalKey<ScaffoldMessengerState> _messengerKey =
+    GlobalKey<ScaffoldMessengerState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -166,12 +170,45 @@ class _AppLoaderState extends State<_AppLoader> {
   }
 }
 
-class HealthResetPlanApp extends StatelessWidget {
+class HealthResetPlanApp extends StatefulWidget {
   const HealthResetPlanApp({super.key});
+
+  @override
+  State<HealthResetPlanApp> createState() => _HealthResetPlanAppState();
+}
+
+class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
+  StreamSubscription<ReminderData>? _reminderSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _reminderSubscription =
+        sl<ReminderScheduler>().reminderEvents.listen(_showReminder);
+  }
+
+  @override
+  void dispose() {
+    _reminderSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _showReminder(ReminderData reminder) {
+    final note = reminder.payload['note'] as String? ?? '';
+    final body = note.isNotEmpty ? note : reminder.label;
+    _messengerKey.currentState?.showSnackBar(
+      SnackBar(
+        content: Text(body),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(label: 'OK', onPressed: () {}),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
+      scaffoldMessengerKey: _messengerKey,
       title: '健康重启计划',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,

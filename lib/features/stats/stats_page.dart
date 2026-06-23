@@ -203,11 +203,7 @@ class _StatsPageState extends State<StatsPage> {
         _repo.loadIndicators(type: 'weight', limit: 20),
         _repo.loadIndicators(type: 'bp', limit: 20),
         _repo.loadIndicators(type: 'glucose', limit: 20),
-        _membership.getStatus().then((s) => s),
       ];
-      if (UserSession.instance.isAccountLogin) {
-        futures.add(sl<AuthApi>().fetchAccountInfo());
-      }
       final results = await Future.wait(futures);
       if (!mounted) return;
       setState(() {
@@ -219,10 +215,9 @@ class _StatsPageState extends State<StatsPage> {
             (results[3] as List<HealthIndicatorEntry>).reversed.toList();
         _glucoseEntries =
             (results[4] as List<HealthIndicatorEntry>).reversed.toList();
-        _memberStatus = results[5] as MembershipStatus;
-        _accountInfo = results.length > 6 ? results[6] as AccountInfo? : null;
         _loading = false;
       });
+      _loadAccountState();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -232,9 +227,26 @@ class _StatsPageState extends State<StatsPage> {
     }
   }
 
+  Future<void> _loadAccountState() async {
+    final status = await _membership.getStatus();
+    AccountInfo? accountInfo;
+    if (UserSession.instance.isAccountLogin) {
+      try {
+        accountInfo = await sl<AuthApi>().fetchAccountInfo();
+      } catch (_) {
+        accountInfo = _accountInfo;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _memberStatus = status;
+      _accountInfo = accountInfo;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const _StatsLoadingView();
 
     if (_error != null) {
       return Center(
@@ -266,7 +278,9 @@ class _StatsPageState extends State<StatsPage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        key: const PageStorageKey('stats-scroll'),
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
+        cacheExtent: 900,
         children: [
           _UnifiedProfileCard(
             accountInfo: _accountInfo,
@@ -351,6 +365,42 @@ class _StatsPageState extends State<StatsPage> {
           ),
           const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+}
+
+class _StatsLoadingView extends StatelessWidget {
+  const _StatsLoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: const [
+        _StatsSkeletonBlock(height: 156),
+        SizedBox(height: 14),
+        _StatsSkeletonBlock(height: 96),
+        SizedBox(height: 14),
+        _StatsSkeletonBlock(height: 220),
+      ],
+    );
+  }
+}
+
+class _StatsSkeletonBlock extends StatelessWidget {
+  const _StatsSkeletonBlock({required this.height});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
       ),
     );
   }
@@ -1692,7 +1742,16 @@ class _ClockRateSectionState extends State<_ClockRateSection> {
           ),
       ]),
       const SizedBox(height: 14),
-      _RateBar(rate: rates[_tab], counts: counts[_tab], days: days[_tab]),
+      AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: KeyedSubtree(
+          key: ValueKey(_tab),
+          child: _RateBar(
+              rate: rates[_tab], counts: counts[_tab], days: days[_tab]),
+        ),
+      ),
     ]);
   }
 }

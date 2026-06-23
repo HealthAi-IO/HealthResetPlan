@@ -67,8 +67,7 @@ class _ClockPageState extends State<ClockPage> {
 
   // 用药打卡：done / skip 二选一
   Future<void> _clockMedicine() async {
-    final result = await showDialog<String>(
-      context: context,
+    final result = await _showSmoothDialog<String>(
       builder: (ctx) => AlertDialog(
         title: const Text('用药打卡'),
         content: const Text('请选择本次用药状态：'),
@@ -96,8 +95,7 @@ class _ClockPageState extends State<ClockPage> {
   // 称重打卡：直接录入体重值，联动写入 health_indicator
   Future<void> _clockWeight() async {
     final ctrl = TextEditingController();
-    final result = await showDialog<double>(
-      context: context,
+    final result = await _showSmoothDialog<double>(
       builder: (ctx) => AlertDialog(
         title: const Text('称重打卡'),
         content: TextField(
@@ -158,8 +156,7 @@ class _ClockPageState extends State<ClockPage> {
   }
 
   Future<void> _addReminder(String type) async {
-    final result = await showDialog<_ReminderDraft>(
-      context: context,
+    final result = await _showSmoothDialog<_ReminderDraft>(
       builder: (_) => _ReminderDialog(type: type),
     );
     if (result == null) return;
@@ -179,8 +176,7 @@ class _ClockPageState extends State<ClockPage> {
   Future<String?> _showNoteDialog(
       {required String title, required String hint}) async {
     final ctrl = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
+    final result = await _showSmoothDialog<String>(
       builder: (ctx) => AlertDialog(
         title: Text(title),
         content: TextField(
@@ -202,13 +198,38 @@ class _ClockPageState extends State<ClockPage> {
     return result;
   }
 
+  Future<T?> _showSmoothDialog<T>({required WidgetBuilder builder}) {
+    return showGeneralDialog<T>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      barrierColor: Colors.black.withValues(alpha: 0.22),
+      transitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (context, animation, secondaryAnimation) => builder(context),
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.98, end: 1).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
   void _showSnack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const _ClockLoadingView();
 
     final now = DateTime.now();
     final todayRecords = _records.where((r) {
@@ -223,7 +244,9 @@ class _ClockPageState extends State<ClockPage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        key: const PageStorageKey('clock-scroll'),
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
+        cacheExtent: 900,
         children: [
           // 今日进度卡片
           _TodayProgressCard(done: todayDone, total: todayTotal),
@@ -350,6 +373,42 @@ class _ClockPageState extends State<ClockPage> {
           }),
           const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+}
+
+class _ClockLoadingView extends StatelessWidget {
+  const _ClockLoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: const [
+        _ClockSkeletonBlock(height: 126),
+        SizedBox(height: 14),
+        _ClockSkeletonBlock(height: 182),
+        SizedBox(height: 14),
+        _ClockSkeletonBlock(height: 132),
+      ],
+    );
+  }
+}
+
+class _ClockSkeletonBlock extends StatelessWidget {
+  const _ClockSkeletonBlock({required this.height});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
       ),
     );
   }

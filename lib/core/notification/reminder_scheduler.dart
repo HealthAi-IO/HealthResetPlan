@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -19,10 +21,19 @@ class ReminderScheduler {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  Timer? _windowsReminderTimer;
+  final Set<String> _windowsReminderKeys = <String>{};
+  final StreamController<ReminderData> _windowsReminderController =
+      StreamController<ReminderData>.broadcast();
 
   static const _channelId = 'hrp_reminders';
   static const _channelName = '健康提醒';
   static const _channelDesc = '饮食、运动、用药、称重、饮水定时提醒';
+
+  Stream<ReminderData> get reminderEvents => _windowsReminderController.stream;
+
+  bool get _usesWindowsInAppReminders =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   bool get _supported =>
       !kIsWeb &&
@@ -34,7 +45,13 @@ class ReminderScheduler {
   // ── 初始化 ─────────────────────────────────────────────────
 
   Future<void> initialize() async {
-    if (!_supported || _initialized) return;
+    if (_initialized) return;
+    if (_usesWindowsInAppReminders) {
+      _initialized = true;
+      _startWindowsReminderLoop();
+      return;
+    }
+    if (!_supported) return;
 
     tz.initializeTimeZones();
     final tzInfo = await FlutterTimezone.getLocalTimezone();
@@ -86,7 +103,13 @@ class ReminderScheduler {
 
   /// 取消所有已调度通知，再根据数据库中的提醒规则重新调度。
   Future<void> syncAll() async {
-    if (!_supported || !_initialized) return;
+    if (!_initialized) return;
+    if (_usesWindowsInAppReminders) {
+      _startWindowsReminderLoop();
+      await _checkWindowsReminders();
+      return;
+    }
+    if (!_supported) return;
 
     await _plugin.cancelAll();
 
@@ -154,5 +177,28 @@ class ReminderScheduler {
       ),
       linux: LinuxNotificationDetails(),
     );
+  }
+
+  void _startWindowsReminderLoop() {
+    _windowsReminderTimer ??= Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _checkWindowsReminders(),
+    );
+  }
+
+  Future<void> _checkWindowsReminders() async {
+    final now = DateTime.now();
+    final reminders = await repository.loadReminders();
+    for (final reminder in reminders) {
+      final time = reminder.remindTime;
+      if (time.hour != now.hour || time.minute != now.minute) continue;
+
+      final id = reminder.id?.toString() ??
+          '${reminder.type}-${time.hour}-${time.minute}';
+      final key = '${now.year}-${now.month}-${now.day}-$id';
+      if (!_windowsReminderKeys.add(key)) continue;
+
+      _windowsReminderController.add(reminder);
+    }
   }
 }

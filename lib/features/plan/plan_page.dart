@@ -13,6 +13,8 @@ import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 
+const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
+
 class PlanPage extends StatefulWidget {
   const PlanPage({super.key});
 
@@ -298,6 +300,8 @@ class _PlanPageState extends State<PlanPage> {
                         ]),
                       ),
                     ],
+                    const SizedBox(height: 8),
+                    const _AiDisclaimerCard(),
                   ],
                 ),
               ),
@@ -496,7 +500,7 @@ class _PlanPageState extends State<PlanPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const _PlanLoadingView();
     }
 
     final grouped = _groupPlans();
@@ -507,7 +511,9 @@ class _PlanPageState extends State<PlanPage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        key: const PageStorageKey('plan-scroll'),
         padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
+        cacheExtent: 900,
         children: [
           _PlanHero(
             profile: _profile,
@@ -532,43 +538,55 @@ class _PlanPageState extends State<PlanPage> {
                 _FilterChip(
                   label: '全部',
                   selected: _filter == 'all',
-                  onTap: () => setState(() => _filter = 'all'),
+                  onTap: () => _setFilter('all'),
                 ),
                 _FilterChip(
                   label: '饮食',
                   selected: _filter == 'meal',
-                  onTap: () => setState(() => _filter = 'meal'),
+                  onTap: () => _setFilter('meal'),
                 ),
                 _FilterChip(
                   label: '运动',
                   selected: _filter == 'exercise',
-                  onTap: () => setState(() => _filter = 'exercise'),
+                  onTap: () => _setFilter('exercise'),
                 ),
                 _FilterChip(
                   label: '测量',
                   selected: _filter == 'measurement',
-                  onTap: () => setState(() => _filter = 'measurement'),
+                  onTap: () => _setFilter('measurement'),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-          if (grouped.isEmpty)
-            const _EmptyState(
-              icon: Icons.event_note_outlined,
-              text: '暂无本地计划。点击上方按钮即可生成 7 天饮食与运动计划。',
-            )
-          else
-            ...grouped.entries.map(
-              (entry) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _DayPlanCard(
-                  date: entry.key,
-                  plans: entry.value,
-                  filter: _filter,
-                ),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: KeyedSubtree(
+              key: ValueKey(_filter),
+              child: Column(
+                children: [
+                  if (grouped.isEmpty)
+                    const _EmptyState(
+                      icon: Icons.event_note_outlined,
+                      text: '暂无本地计划。点击上方按钮即可生成 7 天饮食与运动计划。',
+                    )
+                  else
+                    ...grouped.entries.map(
+                      (entry) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _DayPlanCard(
+                          date: entry.key,
+                          plans: entry.value,
+                          filter: _filter,
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
+          ),
           const SizedBox(height: 20),
         ],
       ),
@@ -583,6 +601,47 @@ class _PlanPageState extends State<PlanPage> {
       map.putIfAbsent(key, () => []).add(plan);
     }
     return map;
+  }
+
+  void _setFilter(String value) {
+    if (_filter == value) return;
+    setState(() => _filter = value);
+  }
+}
+
+class _PlanLoadingView extends StatelessWidget {
+  const _PlanLoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: const [
+        _PlanSkeletonBlock(height: 204),
+        SizedBox(height: 16),
+        _PlanSkeletonBlock(height: 132),
+        SizedBox(height: 16),
+        _PlanSkeletonBlock(height: 120),
+      ],
+    );
+  }
+}
+
+class _PlanSkeletonBlock extends StatelessWidget {
+  const _PlanSkeletonBlock({required this.height});
+
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+    );
   }
 }
 
@@ -1227,6 +1286,34 @@ class _EmptyState extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AiDisclaimerCard extends StatelessWidget {
+  const _AiDisclaimerCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0277BD).withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border:
+            Border.all(color: const Color(0xFF0277BD).withValues(alpha: 0.18)),
+      ),
+      child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(Icons.info_outline, size: 14, color: Color(0xFF0277BD)),
+        SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            _aiDoctorDisclaimer,
+            style: TextStyle(fontSize: 12, color: AppTheme.muted, height: 1.4),
+          ),
+        ),
+      ]),
     );
   }
 }

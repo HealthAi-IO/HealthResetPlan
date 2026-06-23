@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 class AppTheme {
   AppTheme._();
 
-  static const Color primaryBlue = Colors.lightBlue;
-  static const Color deepBlue = Color(0xFF0277BD);
-  static const Color ink = Color(0xFF172033);
-  static const Color muted = Color(0xFF64748B);
-  static const Color pageBg = Color(0xFFF4F8FC);
-  static const Color cardBorder = Color(0xFFE2EEF8);
+  static const Color primaryBlue = Color(0xFF0EA5E9);
+  static const Color deepBlue = Color(0xFF075985);
+  static const Color ink = Color(0xFF0F172A);
+  static const Color muted = Color(0xFF475569);
+  static const Color pageBg = Color(0xFFF8FAFC);
+  static const Color cardBorder = Color(0xFFCBD5E1);
 
   static const Color healthGreen = primaryBlue;
   static const Color techBlue = deepBlue;
@@ -21,9 +21,22 @@ class AppTheme {
           brightness: Brightness.light,
         ),
         scaffoldBackgroundColor: pageBg,
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+            TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+          },
+        ),
+        textTheme: ThemeData.light().textTheme.apply(
+              bodyColor: ink,
+              displayColor: ink,
+            ),
         visualDensity: VisualDensity.standard,
         dividerTheme: DividerThemeData(
-          color: cardBorder.withValues(alpha: 0.75),
+          color: cardBorder,
           space: 1,
           thickness: 1,
         ),
@@ -96,7 +109,7 @@ class AppTheme {
         ),
         navigationBarTheme: NavigationBarThemeData(
           backgroundColor: Colors.white,
-          indicatorColor: primaryBlue.withValues(alpha: 0.16),
+          indicatorColor: primaryBlue.withValues(alpha: 0.18),
           labelTextStyle: WidgetStateProperty.resolveWith(
             (states) => TextStyle(
               fontSize: 12,

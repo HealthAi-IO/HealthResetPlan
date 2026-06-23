@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -14,6 +16,17 @@ import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
 import '../../core/storage/report_image_storage.dart';
 import '../../core/sync/sync_service.dart';
+
+const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常结果、不适症状或用药调整需求，请及时咨询医生。';
+
+String _withAiDoctorDisclaimer(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return 'AI 已根据报告内容生成初步分析建议。$_aiDoctorDisclaimer';
+  if (text.contains('不能代替医生') || text.contains('不代替医生')) {
+    return text;
+  }
+  return '$text $_aiDoctorDisclaimer';
+}
 
 class _OcrIndicator {
   const _OcrIndicator({
@@ -56,6 +69,7 @@ class _OcrResult {
     required this.reportDate,
     required this.indicators,
     required this.summary,
+    required this.analysisAdvice,
     required this.rawText,
     required this.provider,
   });
@@ -63,22 +77,26 @@ class _OcrResult {
   final String? reportDate;
   final List<_OcrIndicator> indicators;
   final String summary;
+  final String analysisAdvice;
   final String rawText;
   final String provider;
 
   factory _OcrResult.fromJson(Map<String, dynamic> json) {
-    final indicators = (json['indicators'] as List? ?? const [])
+    final normalized = _normalizeOcrJson(json);
+    final indicatorItems = normalized['indicators'];
+    final indicators = (indicatorItems is List ? indicatorItems : const [])
         .whereType<Map>()
         .map((item) => _OcrIndicator.fromJson(Map<String, dynamic>.from(item)))
         .where((item) => item.name.trim().isNotEmpty)
         .toList();
 
     return _OcrResult(
-      reportDate: json['reportDate'] as String?,
+      reportDate: normalized['reportDate'] as String?,
       indicators: indicators,
-      summary: json['summary'] as String? ?? '',
-      rawText: json['rawText'] as String? ?? '',
-      provider: json['provider'] as String? ?? 'vision',
+      summary: normalized['summary'] as String? ?? '',
+      analysisAdvice: normalized['analysisAdvice'] as String? ?? '',
+      rawText: _displayRawText(normalized),
+      provider: normalized['provider'] as String? ?? 'vision',
     );
   }
 
@@ -86,9 +104,53 @@ class _OcrResult {
         'reportDate': reportDate,
         'indicators': indicators.map((item) => item.toJson()).toList(),
         'summary': summary,
+        'analysisAdvice': _withAiDoctorDisclaimer(analysisAdvice),
         'rawText': rawText,
         'provider': provider,
       };
+}
+
+Map<String, dynamic> _normalizeOcrJson(Map<String, dynamic> json) {
+  final rawText = json['rawText'];
+  final indicators = json['indicators'];
+  if ((indicators is List && indicators.isNotEmpty) || rawText is! String) {
+    return json;
+  }
+
+  final parsed = _tryDecodeJsonObject(rawText);
+  if (parsed == null) return json;
+
+  return {
+    ...parsed,
+    if (json['provider'] != null) 'provider': json['provider'],
+  };
+}
+
+Map<String, dynamic>? _tryDecodeJsonObject(String value) {
+  var text = value.trim();
+  if (text.startsWith('```')) {
+    final start = text.indexOf('\n');
+    final end = text.lastIndexOf('```');
+    if (start > 0 && end > start) text = text.substring(start + 1, end).trim();
+  }
+  final first = text.indexOf('{');
+  final last = text.lastIndexOf('}');
+  if (first < 0 || last <= first) return null;
+
+  try {
+    final decoded = jsonDecode(text.substring(first, last + 1));
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) {
+      return decoded.map((key, value) => MapEntry('$key', value));
+    }
+  } catch (_) {}
+  return null;
+}
+
+String _displayRawText(Map<String, dynamic> json) {
+  final rawText = json['rawText'] as String? ?? '';
+  if (_tryDecodeJsonObject(rawText) != null) return '';
+  return rawText;
 }
 
 class ReportPage extends StatefulWidget {
@@ -631,7 +693,8 @@ class _ReportPageState extends State<ReportPage> {
               saving: _saving,
               analyzeStage: _analyzeStage,
               onPickGallery: () => _pickImage(ImageSource.gallery),
-              onPickCamera: () => _pickImage(ImageSource.camera),
+              onPickCamera:
+                  _canUseCamera ? () => _pickImage(ImageSource.camera) : null,
             ),
             if (_ocrResult != null) ...[
               const SizedBox(height: 16),
@@ -669,7 +732,7 @@ class _PickCard extends StatelessWidget {
   final bool saving;
   final String analyzeStage;
   final VoidCallback onPickGallery;
-  final VoidCallback onPickCamera;
+  final VoidCallback? onPickCamera;
 
   @override
   Widget build(BuildContext context) {
@@ -722,11 +785,12 @@ class _PickCard extends StatelessWidget {
               icon: const Icon(Icons.photo_library_outlined, size: 16),
               label: const Text('从相册选择'),
             ),
-            OutlinedButton.icon(
-              onPressed: onPickCamera,
-              icon: const Icon(Icons.camera_alt_outlined, size: 16),
-              label: const Text('拍照'),
-            ),
+            if (onPickCamera != null)
+              OutlinedButton.icon(
+                onPressed: onPickCamera,
+                icon: const Icon(Icons.camera_alt_outlined, size: 16),
+                label: const Text('拍照'),
+              ),
           ]),
         if (pickedImage != null) ...[
           const SizedBox(height: 10),
@@ -754,6 +818,11 @@ class _PickCard extends StatelessWidget {
     );
   }
 }
+
+bool get _canUseCamera =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS);
 
 class _StatusRow extends StatelessWidget {
   const _StatusRow({required this.text, required this.color});
@@ -811,7 +880,66 @@ class _OcrSummaryCard extends StatelessWidget {
           Text(result.summary,
               style: const TextStyle(fontSize: 13, color: AppTheme.muted)),
         ],
+        const SizedBox(height: 10),
+        _AiAdviceCard(text: _withAiDoctorDisclaimer(result.analysisAdvice)),
       ]),
+    );
+  }
+}
+
+class _AiAdviceCard extends StatelessWidget {
+  const _AiAdviceCard({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0277BD).withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border:
+            Border.all(color: const Color(0xFF0277BD).withValues(alpha: 0.18)),
+      ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Icon(Icons.psychology_outlined,
+            size: 16, color: Color(0xFF0277BD)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.45,
+              color: AppTheme.muted,
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ReportContentCard extends StatelessWidget {
+  const _ReportContentCard({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.pageBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: AppTheme.muted, height: 1.45),
+      ),
     );
   }
 }
@@ -874,6 +1002,7 @@ class _OcrReviewSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final byCategory = <String, List<_OcrIndicator>>{};
+    final rawText = result.rawText.trim();
     for (final indicator in result.indicators) {
       (byCategory[indicator.category.isEmpty ? '其他' : indicator.category] ??=
               [])
@@ -927,13 +1056,19 @@ class _OcrReviewSheet extends StatelessWidget {
             shrinkWrap: true,
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
             children: [
-              if (result.indicators.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Text('未识别到具体指标，请手动录入。',
-                      style: TextStyle(color: AppTheme.muted)),
-                )
-              else
+              _AiAdviceCard(
+                  text: _withAiDoctorDisclaimer(result.analysisAdvice)),
+              const SizedBox(height: 14),
+              if (result.indicators.isEmpty) ...[
+                const Text(
+                  '报告内容',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                _ReportContentCard(
+                  text: rawText.isNotEmpty ? rawText : '未识别到具体指标，请人工核对报告图片。',
+                ),
+              ] else
                 for (final entry in byCategory.entries) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 12, bottom: 6),
@@ -1029,13 +1164,17 @@ class _ReportDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final result = _OcrResult.fromJson(record.structured);
+    final structured = Map<String, dynamic>.from(record.structured);
+    if ((structured['rawText'] as String? ?? '').trim().isEmpty &&
+        record.rawText.trim().isNotEmpty) {
+      structured['rawText'] = record.rawText;
+    }
+    final result = _OcrResult.fromJson(structured);
     final summary = record.summary.trim().isNotEmpty
         ? record.summary.trim()
         : result.summary.trim();
-    final rawText = record.rawText.trim().isNotEmpty
-        ? record.rawText.trim()
-        : result.rawText.trim();
+    final rawText = result.rawText.trim();
+    final analysisAdvice = _withAiDoctorDisclaimer(result.analysisAdvice);
     final imageFile = reportImageProvider(record.imagePath);
     final imageHeight =
         (MediaQuery.sizeOf(context).height * 0.38).clamp(240.0, 380.0);
@@ -1149,6 +1288,8 @@ class _ReportDetailSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
               ],
+              _AiAdviceCard(text: analysisAdvice),
+              const SizedBox(height: 14),
               Row(children: [
                 const Expanded(
                   child: Text(
@@ -1162,12 +1303,12 @@ class _ReportDetailSheet extends StatelessWidget {
                 ),
               ]),
               const SizedBox(height: 8),
-              if (result.indicators.isEmpty)
-                const Text(
-                  '这份报告未识别到具体指标。',
-                  style: TextStyle(color: AppTheme.muted),
-                )
-              else
+              if (result.indicators.isEmpty) ...[
+                _ReportContentCard(
+                  text:
+                      rawText.isNotEmpty ? rawText : '这份报告未识别到具体指标，请人工核对报告原图。',
+                ),
+              ] else
                 for (final entry in byCategory.entries) ...[
                   Padding(
                     padding: const EdgeInsets.only(top: 12, bottom: 6),
