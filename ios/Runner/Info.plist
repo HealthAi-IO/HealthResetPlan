@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>健康重启计划</string>
+	<string>&#20581;&#24247;&#37325;&#21551;&#35745;&#21010;</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>健康重启计划</string>
+	<string>&#20581;&#24247;&#37325;&#21551;&#35745;&#21010;</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -46,8 +46,8 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄体检或检验报告并进行健康指标识别</string>
+	<string>Used to photograph health reports for indicator recognition.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于选择体检或检验报告图片并进行健康指标识别</string>
+	<string>Used to select health report images and upload account avatars.</string>
 </dict>
 </plist>

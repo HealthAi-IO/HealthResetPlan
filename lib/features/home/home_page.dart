@@ -55,16 +55,23 @@ class _HomePageState extends State<HomePage> {
     final results = await Future.wait<Object?>([
       _repo.loadDashboard(),
       _repo.loadIndicatorsSince(cutoff),
-      _membership.getStatus(),
     ]);
     if (!mounted) return;
     setState(() {
       _data = results[0] as HealthDashboardData;
       _recentIndicators = results[1] as List<HealthIndicatorEntry>;
-      _memberStatus = results[2] as MembershipStatus;
       _loading = false;
     });
     _maybeShowNextPrompt(results[0] as HealthDashboardData);
+    _loadMembershipStatus();
+  }
+
+  Future<void> _loadMembershipStatus() async {
+    final status = await _membership.getStatus().catchError(
+      (_) => _memberStatus,
+    );
+    if (!mounted) return;
+    setState(() => _memberStatus = status);
   }
 
   Future<void> _maybeShowNextPrompt(HealthDashboardData data) async {

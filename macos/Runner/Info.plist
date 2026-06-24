@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>&#20581;&#24247;&#37325;&#21551;&#35745;&#21010;</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -29,8 +31,8 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄体检或检验报告并进行健康指标识别</string>
+	<string>Used to photograph health reports for indicator recognition.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于选择体检或检验报告图片并进行健康指标识别</string>
+	<string>Used to select health report images and upload account avatars.</string>
 </dict>
 </plist>

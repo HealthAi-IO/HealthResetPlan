@@ -19,69 +19,6 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  final Map<String, Widget> _cachedChildren = <String, Widget>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _cacheCurrentChild();
-  }
-
-  @override
-  void didUpdateWidget(covariant AppShell oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _cacheCurrentChild();
-  }
-
-  void _cacheCurrentChild() {
-    final activeKey = _cacheKey(widget.location);
-    _cachedChildren[activeKey] = widget.child;
-  }
-
-  String _cacheKey(String location) {
-    for (final tab in _tabs) {
-      if (location == tab.path || location.startsWith('${tab.path}/')) {
-        return tab.path;
-      }
-    }
-    return location;
-  }
-
-  Widget _cachedPageHost() {
-    final activeKey = _cacheKey(widget.location);
-    final entries = _orderedCachedEntries();
-    final activeIndex = entries.indexWhere((entry) => entry.key == activeKey);
-
-    return IndexedStack(
-      index: activeIndex < 0 ? 0 : activeIndex,
-      sizing: StackFit.expand,
-      children: [
-        for (final entry in entries)
-          TickerMode(
-            enabled: entry.key == activeKey,
-            child: RepaintBoundary(
-              child: KeyedSubtree(
-                key: ValueKey(entry.key),
-                child: entry.value,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  List<MapEntry<String, Widget>> _orderedCachedEntries() {
-    final entries = <MapEntry<String, Widget>>[];
-    for (final tab in _tabs) {
-      final child = _cachedChildren[tab.path];
-      if (child != null) entries.add(MapEntry(tab.path, child));
-    }
-    for (final entry in _cachedChildren.entries) {
-      if (!_tabs.any((tab) => tab.path == entry.key)) entries.add(entry);
-    }
-    return entries;
-  }
-
   static const _tabs = [
     _TabItem(
       label: '首页',
@@ -137,7 +74,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final pageHost = _cachedPageHost();
+    final pageHost = RepaintBoundary(child: widget.child);
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 960;

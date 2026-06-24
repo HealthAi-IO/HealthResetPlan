@@ -91,7 +91,7 @@ class _MembershipPageState extends State<MembershipPage> {
                   final wide = c.maxWidth >= 600;
                   final monthly = _PlanCard(
                     title: '月度会员',
-                    price: '¥18',
+                    price: '¥2.8',
                     unit: '/ 月',
                     subPrice: '',
                     isRecommended: false,
@@ -104,14 +104,14 @@ class _MembershipPageState extends State<MembershipPage> {
                       planCode: 'monthly',
                       planName: '月度会员',
                       days: 31,
-                      priceLabel: '¥18 / 月',
+                      priceLabel: '¥2.8 / 月',
                     ),
                   );
                   final yearly = _PlanCard(
                     title: '年度会员',
-                    price: '¥98',
+                    price: '¥28',
                     unit: '/ 年',
-                    subPrice: '≈ ¥8.2 / 月，省 ¥118',
+                    subPrice: '≈ ¥2.3 / 月',
                     isRecommended: true,
                     features: const [
                       '加密云同步',
@@ -123,7 +123,7 @@ class _MembershipPageState extends State<MembershipPage> {
                       planCode: 'yearly',
                       planName: '年度会员',
                       days: 366,
-                      priceLabel: '¥98 / 年',
+                      priceLabel: '¥28 / 年',
                     ),
                   );
                   if (wide) {

@@ -201,7 +201,7 @@ class _PaywallSheet extends StatelessWidget {
             Expanded(
               child: _MiniPlanCard(
                 title: '月度会员',
-                price: '¥18',
+                price: '¥2.8',
                 unit: '/月',
                 isRecommended: false,
               ),
@@ -210,7 +210,7 @@ class _PaywallSheet extends StatelessWidget {
             Expanded(
               child: _MiniPlanCard(
                 title: '年度会员',
-                price: '¥98',
+                price: '¥28',
                 unit: '/年',
                 isRecommended: true,
               ),
