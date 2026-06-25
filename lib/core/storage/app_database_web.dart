@@ -241,21 +241,37 @@ class _WebAppDatabase extends AppDatabase {
     final clauses = where.split(RegExp(r'\s+AND\s+', caseSensitive: false));
     var argIndex = 0;
     for (final clause in clauses) {
-      final match =
-          RegExp(r'^\s*([a-zA-Z0-9_]+)\s*=\s*\?\s*$').firstMatch(clause);
-      if (match == null) {
-        return false;
-      }
-      if (args == null || argIndex >= args.length) {
+      final match = RegExp(r'^\s*([a-zA-Z0-9_]+)\s*(>=|<=|!=|>|<|=)\s*\?\s*$')
+          .firstMatch(clause);
+      if (match == null || args == null || argIndex >= args.length) {
         return false;
       }
       final column = match.group(1)!;
+      final op = match.group(2)!;
       final expected = args[argIndex++];
-      if (!_valueEquals(row[column], expected)) {
+      if (!_applyOp(row[column], op, expected)) {
         return false;
       }
     }
     return true;
+  }
+
+  bool _applyOp(Object? rowValue, String op, Object? expected) {
+    if (op == '=') return _valueEquals(rowValue, expected);
+    if (op == '!=') return !_valueEquals(rowValue, expected);
+    final comparison = _compareValues(rowValue, expected);
+    switch (op) {
+      case '>=':
+        return comparison >= 0;
+      case '<=':
+        return comparison <= 0;
+      case '>':
+        return comparison > 0;
+      case '<':
+        return comparison < 0;
+      default:
+        return false;
+    }
   }
 
   List<Map<String, Object?>> _sortRows(

@@ -432,6 +432,7 @@ class _UnifiedProfileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = this.profile;
     final isLoggedIn = UserSession.instance.isAccountLogin;
     final displayName = (profile?.nickname.isNotEmpty == true)
         ? profile!.nickname
@@ -690,6 +691,7 @@ class _CombinedProfileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = this.profile;
     final isLoggedIn = UserSession.instance.isAccountLogin;
     final displayName = (profile?.nickname.isNotEmpty == true)
         ? profile!.nickname
@@ -1021,6 +1023,7 @@ class _AccountStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = this.profile;
     final isLoggedIn = UserSession.instance.isAccountLogin;
     final displayName = (profile?.nickname.isNotEmpty == true)
         ? profile!.nickname
@@ -1033,7 +1036,9 @@ class _AccountStatusCard extends StatelessWidget {
             : '免费版';
     final ageText = profile?.age == 0 ? '--' : '${profile?.age ?? '--'} 岁';
     final bmiText =
-        profile?.bmi == 0 ? 'BMI --' : 'BMI ${profile!.bmi.toStringAsFixed(1)}';
+        (profile == null || profile.bmi == 0)
+            ? 'BMI --'
+            : 'BMI ${profile.bmi.toStringAsFixed(1)}';
     final gradient = memberStatus.isActive
         ? const LinearGradient(
             colors: [Color(0xFF0277BD), Color(0xFF0288D1)],
@@ -1536,12 +1541,13 @@ class _UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = this.profile;
     final name = (profile?.nickname.isNotEmpty == true)
         ? profile!.nickname
         : UserSession.instance.name;
     final bmi = profile?.bmi ?? 0;
-    final age = profile?.birthYear != null && profile!.birthYear > 0
-        ? '${DateTime.now().year - profile!.birthYear} 岁'
+    final age = (profile != null && profile.birthYear > 0)
+        ? '${DateTime.now().year - profile.birthYear} 岁'
         : '';
 
     return Container(

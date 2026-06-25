@@ -12,10 +12,17 @@ class AppTheme {
 
   static const Color healthGreen = primaryBlue;
   static const Color techBlue = deepBlue;
+  static const List<String> fontFamilyFallback = [
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Noto Sans SC',
+    'Roboto',
+  ];
 
   static ThemeData get light => ThemeData(
         useMaterial3: true,
-        fontFamily: 'Arial',
+        fontFamilyFallback: fontFamilyFallback,
         colorScheme: ColorScheme.fromSeed(
           seedColor: primaryBlue,
           brightness: Brightness.light,
@@ -124,7 +131,7 @@ class AppTheme {
 
   static ThemeData get dark => ThemeData(
         useMaterial3: true,
-        fontFamily: 'Arial',
+        fontFamilyFallback: fontFamilyFallback,
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
           seedColor: healthGreen,
