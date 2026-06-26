@@ -138,9 +138,15 @@ class _LoginPageState extends State<LoginPage> {
       unawaited(_syncLocalDataAfterLogin(messenger));
     } catch (e) {
       if (!mounted) return;
+      final message = friendlyAuthError(e);
+      if (_registerMode && _isAccountAlreadyRegistered(message)) {
+        setState(() => _saving = false);
+        await _showAccountAlreadyRegisteredDialog(identifier);
+        return;
+      }
       setState(() {
         _saving = false;
-        _error = friendlyAuthError(e);
+        _error = message;
       });
     }
   }
@@ -148,6 +154,36 @@ class _LoginPageState extends State<LoginPage> {
   String _normalizeIdentifier(String raw) {
     final value = raw.trim();
     return value.contains('@') ? value.toLowerCase() : value;
+  }
+
+  bool _isAccountAlreadyRegistered(String message) {
+    return message.contains('已注册') || message.contains('娉ㄥ唽');
+  }
+
+  Future<void> _showAccountAlreadyRegisteredDialog(String identifier) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('手机号已注册'),
+        content: Text('$identifier 已经注册过了，不能再重复注册。请直接登录或使用忘记密码找回账号。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('我知道了'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              setState(() {
+                _registerMode = false;
+                _error = null;
+              });
+            },
+            child: const Text('去登录'),
+          ),
+        ],
+      ),
+    );
   }
 
 /*
@@ -501,12 +537,8 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     super.dispose();
   }
 
-  String get _credType =>
-      _normalizeIdentifier(_accountCtrl.text).contains('@') ? 'email' : 'phone';
-
   String _normalizeIdentifier(String raw) {
-    final value = raw.trim();
-    return value.contains('@') ? value.toLowerCase() : value;
+    return raw.trim().replaceAll(RegExp(r'\D'), '');
   }
 
   Future<void> _sendCode() async {
@@ -521,7 +553,7 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     });
     try {
       final result = await sl<AuthApi>().sendPasswordResetCode(
-        credType: _credType,
+        credType: 'phone',
         identifier: identifier,
       );
       if (!mounted) return;
@@ -555,7 +587,7 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     });
     try {
       await sl<AuthApi>().resetPassword(
-        credType: _credType,
+        credType: 'phone',
         identifier: identifier,
         code: code,
         newPassword: password,
@@ -579,9 +611,10 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
             controller: _accountCtrl,
+            keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
-              labelText: '手机号或邮箱',
-              prefixIcon: Icon(Icons.alternate_email),
+              labelText: '手机号',
+              prefixIcon: Icon(Icons.phone_iphone_outlined),
             ),
           ),
           const SizedBox(height: 10),
