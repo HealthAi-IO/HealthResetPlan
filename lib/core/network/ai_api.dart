@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../data/health_models.dart';
 import 'api_client.dart';
@@ -65,6 +66,31 @@ class AiApi {
       provider: data['provider'] as String? ?? apiProvider ?? 'oneapi',
       content: data['content'] as String? ?? '',
     );
+  }
+
+  Future<AiVisionResult> analyzeVision({
+    required XFile image,
+    required String type,
+  }) async {
+    final bytes = await image.readAsBytes();
+    final resp = await _client.dio.post(
+      '/ai/vision/analyze',
+      data: FormData.fromMap({
+        'type': type,
+        'file': MultipartFile.fromBytes(
+          bytes,
+          filename: image.name,
+          contentType: DioMediaType.parse(_mimeType(image.name)),
+        ),
+      }),
+      options: Options(
+        contentType: 'multipart/form-data',
+        connectTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 45),
+        receiveTimeout: const Duration(minutes: 2),
+      ),
+    );
+    return AiVisionResult.fromJson(_unwrapData(resp.data));
   }
 
   Future<void> streamChat({
@@ -276,6 +302,14 @@ class AiApi {
     return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
   }
 
+  String _mimeType(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    return 'image/jpeg';
+  }
+
   Map<String, dynamic> _buildPlanRequest({
     required UserProfileData profile,
     required List<HealthIndicatorEntry> indicators,
@@ -345,4 +379,91 @@ class AiChatReply {
 
   final String provider;
   final String content;
+}
+
+class AiVisionResult {
+  const AiVisionResult({
+    required this.type,
+    required this.summary,
+    required this.skinType,
+    required this.skinTone,
+    required this.healthScore,
+    required this.dimensions,
+    required this.observations,
+    required this.careRoutine,
+    required this.advice,
+    required this.riskLevel,
+    required this.provider,
+    required this.rawText,
+  });
+
+  final String type;
+  final String summary;
+  final String skinType;
+  final String skinTone;
+  final int? healthScore;
+  final List<AiVisionDimension> dimensions;
+  final List<String> observations;
+  final List<String> careRoutine;
+  final String advice;
+  final String riskLevel;
+  final String provider;
+  final String rawText;
+
+  factory AiVisionResult.fromJson(Map<String, dynamic> json) {
+    final rawObservations = json['observations'];
+    final rawCareRoutine = json['careRoutine'];
+    final rawDimensions = json['dimensions'];
+    return AiVisionResult(
+      type: json['type'] as String? ?? '',
+      summary: json['summary'] as String? ?? '已完成 AI 图像分析',
+      skinType: json['skinType'] as String? ?? '',
+      skinTone: json['skinTone'] as String? ?? '',
+      healthScore: (json['healthScore'] as num?)?.toInt(),
+      dimensions: rawDimensions is List
+          ? rawDimensions
+              .whereType<Map>()
+              .map((item) => AiVisionDimension.fromJson(
+                    Map<String, dynamic>.from(item),
+                  ))
+              .toList()
+          : const [],
+      observations: rawObservations is List
+          ? rawObservations.map((item) => item.toString()).toList()
+          : const [],
+      careRoutine: rawCareRoutine is List
+          ? rawCareRoutine.map((item) => item.toString()).toList()
+          : const [],
+      advice: json['advice'] as String? ?? '',
+      riskLevel: json['riskLevel'] as String? ?? 'low',
+      provider: json['provider'] as String? ?? '',
+      rawText: json['rawText'] as String? ?? '',
+    );
+  }
+}
+
+class AiVisionDimension {
+  const AiVisionDimension({
+    required this.name,
+    required this.score,
+    required this.status,
+    required this.detail,
+    required this.suggestion,
+  });
+
+  final String name;
+  final int? score;
+  final String status;
+  final String detail;
+  final String suggestion;
+
+  factory AiVisionDimension.fromJson(Map<String, dynamic> json) {
+    return AiVisionDimension(
+      name: json['name'] as String? ?? '',
+      score: (json['score'] as num?)?.toInt(),
+      status: json['status'] as String? ?? '',
+      detail: json['detail'] as String? ?? '',
+      suggestion: json['suggestion'] as String? ?? '',
+    );
+  }
 }

@@ -42,6 +42,9 @@ dependencies:
 
   # 图片选择（相机 / 相册）
   image_picker: ^1.1.2
+  file_picker: ^8.3.7
+  geolocator: ^13.0.2
+  geocoding: ^3.0.0
 
   # UI / 工具
   intl: ^0.20.2

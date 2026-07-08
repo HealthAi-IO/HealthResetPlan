@@ -24,6 +24,7 @@ class _ClockPageState extends State<ClockPage> {
   bool _loading = true;
   List<ClockRecordData> _records = const [];
   List<ReminderData> _reminders = const [];
+  List<PlanRecordData> _plans = const [];
 
   @override
   void initState() {
@@ -45,10 +46,12 @@ class _ClockPageState extends State<ClockPage> {
     if (!silent) setState(() => _loading = true);
     final records = await _repo.loadClockRecords(limit: 60);
     final reminders = await _repo.loadReminders();
+    final plans = await _repo.loadPlans(limit: 40);
     if (!mounted) return;
     setState(() {
       _records = records;
       _reminders = reminders;
+      _plans = plans.where((p) => p.type != 'risk').toList(growable: false);
       _loading = false;
     });
   }
@@ -227,6 +230,32 @@ class _ClockPageState extends State<ClockPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  List<_ClockTarget> _buildTodayTargets(DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final targets = <String, _ClockTarget>{};
+
+    for (final plan in _plans) {
+      final planDay = DateTime(plan.date.year, plan.date.month, plan.date.day);
+      if (planDay != today) continue;
+      final target = _targetFromPlan(plan.type);
+      if (target != null) targets.putIfAbsent(target.type, () => target);
+    }
+
+    for (final reminder in _reminders) {
+      final target = _ClockTarget(type: reminder.type);
+      targets.putIfAbsent(target.type, () => target);
+    }
+
+    const order = ['meal', 'exercise', 'medicine', 'weight', 'water'];
+    return targets.values.toList(growable: false)
+      ..sort((a, b) {
+        final ai = order.indexOf(a.type);
+        final bi = order.indexOf(b.type);
+        return (ai == -1 ? order.length : ai)
+            .compareTo(bi == -1 ? order.length : bi);
+      });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const _ClockLoadingView();
@@ -237,8 +266,14 @@ class _ClockPageState extends State<ClockPage> {
       return t.year == now.year && t.month == now.month && t.day == now.day;
     }).toList();
 
-    final todayDone = todayRecords.where((r) => r.status == 'done').length;
-    final todayTotal = todayRecords.length;
+    final todayTargets = _buildTodayTargets(now);
+    final doneTypes = todayRecords
+        .where((r) => r.status == 'done')
+        .map((r) => r.type)
+        .toSet();
+    final todayDone =
+        todayTargets.where((target) => doneTypes.contains(target.type)).length;
+    final todayTotal = todayTargets.length;
     final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
     return RefreshIndicator(
@@ -335,7 +370,8 @@ class _ClockPageState extends State<ClockPage> {
             final wide = constraints.maxWidth >= 960;
             final recentPanel = _Panel(
               title: '今日打卡记录',
-              subtitle: '${DateFormat('MM月dd日').format(now)} · 共 $todayTotal 条',
+              subtitle:
+                  '${DateFormat('MM月dd日').format(now)} · 共 ${todayRecords.length} 条',
               child: _RecordList(
                   records: todayRecords.isEmpty
                       ? _records.take(8).toList()
@@ -394,6 +430,21 @@ class _ClockLoadingView extends StatelessWidget {
       ],
     );
   }
+}
+
+class _ClockTarget {
+  const _ClockTarget({required this.type});
+
+  final String type;
+}
+
+_ClockTarget? _targetFromPlan(String type) {
+  return switch (type) {
+    'meal' => const _ClockTarget(type: 'meal'),
+    'exercise' => const _ClockTarget(type: 'exercise'),
+    'measurement' => const _ClockTarget(type: 'weight'),
+    _ => null,
+  };
 }
 
 class _ClockSkeletonBlock extends StatelessWidget {

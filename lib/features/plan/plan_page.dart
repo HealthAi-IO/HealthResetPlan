@@ -12,6 +12,7 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
+import '../weather/weather_compact_card.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
 
@@ -524,6 +525,8 @@ class _PlanPageState extends State<PlanPage> {
             aiGenerating: _aiGenerating,
           ),
           const SizedBox(height: 16),
+          const WeatherCompactCard(),
+          const SizedBox(height: 16),
           if (_riskPlan != null) ...[
             _RiskCard(plan: _riskPlan!),
             const SizedBox(height: 16),
@@ -559,33 +562,25 @@ class _PlanPageState extends State<PlanPage> {
             ),
           ),
           const SizedBox(height: 16),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: KeyedSubtree(
-              key: ValueKey(_filter),
-              child: Column(
-                children: [
-                  if (grouped.isEmpty)
-                    const _EmptyState(
-                      icon: Icons.event_note_outlined,
-                      text: '暂无本地计划。点击上方按钮即可生成 7 天饮食与运动计划。',
-                    )
-                  else
-                    ...grouped.entries.map(
-                      (entry) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _DayPlanCard(
-                          date: entry.key,
-                          plans: entry.value,
-                          filter: _filter,
-                        ),
-                      ),
+          Column(
+            children: [
+              if (grouped.isEmpty)
+                const _EmptyState(
+                  icon: Icons.event_note_outlined,
+                  text: '暂无本地计划。点击上方按钮即可生成 7 天饮食与运动计划。',
+                )
+              else
+                ...grouped.entries.map(
+                  (entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _DayPlanCard(
+                      date: entry.key,
+                      plans: entry.value,
+                      filter: _filter,
                     ),
-                ],
-              ),
-            ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 20),
         ],
@@ -795,9 +790,9 @@ class _RiskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final risks = (plan.payload['risks'] as List?)?.cast<String>() ?? [];
-    final summary = plan.payload['summary'] as String? ?? '';
-    final dietNote = plan.payload['dietNote'] as String? ?? '';
+    final risks = _stringList(plan.payload['risks']);
+    final summary = plan.payload['summary']?.toString() ?? '';
+    final dietNote = plan.payload['dietNote']?.toString() ?? '';
     final hasRisk = risks.isNotEmpty;
 
     // 零风险：轻量摘要条
@@ -1068,7 +1063,7 @@ class _MealDetailSection extends StatelessWidget {
   }
 
   List<String> _castList(Object? raw) {
-    if (raw is List) return raw.cast<String>();
+    if (raw is List) return _stringList(raw);
     return const [];
   }
 }
@@ -1123,7 +1118,7 @@ class _MeasurementSection extends StatelessWidget {
     final allItems = <String>[];
     for (final plan in items) {
       final list = plan.payload['items'];
-      if (list is List) allItems.addAll(list.cast<String>());
+      if (list is List) allItems.addAll(_stringList(list));
     }
     if (allItems.isEmpty) return const SizedBox.shrink();
 
@@ -1172,6 +1167,15 @@ class _MeasurementSection extends StatelessWidget {
   }
 }
 
+List<String> _stringList(Object? raw) {
+  if (raw is! List) return const [];
+  return raw
+      .where((item) => item != null)
+      .map((item) => item.toString().trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+}
+
 class _FilterChip extends StatelessWidget {
   const _FilterChip({
     required this.label,
@@ -1185,18 +1189,24 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FilterChip(
-      selected: selected,
-      onSelected: (_) => onTap(),
-      label: Text(label),
-      labelStyle: TextStyle(
-        color: selected ? Colors.white : AppTheme.deepBlue,
-        fontWeight: FontWeight.w700,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? AppTheme.deepBlue : Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: AppTheme.cardBorder),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppTheme.deepBlue,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
-      backgroundColor: Colors.white,
-      selectedColor: AppTheme.deepBlue,
-      side: const BorderSide(color: AppTheme.cardBorder),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
     );
   }
 }

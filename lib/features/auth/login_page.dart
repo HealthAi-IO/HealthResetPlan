@@ -17,7 +17,6 @@ import '../../core/sync/sync_service.dart';
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, this.initialAccountMode = false});
 
-  /// 跳转到登录页时是否直接进入账号登录模式（付费墙引导用）
   final bool initialAccountMode;
 
   @override
@@ -26,23 +25,26 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _nameCtrl = TextEditingController();
-  final _accountCtrl = TextEditingController();
-  final _loginCodeCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _codeCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _confirmPasswordCtrl = TextEditingController();
 
   late bool _accountMode = widget.initialAccountMode;
   bool _smsLoginMode = true;
+  bool _registerMode = false;
   bool _saving = false;
-  bool _sendingLoginCode = false;
-  String? _debugLoginCode;
+  bool _sendingCode = false;
+  String? _debugCode;
   String? _error;
 
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _accountCtrl.dispose();
-    _loginCodeCtrl.dispose();
+    _phoneCtrl.dispose();
+    _codeCtrl.dispose();
     _passwordCtrl.dispose();
+    _confirmPasswordCtrl.dispose();
     super.dispose();
   }
 
@@ -57,7 +59,7 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _submitLocalName() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = '请输入您的昵称');
+      setState(() => _error = '请输入昵称');
       return;
     }
 
@@ -75,33 +77,46 @@ class _LoginPageState extends State<LoginPage> {
       );
       if (!mounted) return;
       context.go('/home');
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = '保存失败，请重试';
+        _error = '保存失败：$e';
       });
     }
   }
 
   Future<void> _submitAccount() async {
-    final identifier = _normalizeIdentifier(_accountCtrl.text);
-    final code = _loginCodeCtrl.text.trim();
+    final phone = _normalizePhone(_phoneCtrl.text);
+    final code = _codeCtrl.text.trim();
     final password = _passwordCtrl.text;
+    final confirmPassword = _confirmPasswordCtrl.text;
     final nickname = _nameCtrl.text.trim();
 
-    if (identifier.isEmpty ||
-        (_smsLoginMode ? code.isEmpty : password.isEmpty)) {
-      setState(() => _error = _smsLoginMode ? '请输入手机号和验证码' : '请输入手机号和密码');
-      return;
-    }
-    if (!RegExp(r'^1\d{10}$').hasMatch(identifier)) {
+    if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
       setState(() => _error = '请输入正确的手机号');
       return;
     }
-    if (!_smsLoginMode && password.length < 8) {
-      setState(() => _error = '密码至少 8 位');
-      return;
+
+    if (_registerMode) {
+      if (password.length < 8) {
+        setState(() => _error = '密码至少 8 位');
+        return;
+      }
+      if (password != confirmPassword) {
+        setState(() => _error = '两次输入的密码不一致');
+        return;
+      }
+    } else if (_smsLoginMode) {
+      if (code.isEmpty) {
+        setState(() => _error = '请输入验证码');
+        return;
+      }
+    } else {
+      if (password.length < 8) {
+        setState(() => _error = '请输入至少 8 位密码');
+        return;
+      }
     }
 
     setState(() {
@@ -111,24 +126,31 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final auth = sl<AuthApi>();
-      final result = _smsLoginMode
-          ? await auth.smsLogin(
-              phone: identifier,
-              code: code,
+      final result = _registerMode
+          ? await auth.register(
+              credType: 'phone',
+              identifier: phone,
+              password: password,
               nickname: nickname.isEmpty ? null : nickname,
             )
-          : await auth.login(
-              credType: 'phone',
-              identifier: identifier,
-              password: password,
-            );
+          : _smsLoginMode
+              ? await auth.smsLogin(
+                  phone: phone,
+                  code: code,
+                  nickname: nickname.isEmpty ? null : nickname,
+                )
+              : await auth.login(
+                  credType: 'phone',
+                  identifier: phone,
+                  password: password,
+                );
 
       await UserSession.instance.setAccountSession(
         userId: result.userId,
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
-        nickname: nickname.isEmpty ? identifier : nickname,
-        accountIdentifier: identifier,
+        nickname: nickname.isEmpty ? phone : nickname,
+        accountIdentifier: phone,
       );
       sl<ApiClient>().setAccessToken(result.accessToken);
 
@@ -153,43 +175,39 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  String _normalizeIdentifier(String raw) {
-    return raw.trim().replaceAll(RegExp(r'\D'), '');
-  }
+  String _normalizePhone(String raw) => raw.trim().replaceAll(RegExp(r'\D'), '');
 
   Future<void> _sendLoginCode() async {
-    final phone = _normalizeIdentifier(_accountCtrl.text);
+    final phone = _normalizePhone(_phoneCtrl.text);
     if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
       setState(() => _error = '请输入正确的手机号');
       return;
     }
-    if (_sendingLoginCode) return;
+    if (_sendingCode) return;
     setState(() {
-      _sendingLoginCode = true;
+      _sendingCode = true;
       _error = null;
     });
     try {
       final result = await sl<AuthApi>().sendSmsLoginCode(phone: phone);
       if (!mounted) return;
       setState(() {
-        _debugLoginCode = result.debugCode;
-        if (result.debugCode.isNotEmpty) {
-          _loginCodeCtrl.text = result.debugCode;
-        }
+        _debugCode = result.debugCode;
+        if (result.debugCode.isNotEmpty) _codeCtrl.text = result.debugCode;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = friendlyAuthError(e));
     } finally {
-      if (mounted) setState(() => _sendingLoginCode = false);
+      if (mounted) setState(() => _sendingCode = false);
     }
   }
 
-/*
-  Future<void> _syncLocalDataAfterLogin(ScaffoldMessengerState messenger) async {
+  Future<void> _syncLocalDataAfterLogin(
+    ScaffoldMessengerState messenger,
+  ) async {
     try {
-      final status =
-          await sl<MembershipService>().getStatus(forceRefresh: true);
+      final status = await sl<MembershipService>().getStatus(forceRefresh: true);
       if (!status.isActive) return;
 
       final sync = sl<SyncService>();
@@ -198,25 +216,16 @@ class _LoginPageState extends State<LoginPage> {
       final umk = await sl<KeyVault>().readUmk();
       if (umk == null) {
         messenger.showSnackBar(
-          const SnackBar(content: Text('登录成功。云同步需要先恢复主密钥助记词。')),
+          const SnackBar(content: Text('登录成功。云同步前请先恢复主密钥。')),
         );
         return;
       }
 
-      final result = await sync.sync().timeout(
-            const Duration(seconds: 8),
-            onTimeout: () => const SyncResult(
-              pushed: 0,
-              pulled: 0,
-              error: '云同步仍在后台处理，可稍后手动同步',
-            ),
-          );
+      final result = await sync.sync();
       if (result.hasError) {
         messenger.showSnackBar(
           SnackBar(
-            content: Text(_isKeyRestoreRequired(result.error)
-                ? '登录成功。云端数据需要恢复主密钥后才能读取。'
-                : '登录成功，云同步稍后可重试：${result.error}'),
+            content: Text('登录成功，云同步失败：${result.error}'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -228,87 +237,7 @@ class _LoginPageState extends State<LoginPage> {
           ),
         );
       }
-    } catch (_) {
-      // 登录流程不因同步失败中断；用户仍可在云同步页手动重试。
-      return false;
-    }
-  }
-
-*/
-  Future<void> _syncLocalDataAfterLogin(
-      ScaffoldMessengerState messenger) async {
-    try {
-      final status =
-          await sl<MembershipService>().getStatus(forceRefresh: true);
-      if (!status.isActive) return;
-
-      final sync = sl<SyncService>();
-      await sync.setSyncEnabled(true);
-
-      final umk = await sl<KeyVault>().readUmk();
-      if (umk == null) {
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('登录成功。云同步前请先恢复主密钥。'),
-          ),
-        );
-        return;
-      }
-
-      final result = await sync.sync();
-      if (result.hasError) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(_isKeyRestoreRequired(result.error)
-                ? '登录成功。请恢复主密钥后读取云端数据。'
-                : '登录成功，云同步失败：${result.error}'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      } else if (result.pushed + result.pulled > 0) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              '登录成功，云同步完成：${result.pushed + result.pulled} 条',
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (_) {
-      // Login has already succeeded; background sync must not block the app.
-    }
-  }
-
-  bool _isKeyRestoreRequired(String? error) {
-    final text = error ?? '';
-    return text.contains('主密钥') ||
-        text.contains('助记词') ||
-        text.contains('密钥异常') ||
-        text.contains('UMK');
-  }
-
-  // ignore: unused_element
-  Future<bool?> _showRestoreKeyDialog() {
-    return showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('需要恢复云端密钥'),
-        content: const Text(
-          '你当前登录的是同一个账号，但这台设备还没有恢复之前备份的助记词。\n\n云同步数据是端到端加密的，不恢复同一把主密钥就无法读取旧设备上传的数据。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('稍后再说'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('现在恢复'),
-          ),
-        ],
-      ),
-    );
+    } catch (_) {}
   }
 
   Future<void> _showForgotPasswordDialog() async {
@@ -317,10 +246,24 @@ class _LoginPageState extends State<LoginPage> {
       builder: (_) => const _ForgotPasswordDialog(),
     );
     if (updated == true && mounted) {
-      setState(() {
-        _error = '密码已重置，请使用新密码登录';
-      });
+      setState(() => _error = '密码已重置，请使用新密码登录');
     }
+  }
+
+  void _toggleAccountMode() {
+    setState(() {
+      _accountMode = !_accountMode;
+      _registerMode = false;
+      _error = null;
+    });
+  }
+
+  void _toggleRegisterMode() {
+    setState(() {
+      _registerMode = !_registerMode;
+      if (_registerMode) _smsLoginMode = false;
+      _error = null;
+    });
   }
 
   @override
@@ -367,191 +310,29 @@ class _LoginPageState extends State<LoginPage> {
                     style: TextStyle(color: AppTheme.muted, fontSize: 14),
                   ),
                   const SizedBox(height: 40),
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppTheme.cardBorder),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _accountMode ? '会员账号登录' : '免费版昵称',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: _saving
-                                  ? null
-                                  : () => setState(() {
-                                        _accountMode = !_accountMode;
-                                        _error = null;
-                                      }),
-                              child: Text(_accountMode ? '使用免费版' : '会员登录'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _accountMode
-                              ? '真实账号用于绑定会员权益和 AI 对话。'
-                              : '只保存在本地，无网状态也可以使用。',
-                          style: const TextStyle(
-                            color: AppTheme.muted,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        if (_accountMode) ...[
-                          SegmentedButton<bool>(
-                            segments: const [
-                              ButtonSegment(
-                                value: true,
-                                label: Text('验证码登录'),
-                                icon: Icon(Icons.sms_outlined),
-                              ),
-                              ButtonSegment(
-                                value: false,
-                                label: Text('密码登录'),
-                                icon: Icon(Icons.lock_outline),
-                              ),
-                            ],
-                            selected: {_smsLoginMode},
-                            onSelectionChanged: _saving
-                                ? null
-                                : (selected) => setState(() {
-                                      _smsLoginMode = selected.first;
-                                      _error = null;
-                                    }),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _accountCtrl,
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
-                            decoration: InputDecoration(
-                              hintText: '手机号',
-                              prefixIcon:
-                                  const Icon(Icons.phone_iphone_outlined),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          if (_smsLoginMode) ...[
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: TextField(
-                                    controller: _loginCodeCtrl,
-                                    keyboardType: TextInputType.number,
-                                    textInputAction: TextInputAction.done,
-                                    onSubmitted: (_) => _submit(),
-                                    decoration: InputDecoration(
-                                      hintText: '验证码',
-                                      prefixIcon:
-                                          const Icon(Icons.sms_outlined),
-                                      errorText: _error,
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                OutlinedButton(
-                                  onPressed:
-                                      _sendingLoginCode ? null : _sendLoginCode,
-                                  child: Text(
-                                    _sendingLoginCode ? '发送中...' : '获取验证码',
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (_debugLoginCode != null &&
-                                _debugLoginCode!.isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                '开发测试验证码：$_debugLoginCode',
-                                style: const TextStyle(
-                                  color: AppTheme.muted,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ] else ...[
-                            TextField(
-                              controller: _passwordCtrl,
-                              obscureText: true,
-                              textInputAction: TextInputAction.done,
-                              onSubmitted: (_) => _submit(),
-                              decoration: InputDecoration(
-                                hintText: '密码',
-                                prefixIcon: const Icon(Icons.lock_outline),
-                                errorText: _error,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                          ],
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed:
-                                  _saving ? null : _showForgotPasswordDialog,
-                              child: const Text('忘记密码？'),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        TextField(
-                          controller: _nameCtrl,
-                          autofocus: !_accountMode,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) => _submit(),
-                          decoration: InputDecoration(
-                            hintText: _accountMode ? '昵称（可选）' : '例如：张三、小明',
-                            prefixIcon: const Icon(Icons.person_outline),
-                            errorText: _accountMode ? null : _error,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            onPressed: _saving ? null : _submit,
-                            child: _saving
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : Text(
-                                    _accountMode
-                                        ? (_smsLoginMode ? '验证码登录' : '密码登录')
-                                        : '开始使用',
-                                    style: const TextStyle(fontSize: 15),
-                                  ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  _LoginCard(
+                    accountMode: _accountMode,
+                    registerMode: _registerMode,
+                    smsLoginMode: _smsLoginMode,
+                    saving: _saving,
+                    sendingCode: _sendingCode,
+                    error: _error,
+                    debugCode: _debugCode,
+                    nameCtrl: _nameCtrl,
+                    phoneCtrl: _phoneCtrl,
+                    codeCtrl: _codeCtrl,
+                    passwordCtrl: _passwordCtrl,
+                    confirmPasswordCtrl: _confirmPasswordCtrl,
+                    onSubmit: _submit,
+                    onSendCode: _sendLoginCode,
+                    onForgotPassword: _showForgotPasswordDialog,
+                    onToggleAccountMode: _toggleAccountMode,
+                    onToggleRegisterMode: _toggleRegisterMode,
+                    onLoginModeChanged: (value) => setState(() {
+                      _smsLoginMode = value;
+                      _registerMode = false;
+                      _error = null;
+                    }),
                   ),
                 ],
               ),
@@ -559,6 +340,218 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LoginCard extends StatelessWidget {
+  const _LoginCard({
+    required this.accountMode,
+    required this.registerMode,
+    required this.smsLoginMode,
+    required this.saving,
+    required this.sendingCode,
+    required this.error,
+    required this.debugCode,
+    required this.nameCtrl,
+    required this.phoneCtrl,
+    required this.codeCtrl,
+    required this.passwordCtrl,
+    required this.confirmPasswordCtrl,
+    required this.onSubmit,
+    required this.onSendCode,
+    required this.onForgotPassword,
+    required this.onToggleAccountMode,
+    required this.onToggleRegisterMode,
+    required this.onLoginModeChanged,
+  });
+
+  final bool accountMode;
+  final bool registerMode;
+  final bool smsLoginMode;
+  final bool saving;
+  final bool sendingCode;
+  final String? error;
+  final String? debugCode;
+  final TextEditingController nameCtrl;
+  final TextEditingController phoneCtrl;
+  final TextEditingController codeCtrl;
+  final TextEditingController passwordCtrl;
+  final TextEditingController confirmPasswordCtrl;
+  final VoidCallback onSubmit;
+  final VoidCallback onSendCode;
+  final VoidCallback onForgotPassword;
+  final VoidCallback onToggleAccountMode;
+  final VoidCallback onToggleRegisterMode;
+  final ValueChanged<bool> onLoginModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: Text(
+              accountMode ? (registerMode ? '注册账号' : '会员账号登录') : '免费版昵称',
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+          ),
+          TextButton(
+            onPressed: saving ? null : onToggleAccountMode,
+            child: Text(accountMode ? '使用免费版' : '会员登录'),
+          ),
+        ]),
+        const SizedBox(height: 4),
+        Text(
+          accountMode
+              ? '账号用于会员权益、AI 功能和云同步。'
+              : '只保存在本地，无网络也可以使用。',
+          style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+        ),
+        const SizedBox(height: 16),
+        if (accountMode) ...[
+          if (!registerMode)
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: true,
+                  label: Text('验证码登录'),
+                  icon: Icon(Icons.sms_outlined),
+                ),
+                ButtonSegment(
+                  value: false,
+                  label: Text('密码登录'),
+                  icon: Icon(Icons.lock_outline),
+                ),
+              ],
+              selected: {smsLoginMode},
+              onSelectionChanged:
+                  saving ? null : (selected) => onLoginModeChanged(selected.first),
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: saving ? null : onToggleRegisterMode,
+              child: Text(registerMode ? '已有账号，去登录' : '没有账号，立即注册'),
+            ),
+          ),
+          TextField(
+            controller: phoneCtrl,
+            keyboardType: TextInputType.phone,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              hintText: '手机号',
+              prefixIcon: Icon(Icons.phone_iphone_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (!registerMode && smsLoginMode)
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: codeCtrl,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => onSubmit(),
+                  decoration: const InputDecoration(
+                    hintText: '验证码',
+                    prefixIcon: Icon(Icons.sms_outlined),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed: sendingCode ? null : onSendCode,
+                child: Text(sendingCode ? '发送中...' : '获取验证码'),
+              ),
+            ])
+          else ...[
+            TextField(
+              controller: passwordCtrl,
+              obscureText: true,
+              textInputAction:
+                  registerMode ? TextInputAction.next : TextInputAction.done,
+              onSubmitted: (_) => registerMode ? null : onSubmit(),
+              decoration: const InputDecoration(
+                hintText: '密码',
+                prefixIcon: Icon(Icons.lock_outline),
+              ),
+            ),
+            if (registerMode) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmPasswordCtrl,
+                obscureText: true,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => onSubmit(),
+                decoration: const InputDecoration(
+                  hintText: '确认密码',
+                  prefixIcon: Icon(Icons.lock_outline),
+                ),
+              ),
+            ],
+          ],
+          if (debugCode != null && debugCode!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '开发测试验证码：$debugCode',
+              style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+            ),
+          ],
+          if (!registerMode)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: saving ? null : onForgotPassword,
+                child: const Text('忘记密码？'),
+              ),
+            ),
+          const SizedBox(height: 12),
+        ],
+        TextField(
+          controller: nameCtrl,
+          autofocus: !accountMode,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => onSubmit(),
+          decoration: InputDecoration(
+            hintText: accountMode ? '昵称（可选）' : '例如：张三、小明',
+            prefixIcon: const Icon(Icons.person_outline),
+          ),
+        ),
+        if (error != null) ...[
+          const SizedBox(height: 10),
+          Text(error!, style: TextStyle(color: Colors.red.shade700)),
+        ],
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: saving ? null : onSubmit,
+            child: saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(
+                    accountMode
+                        ? (registerMode
+                            ? '注册并登录'
+                            : (smsLoginMode ? '验证码登录' : '密码登录'))
+                        : '开始使用',
+                  ),
+          ),
+        ),
+      ]),
     );
   }
 }
@@ -571,7 +564,7 @@ class _ForgotPasswordDialog extends StatefulWidget {
 }
 
 class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
-  final _accountCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _sending = false;
@@ -581,20 +574,18 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
 
   @override
   void dispose() {
-    _accountCtrl.dispose();
+    _phoneCtrl.dispose();
     _codeCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
 
-  String _normalizeIdentifier(String raw) {
-    return raw.trim().replaceAll(RegExp(r'\D'), '');
-  }
+  String _normalizePhone(String raw) => raw.trim().replaceAll(RegExp(r'\D'), '');
 
   Future<void> _sendCode() async {
-    final identifier = _normalizeIdentifier(_accountCtrl.text);
-    if (identifier.isEmpty) {
-      setState(() => _error = '请输入手机号');
+    final phone = _normalizePhone(_phoneCtrl.text);
+    if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
+      setState(() => _error = '请输入正确的手机号');
       return;
     }
     setState(() {
@@ -604,12 +595,12 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     try {
       final result = await sl<AuthApi>().sendPasswordResetCode(
         credType: 'phone',
-        identifier: identifier,
+        identifier: phone,
       );
       if (!mounted) return;
       setState(() {
         _debugCode = result.debugCode;
-        _codeCtrl.text = result.debugCode;
+        if (result.debugCode.isNotEmpty) _codeCtrl.text = result.debugCode;
       });
     } catch (e) {
       if (!mounted) return;
@@ -620,17 +611,16 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
   }
 
   Future<void> _reset() async {
-    final identifier = _normalizeIdentifier(_accountCtrl.text);
+    final phone = _normalizePhone(_phoneCtrl.text);
     final code = _codeCtrl.text.trim();
     final password = _passwordCtrl.text;
-    if (identifier.isEmpty || code.isEmpty || password.isEmpty) {
-      setState(() => _error = '请填写手机号、验证码和新密码');
+    if (!RegExp(r'^1\d{10}$').hasMatch(phone) ||
+        code.isEmpty ||
+        password.length < 8) {
+      setState(() => _error = '请填写手机号、验证码和至少 8 位新密码');
       return;
     }
-    if (password.length < 8) {
-      setState(() => _error = '新密码至少 8 位');
-      return;
-    }
+
     setState(() {
       _resetting = true;
       _error = null;
@@ -638,7 +628,7 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     try {
       await sl<AuthApi>().resetPassword(
         credType: 'phone',
-        identifier: identifier,
+        identifier: phone,
         code: code,
         newPassword: password,
       );
@@ -655,12 +645,12 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('找回/重置密码'),
+      title: const Text('重置密码'),
       content: SizedBox(
         width: 420,
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
-            controller: _accountCtrl,
+            controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
               labelText: '手机号',

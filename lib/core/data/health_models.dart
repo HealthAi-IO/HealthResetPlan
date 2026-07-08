@@ -391,7 +391,7 @@ class PlanRecordData {
     };
   }
 
-  String get summary => payload['summary'] as String? ?? '';
+  String get summary => payload['summary']?.toString() ?? '';
 
   factory PlanRecordData.fromRow(Map<String, Object?> row) {
     return PlanRecordData(

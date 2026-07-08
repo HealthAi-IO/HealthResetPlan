@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -225,6 +226,48 @@ class _ReportPageState extends State<ReportPage> {
       _ocrResult = null;
     });
     await _analyzeImage(file);
+  }
+
+  Future<void> _pickFile() async {
+    final ok = await requireAccountAndMember(context, PaywallFeature.reportOcr);
+    if (!ok) return;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+        allowMultiple: false,
+        withData: kIsWeb,
+      );
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.single;
+      if (kIsWeb && (file.bytes == null || file.bytes!.isEmpty)) {
+        throw StateError('文件内容为空');
+      }
+      if (!kIsWeb && (file.path == null || file.path!.isEmpty)) {
+        throw StateError('无法读取所选文件');
+      }
+      final picked = kIsWeb
+          ? XFile.fromData(
+              file.bytes!,
+              name: file.name,
+              mimeType: _mimeType(file.name),
+            )
+          : XFile(file.path!, name: file.name);
+
+      if (!mounted) return;
+      setState(() {
+        _pickedImage = picked;
+        _ocrResult = null;
+      });
+      await _analyzeImage(picked);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('选择文件失败：$e')),
+      );
+    }
   }
 
   Future<void> _analyzeImage(XFile file) async {
@@ -695,6 +738,7 @@ class _ReportPageState extends State<ReportPage> {
               onPickGallery: () => _pickImage(ImageSource.gallery),
               onPickCamera:
                   _canUseCamera ? () => _pickImage(ImageSource.camera) : null,
+              onPickFile: _pickFile,
             ),
             if (_ocrResult != null) ...[
               const SizedBox(height: 16),
@@ -725,6 +769,7 @@ class _PickCard extends StatelessWidget {
     required this.analyzeStage,
     required this.onPickGallery,
     required this.onPickCamera,
+    required this.onPickFile,
   });
 
   final XFile? pickedImage;
@@ -733,6 +778,7 @@ class _PickCard extends StatelessWidget {
   final String analyzeStage;
   final VoidCallback onPickGallery;
   final VoidCallback? onPickCamera;
+  final VoidCallback onPickFile;
 
   @override
   Widget build(BuildContext context) {
@@ -791,6 +837,11 @@ class _PickCard extends StatelessWidget {
                 icon: const Icon(Icons.camera_alt_outlined, size: 16),
                 label: const Text('拍照'),
               ),
+            OutlinedButton.icon(
+              onPressed: onPickFile,
+              icon: const Icon(Icons.folder_open_outlined, size: 16),
+              label: const Text('从文件选择'),
+            ),
           ]),
         if (pickedImage != null) ...[
           const SizedBox(height: 10),

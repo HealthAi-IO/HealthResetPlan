@@ -23,7 +23,6 @@ class _HomePageState extends State<HomePage> {
   static const _profilePromptDismissedKey = 'home_profile_prompt_dismissed_v1';
   static const _indicatorPromptDismissedKey =
       'home_indicator_prompt_dismissed_v1';
-
   final HealthRepository _repo = sl<HealthRepository>();
   final MembershipService _membership = sl<MembershipService>();
 
@@ -130,7 +129,7 @@ class _HomePageState extends State<HomePage> {
         confirmAction: _HomePromptAction.profile,
       );
     }
-    if (data.indicators.isEmpty) {
+    if (_shouldPromptForIndicator()) {
       return const _HomePrompt(
         dismissedKey: _indicatorPromptDismissedKey,
         title: '录入一条健康指标',
@@ -141,6 +140,8 @@ class _HomePageState extends State<HomePage> {
     }
     return null;
   }
+
+  bool _shouldPromptForIndicator() => false;
 
   @override
   Widget build(BuildContext context) {
