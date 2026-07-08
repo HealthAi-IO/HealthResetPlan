@@ -16,7 +16,7 @@ class MembershipStatus {
   final String? planName;
   final DateTime? expiresAt;
 
-  static const MembershipStatus free = MembershipStatus(isActive: false);
+  static const free = MembershipStatus(isActive: false);
 
   bool get isExpired =>
       expiresAt != null && !expiresAt!.isAfter(DateTime.now());
@@ -39,6 +39,35 @@ class MembershipStatus {
       planName: json['planName'] as String?,
       expiresAt: expiresText == null ? null : DateTime.tryParse(expiresText),
     ).normalized;
+  }
+}
+
+class MembershipOrder {
+  const MembershipOrder({
+    required this.orderNo,
+    required this.planCode,
+    required this.amountFen,
+    required this.channel,
+    required this.payCredential,
+  });
+
+  final String orderNo;
+  final String planCode;
+  final int amountFen;
+  final String channel;
+  final Map<String, dynamic> payCredential;
+
+  factory MembershipOrder.fromJson(Map<String, dynamic> json) {
+    final credential = json['payCredential'];
+    return MembershipOrder(
+      orderNo: json['orderNo']?.toString() ?? '',
+      planCode: json['planCode']?.toString() ?? '',
+      amountFen: (json['amountFen'] as num?)?.toInt() ?? 0,
+      channel: json['channel']?.toString() ?? '',
+      payCredential: credential is Map
+          ? Map<String, dynamic>.from(credential)
+          : <String, dynamic>{},
+    );
   }
 }
 
@@ -81,15 +110,11 @@ class MembershipService {
         _cachedAt = DateTime.now();
         return MembershipStatus.free;
       }
-      _cached = _cached?.normalized;
-      return _cached ?? MembershipStatus.free;
+      return _cached?.normalized ?? MembershipStatus.free;
     }
   }
 
-  Future<bool> isActive() async {
-    final status = await getStatus();
-    return status.isActive;
-  }
+  Future<bool> isActive() async => (await getStatus()).isActive;
 
   void invalidateCache() {
     _cached = null;
@@ -97,34 +122,37 @@ class MembershipService {
   }
 
   Future<void> activateWithCode(String code) async {
-    final normalized = code.toUpperCase().trim();
     if (!UserSession.instance.isAccountLogin || _client == null) {
       throw StateError('请先登录账号后再兑换激活码');
     }
     final resp = await _client.dio.post(
       '/membership/redeem',
-      data: {'code': normalized},
+      data: {'code': code.toUpperCase().trim()},
       options: Options(
         sendTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 10),
       ),
     );
-    if (resp.data is Map && resp.data['code'] == 0) {
-      invalidateCache();
-      return;
+    _unwrapData(resp.data);
+    invalidateCache();
+  }
+
+  Future<MembershipOrder> createOrder({
+    required String planCode,
+    String channel = 'wechat',
+  }) async {
+    if (!UserSession.instance.isAccountLogin || _client == null) {
+      throw StateError('请先登录账号后再开通会员');
     }
-    final options = RequestOptions(path: '/membership/redeem');
-    throw DioException(
-      requestOptions: options,
-      response: Response(
-        requestOptions: options,
-        statusCode: 200,
-        data: resp.data,
+    final resp = await _client.dio.post(
+      '/membership/orders',
+      data: {'planCode': planCode, 'channel': channel},
+      options: Options(
+        sendTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
       ),
-      message: resp.data is Map
-          ? resp.data['message']?.toString() ?? '激活失败'
-          : '激活失败',
     );
+    return MembershipOrder.fromJson(_unwrapData(resp.data));
   }
 
   Future<void> deactivate() async {
@@ -143,11 +171,11 @@ class MembershipService {
     if (body is! Map) return <String, dynamic>{};
     final code = body['code'];
     if (code != null && code != 0) {
-      final options = RequestOptions(path: '/membership/status');
+      final options = RequestOptions(path: '/membership');
       throw DioException(
         requestOptions: options,
         response: Response(requestOptions: options, data: body),
-        message: body['message']?.toString() ?? '会员状态获取失败',
+        message: body['message']?.toString() ?? '会员请求失败',
       );
     }
     final data = body['data'];

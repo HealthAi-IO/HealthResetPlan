@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
 import '../auth/user_session.dart';
-import '../di/service_locator.dart';
 import 'membership_service.dart';
 
 // ── 可付费墙功能枚举 ──────────────────────────────────────────
@@ -48,6 +47,9 @@ Future<bool> showPaywall(
   BuildContext context,
   PaywallFeature feature,
 ) async {
+  // 应用市场上架版本暂时关闭会员付费墙，所有已登录用户可免费使用。
+  return true;
+  /*
   final result = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
@@ -55,6 +57,7 @@ Future<bool> showPaywall(
     builder: (_) => _PaywallSheet(feature: feature),
   );
   return result == true;
+  */
 }
 
 /// 服务端能力的统一守卫：必须先登录账号 + 已开通会员。
@@ -98,6 +101,9 @@ Future<bool> requireAccountAndMember(
     return false;
   }
 
+  // 应用市场上架版本暂时关闭会员校验，登录后直接放行。
+  return true;
+  /*
   // ── 2. 必须开通会员 ───────────────────────────────────────
   final membership = sl<MembershipService>();
   final isActive = await membership.isActive();
@@ -107,10 +113,12 @@ Future<bool> requireAccountAndMember(
   await showPaywall(context, feature);
   // 付费墙关闭后再次检查
   return await membership.isActive();
+  */
 }
 
 // ── 付费墙底部弹窗 ────────────────────────────────────────────
 
+// ignore: unused_element
 class _PaywallSheet extends StatelessWidget {
   const _PaywallSheet({required this.feature});
   final PaywallFeature feature;
@@ -187,7 +195,8 @@ class _PaywallSheet extends StatelessWidget {
                     Icon(icon, size: 16, color: const Color(0xFF0277BD)),
                     const SizedBox(width: 10),
                     Text(text,
-                        style: const TextStyle(fontSize: 13, color: AppTheme.ink)),
+                        style:
+                            const TextStyle(fontSize: 13, color: AppTheme.ink)),
                   ]),
                   if (text != _benefits.last.$2) const SizedBox(height: 10),
                 ],
@@ -272,9 +281,7 @@ class _MiniPlanCard extends StatelessWidget {
         color: isRecommended ? const Color(0xFF0277BD) : Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isRecommended
-              ? const Color(0xFF0277BD)
-              : AppTheme.cardBorder,
+          color: isRecommended ? const Color(0xFF0277BD) : AppTheme.cardBorder,
         ),
         boxShadow: isRecommended
             ? [
@@ -315,7 +322,8 @@ class _MiniPlanCard extends StatelessWidget {
               style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
-                  color: isRecommended ? Colors.white : const Color(0xFF0277BD))),
+                  color:
+                      isRecommended ? Colors.white : const Color(0xFF0277BD))),
           Padding(
             padding: const EdgeInsets.only(bottom: 2),
             child: Text(unit,
@@ -355,6 +363,9 @@ class PaywallLock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 应用市场上架版本暂时关闭会员锁定遮罩。
+    return child;
+    /*
     if (memberStatus.isActive) return child;
 
     return Stack(
@@ -411,5 +422,6 @@ class PaywallLock extends StatelessWidget {
         ),
       ],
     );
+    */
   }
 }

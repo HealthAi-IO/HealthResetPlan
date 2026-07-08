@@ -42,6 +42,29 @@ class AuthApi {
     return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
+  Future<PasswordResetCodeResult> sendSmsLoginCode({
+    required String phone,
+  }) async {
+    final resp = await _client.dio.post('/auth/sms/send-code', data: {
+      'phone': phone,
+    });
+    return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
+  }
+
+  Future<AuthResult> smsLogin({
+    required String phone,
+    required String code,
+    String? nickname,
+  }) async {
+    final resp = await _client.dio.post('/auth/sms/login', data: {
+      'phone': phone,
+      'code': code,
+      if (nickname != null && nickname.trim().isNotEmpty)
+        'nickname': nickname.trim(),
+    });
+    return AuthResult.fromJson(_unwrapData(resp.data));
+  }
+
   /// 刷新 Access Token
   Future<AuthResult> refresh(String refreshToken) async {
     final resp = await _client.dio.post('/auth/refresh', data: {

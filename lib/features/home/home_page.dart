@@ -68,8 +68,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadMembershipStatus() async {
     final status = await _membership.getStatus().catchError(
-      (_) => _memberStatus,
-    );
+          (_) => _memberStatus,
+        );
     if (!mounted) return;
     setState(() => _memberStatus = status);
   }
@@ -198,6 +198,7 @@ class _HomePageState extends State<HomePage> {
               }),
           const SizedBox(height: 14),
 
+          /*
           // 会员横幅（免费用户显示升级入口，会员显示状态）
           _HomeMembershipBanner(
             status: _memberStatus,
@@ -212,6 +213,7 @@ class _HomePageState extends State<HomePage> {
             },
           ),
           const SizedBox(height: 14),
+          */
 
           // 今日计划摘要
           _TodayPlanCard(
@@ -281,6 +283,7 @@ class _HomePageState extends State<HomePage> {
                       label: '趋势统计',
                       color: Colors.orange,
                       onTap: () => context.go('/stats')),
+                  /*
                   _QuickEntry(
                     icon: _memberStatus.isActive
                         ? Icons.workspace_premium
@@ -297,6 +300,7 @@ class _HomePageState extends State<HomePage> {
                       }
                     },
                   ),
+                  */
                 ],
               );
             }),
@@ -1191,6 +1195,7 @@ extension _IterableX<T> on Iterable<T> {
 
 // ── 会员横幅 ──────────────────────────────────────────────────
 
+// ignore: unused_element
 class _HomeMembershipBanner extends StatelessWidget {
   const _HomeMembershipBanner({required this.status, required this.onTap});
   final MembershipStatus status;

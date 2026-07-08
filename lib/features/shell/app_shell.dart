@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
-import '../../core/auth/user_session.dart';
+// import '../../core/auth/user_session.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -94,6 +94,7 @@ class _AppShellState extends State<AppShell> {
                 icon: const Icon(Icons.psychology_outlined),
                 onPressed: () => context.push('/chat'),
               ),
+              /*
               IconButton(
                 tooltip: '会员中心',
                 icon: const Icon(Icons.workspace_premium_outlined),
@@ -105,6 +106,7 @@ class _AppShellState extends State<AppShell> {
                   }
                 },
               ),
+              */
               PopupMenuButton<String>(
                 tooltip: '更多操作',
                 onSelected: (value) async {
@@ -112,12 +114,14 @@ class _AppShellState extends State<AppShell> {
                     context.push('/chat');
                   } else if (value == 'report') {
                     context.push('/report');
+                    /*
                   } else if (value == 'membership') {
                     if (!UserSession.instance.isAccountLogin) {
                       context.push('/login', extra: true);
                     } else {
                       context.push('/membership');
                     }
+                  */
                   } else if (value == 'onboarding') {
                     context.push('/onboarding');
                   } else if (value == 'security') {
@@ -127,7 +131,7 @@ class _AppShellState extends State<AppShell> {
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'chat', child: Text('AI 健康顾问')),
                   PopupMenuItem(value: 'report', child: Text('报告识别')),
-                  PopupMenuItem(value: 'membership', child: Text('会员中心')),
+                  // PopupMenuItem(value: 'membership', child: Text('会员中心')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
                 ],

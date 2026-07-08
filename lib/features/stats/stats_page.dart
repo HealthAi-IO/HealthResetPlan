@@ -41,7 +41,7 @@ class _StatsPageState extends State<StatsPage> {
   Future<void> _pickAndUploadAvatar() async {
     if (!UserSession.instance.isAccountLogin) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先登录会员账号后再上传头像')),
+        const SnackBar(content: Text('请先登录账号后再上传头像')),
       );
       return;
     }
@@ -83,7 +83,7 @@ class _StatsPageState extends State<StatsPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('退出登录'),
         content: const Text(
-          '退出后会清除当前账号登录状态，并自动回到本地免费版。会员期间录入的本地健康数据、聊天记录和打卡数据都会保留。',
+          '退出后会清除当前账号登录状态，并自动回到本地免费版。已录入的本地健康数据、聊天记录和打卡数据都会保留。',
         ),
         actions: [
           TextButton(
@@ -290,9 +290,13 @@ class _StatsPageState extends State<StatsPage> {
             onLogin: () => context.push('/login', extra: true).then((_) {
               if (mounted) _load(silent: true);
             }),
-            onMembership: () => context.push('/membership').then((_) {
-              if (mounted) _load(silent: true);
-            }),
+            onMembership: () {
+              /*
+              context.push('/membership').then((_) {
+                if (mounted) _load(silent: true);
+              });
+              */
+            },
             onSignOut: _signOut,
             onCancelAccount: _cancelAccount,
             onEditProfile: () => context.go('/profile'),
@@ -450,11 +454,7 @@ class _UnifiedProfileCard extends StatelessWidget {
     final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
     final bmi = profile?.bmi ?? 0;
     final bmiText = bmi == 0 ? 'BMI --' : 'BMI ${bmi.toStringAsFixed(1)}';
-    final membershipText = memberStatus.isActive
-        ? (memberStatus.planName ?? '会员')
-        : memberStatus.isExpired
-            ? '会员已过期'
-            : '免费版';
+    final membershipText = '免费使用';
     final cloudText = accountInfo?.hasCloudSync == true ? '已开启' : '未开启';
 
     return Container(
@@ -567,10 +567,10 @@ class _UnifiedProfileCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: _CardInfoPill(
-                  icon: Icons.workspace_premium_outlined,
-                  label: '会员',
+                  icon: Icons.verified_user_outlined,
+                  label: '使用状态',
                   value: membershipText,
-                  highlight: memberStatus.isActive,
+                  highlight: true,
                 ),
               ),
             ],
@@ -594,9 +594,9 @@ class _UnifiedProfileCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: onMembership,
-                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
-                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                onPressed: null,
+                icon: const Icon(Icons.verified_user_outlined, size: 18),
+                label: const Text('免费使用中'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: Colors.white60),
@@ -698,11 +698,7 @@ class _CombinedProfileCard extends StatelessWidget {
         : UserSession.instance.name;
     final safeName = displayName.isNotEmpty ? displayName : '未设置昵称';
     final imageUrl = _avatarImageUrl(accountInfo);
-    final membershipLabel = memberStatus.isActive
-        ? (memberStatus.planName ?? '会员')
-        : memberStatus.isExpired
-            ? '已过期'
-            : '免费版';
+    final membershipLabel = '免费使用';
     final age = profile?.age;
     final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
     final bmi = profile?.bmi ?? 0;
@@ -855,10 +851,10 @@ class _CombinedProfileCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: _CardInfoPill(
-                  icon: Icons.workspace_premium_outlined,
-                  label: '会员',
+                  icon: Icons.verified_user_outlined,
+                  label: '使用状态',
                   value: membershipLabel,
-                  highlight: memberStatus.isActive,
+                  highlight: true,
                 ),
               ),
             ],
@@ -882,9 +878,9 @@ class _CombinedProfileCard extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: onMembership,
-                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
-                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                onPressed: null,
+                icon: const Icon(Icons.verified_user_outlined, size: 18),
+                label: const Text('免费使用中'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: Colors.white60),
@@ -1035,10 +1031,9 @@ class _AccountStatusCard extends StatelessWidget {
             ? '已过期，当前免费版'
             : '免费版';
     final ageText = profile?.age == 0 ? '--' : '${profile?.age ?? '--'} 岁';
-    final bmiText =
-        (profile == null || profile.bmi == 0)
-            ? 'BMI --'
-            : 'BMI ${profile.bmi.toStringAsFixed(1)}';
+    final bmiText = (profile == null || profile.bmi == 0)
+        ? 'BMI --'
+        : 'BMI ${profile.bmi.toStringAsFixed(1)}';
     final gradient = memberStatus.isActive
         ? const LinearGradient(
             colors: [Color(0xFF0277BD), Color(0xFF0288D1)],
@@ -1182,7 +1177,7 @@ class _AccountStatusCard extends StatelessWidget {
           const SizedBox(height: 12),
           if (!isLoggedIn) ...[
             const Text(
-              '绑定账号可开通会员；退出账号后会自动回到本地免费版，已有本地数据继续保留。',
+              '绑定账号后可使用云同步、AI 等在线能力；退出账号后已有本地数据继续保留。',
               style:
                   TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
             ),
@@ -1211,20 +1206,18 @@ class _AccountStatusCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             _AccountDetailRow(
-              icon: Icons.workspace_premium,
-              label: '会员',
+              icon: Icons.verified_user,
+              label: '使用状态',
               value: membershipLabel,
-              valueColor: memberStatus.isActive
-                  ? Colors.lightGreenAccent
-                  : Colors.white54,
+              valueColor: Colors.lightGreenAccent,
             ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: onMembership,
-                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
-                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                onPressed: null,
+                icon: const Icon(Icons.verified_user_outlined, size: 18),
+                label: const Text('免费使用中'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: Colors.white54),
@@ -1419,7 +1412,7 @@ class _AccountCard extends StatelessWidget {
           const SizedBox(height: 10),
           if (!isLoggedIn) ...[
             const Text(
-              '注册/登录账号后即可使用激活码开通会员，\n享受加密云同步、AI无限次等高级权益。',
+              '注册/登录账号后即可使用云同步、AI 等在线能力。',
               style:
                   TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
             ),
@@ -1455,22 +1448,18 @@ class _AccountCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             _AccountDetailRow(
-              icon: Icons.workspace_premium,
-              label: '会员',
-              value: memberStatus.isActive
-                  ? (memberStatus.planName ?? '已开启')
-                  : '免费版',
-              valueColor: memberStatus.isActive
-                  ? Colors.lightGreenAccent
-                  : Colors.white54,
+              icon: Icons.verified_user,
+              label: '使用状态',
+              value: '免费使用',
+              valueColor: Colors.lightGreenAccent,
             ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: onMembership,
-                icon: const Icon(Icons.workspace_premium_outlined, size: 18),
-                label: Text(memberStatus.isActive ? '会员中心' : '开通 / 续费会员'),
+                onPressed: null,
+                icon: const Icon(Icons.verified_user_outlined, size: 18),
+                label: const Text('免费使用中'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.white,
                   side: const BorderSide(color: Colors.white54),

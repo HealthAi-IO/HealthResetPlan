@@ -10,7 +10,9 @@ import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
 import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
+import '../membership/alipay_pay_service.dart';
 import '../membership/membership_service.dart';
+import '../membership/wechat_pay_service.dart';
 import '../network/ai_api.dart';
 import '../network/api_client.dart';
 import '../network/auth_api.dart';
@@ -100,6 +102,8 @@ Future<void> setupServiceLocator() async {
   sl.registerLazySingleton<MembershipService>(
     () => MembershipService(client: apiClient),
   );
+  sl.registerLazySingleton<AlipayPayService>(() => AlipayPayService());
+  sl.registerLazySingleton<WechatPayService>(() => WechatPayService());
   sl.registerLazySingleton<AiApi>(() => AiApi(client: apiClient));
 
   // 通知调度也改为延迟（main.dart 后台再触发 initialize）

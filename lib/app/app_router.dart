@@ -10,7 +10,7 @@ import '../features/clock/clock_page.dart';
 import '../features/home/home_page.dart';
 import '../features/indicators/indicator_input_page.dart';
 import '../features/indicators/indicator_list_page.dart';
-import '../features/membership/membership_page.dart';
+// import '../features/membership/membership_page.dart';
 import '../features/plan/plan_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/report/report_page.dart';
@@ -126,10 +126,12 @@ class AppRouter {
         path: '/report',
         pageBuilder: (_, state) => _page(state, const ReportPage()),
       ),
+      /*
       GoRoute(
         path: '/membership',
         pageBuilder: (_, state) => _page(state, const MembershipPage()),
       ),
+      */
       GoRoute(
         path: '/chat',
         pageBuilder: (_, state) => _page(state, const ChatPage()),

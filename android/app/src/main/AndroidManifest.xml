@@ -64,5 +64,9 @@
         <intent>
             <action android:name="android.intent.action.SET_ALARM"/>
         </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="alipays"/>
+        </intent>
     </queries>
 </manifest>
