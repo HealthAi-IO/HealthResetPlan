@@ -97,8 +97,7 @@ class _PlanPageState extends State<PlanPage> {
         if (!mounted) return;
         messenger.showSnackBar(
           const SnackBar(
-            content: Text(
-                'AI is still generating. A local fallback is ready if needed.'),
+            content: Text('AI 正在生成中，请稍候；如生成失败会自动保留本地规则计划。'),
           ),
         );
       });
@@ -113,7 +112,7 @@ class _PlanPageState extends State<PlanPage> {
             provider: provider,
             goal: _profile?.goal ?? 'general',
           )
-          .timeout(const Duration(seconds: 75));
+          .timeout(const Duration(seconds: 130));
 
       if (!mounted) return;
 

@@ -58,6 +58,7 @@ class _WebAppDatabase extends AppDatabase {
     'reminder',
     'sync_queue',
     'health_report',
+    'meal_record',
   ];
 
   SharedPreferences? _prefs;

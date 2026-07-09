@@ -14,6 +14,8 @@ class HealthRepository extends ChangeNotifier {
   bool _ready = false;
   static const _uuid = Uuid();
 
+  static String newClientId() => _uuid.v4();
+
   Future<void> initialize() async {
     if (_ready) return;
     await database.open();
@@ -162,6 +164,64 @@ class HealthRepository extends ChangeNotifier {
       limit: limit,
     );
     return rows.map(PlanRecordData.fromRow).toList();
+  }
+
+  Future<List<MealRecordData>> loadMealsForDate(DateTime date) async {
+    final db = await database.open();
+    final start = DateTime(date.year, date.month, date.day);
+    final end = start.add(const Duration(days: 1));
+    final rows = await db.query(
+      'meal_record',
+      where: 'user_id = ? AND eaten_at >= ? AND eaten_at < ?',
+      whereArgs: [
+        kLocalUserId,
+        start.millisecondsSinceEpoch,
+        end.millisecondsSinceEpoch,
+      ],
+      orderBy: 'eaten_at ASC, id ASC',
+    );
+    return rows.map(MealRecordData.fromRow).toList();
+  }
+
+  Future<MealRecordData?> loadMealRecord(int id) async {
+    final db = await database.open();
+    final rows = await db.query(
+      'meal_record',
+      where: 'user_id = ? AND id = ?',
+      whereArgs: [kLocalUserId, id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return MealRecordData.fromRow(rows.first);
+  }
+
+  Future<int> saveMealRecord(MealRecordData meal) async {
+    final db = await database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final next = meal.copyWith(updatedAt: now);
+    final isNew = next.id == null;
+    int id;
+    if (isNew) {
+      id = await db.insert('meal_record', next.toRow());
+    } else {
+      id = next.id!;
+      await db.update(
+        'meal_record',
+        next.toRow()..remove('id'),
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, kLocalUserId],
+      );
+    }
+    if (isNew) {
+      await addClockRecord(
+        type: 'meal',
+        note:
+            '${next.mealLabel} ${next.name} ${next.totalCalories.round()} kcal',
+        clockAt: next.eatenTime,
+      );
+    }
+    notifyListeners();
+    return id;
   }
 
   // 提取风险评估逻辑，供 generateWeeklyPlan 和 recalculateRisk 共用

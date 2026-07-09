@@ -383,6 +383,7 @@ class AiChatReply {
 
 class AiVisionResult {
   const AiVisionResult({
+    required this.structured,
     required this.type,
     required this.summary,
     required this.skinType,
@@ -397,6 +398,7 @@ class AiVisionResult {
     required this.rawText,
   });
 
+  final Map<String, dynamic> structured;
   final String type;
   final String summary;
   final String skinType;
@@ -415,11 +417,12 @@ class AiVisionResult {
     final rawCareRoutine = json['careRoutine'];
     final rawDimensions = json['dimensions'];
     return AiVisionResult(
+      structured: Map<String, dynamic>.from(json),
       type: json['type'] as String? ?? '',
       summary: json['summary'] as String? ?? '已完成 AI 图像分析',
       skinType: json['skinType'] as String? ?? '',
       skinTone: json['skinTone'] as String? ?? '',
-      healthScore: (json['healthScore'] as num?)?.toInt(),
+      healthScore: _asInt(json['healthScore']),
       dimensions: rawDimensions is List
           ? rawDimensions
               .whereType<Map>()
@@ -440,6 +443,13 @@ class AiVisionResult {
       rawText: json['rawText'] as String? ?? '',
     );
   }
+}
+
+int? _asInt(Object? raw) {
+  if (raw is num) return raw.toInt();
+  final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch('${raw ?? ''}');
+  final value = match == null ? null : double.tryParse(match.group(0)!);
+  return value?.toInt();
 }
 
 class AiVisionDimension {

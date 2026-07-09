@@ -353,6 +353,233 @@ class HealthReportRecord {
   }
 }
 
+class MealFoodItem {
+  const MealFoodItem({
+    required this.name,
+    required this.weightG,
+    required this.calories,
+  });
+
+  final String name;
+  final double weightG;
+  final double calories;
+
+  factory MealFoodItem.fromJson(Map<String, dynamic> json) {
+    return MealFoodItem(
+      name: json['name']?.toString() ?? '食材',
+      weightG: _asDouble(json['weightG'] ?? json['weight'] ?? json['grams']),
+      calories: _asDouble(json['calories'] ?? json['kcal']),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'weightG': weightG,
+        'calories': calories,
+      };
+}
+
+class MealRecordData {
+  const MealRecordData({
+    this.id,
+    this.userId = kLocalUserId,
+    required this.clientId,
+    required this.name,
+    required this.mealType,
+    required this.eatenAt,
+    required this.imagePath,
+    required this.totalCalories,
+    required this.proteinG,
+    required this.carbsG,
+    required this.fatG,
+    required this.healthScore,
+    required this.glycemicLoad,
+    required this.foods,
+    required this.nutrition,
+    required this.createdAt,
+    required this.updatedAt,
+    this.version = 0,
+    this.isDirty = 1,
+    this.syncAt = 0,
+  });
+
+  final int? id;
+  final String userId;
+  final String clientId;
+  final String name;
+  final String mealType;
+  final int eatenAt;
+  final String imagePath;
+  final double totalCalories;
+  final double proteinG;
+  final double carbsG;
+  final double fatG;
+  final double healthScore;
+  final double glycemicLoad;
+  final List<MealFoodItem> foods;
+  final Map<String, dynamic> nutrition;
+  final int createdAt;
+  final int updatedAt;
+  final int version;
+  final int isDirty;
+  final int syncAt;
+
+  DateTime get eatenTime => DateTime.fromMillisecondsSinceEpoch(eatenAt);
+
+  String get mealLabel => switch (mealType) {
+        'breakfast' => '早餐',
+        'dinner' => '晚餐',
+        _ => '午餐',
+      };
+
+  factory MealRecordData.fromRow(Map<String, Object?> row) {
+    final rawFoods = jsonDecode(row['foods_json'] as String? ?? '[]');
+    final foods = rawFoods is List
+        ? rawFoods
+            .whereType<Map>()
+            .map((item) => MealFoodItem.fromJson(
+                  item.map((key, value) => MapEntry('$key', value)),
+                ))
+            .toList()
+        : <MealFoodItem>[];
+    return MealRecordData(
+      id: _asInt(row['id']),
+      userId: row['user_id'] as String? ?? kLocalUserId,
+      clientId: row['client_id'] as String? ?? '',
+      name: row['name'] as String? ?? '',
+      mealType: row['meal_type'] as String? ?? 'lunch',
+      eatenAt: _asInt(row['eaten_at']) ?? 0,
+      imagePath: row['image_path'] as String? ?? '',
+      totalCalories: _asDouble(row['total_calories']),
+      proteinG: _asDouble(row['protein_g']),
+      carbsG: _asDouble(row['carbs_g']),
+      fatG: _asDouble(row['fat_g']),
+      healthScore: _asDouble(row['health_score']),
+      glycemicLoad: _asDouble(row['glycemic_load']),
+      foods: foods,
+      nutrition: decodeJson(row['nutrition_json'] as String? ?? '{}'),
+      createdAt: _asInt(row['created_at']) ?? 0,
+      updatedAt: _asInt(row['updated_at']) ?? 0,
+      version: _asInt(row['version']) ?? 0,
+      isDirty: _asInt(row['is_dirty']) ?? 1,
+      syncAt: _asInt(row['sync_at']) ?? 0,
+    );
+  }
+
+  Map<String, Object?> toRow() {
+    return {
+      if (id != null) 'id': id,
+      'user_id': userId,
+      'client_id': clientId,
+      'name': name,
+      'meal_type': mealType,
+      'eaten_at': eatenAt,
+      'image_path': imagePath,
+      'total_calories': totalCalories,
+      'protein_g': proteinG,
+      'carbs_g': carbsG,
+      'fat_g': fatG,
+      'health_score': healthScore,
+      'glycemic_load': glycemicLoad,
+      'foods_json': jsonEncode(foods.map((item) => item.toJson()).toList()),
+      'nutrition_json': jsonEncode(nutrition),
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+      'version': version,
+      'is_dirty': isDirty,
+      'sync_at': syncAt,
+    };
+  }
+
+  MealRecordData copyWith({
+    int? id,
+    String? name,
+    String? mealType,
+    int? eatenAt,
+    String? imagePath,
+    double? totalCalories,
+    double? proteinG,
+    double? carbsG,
+    double? fatG,
+    double? healthScore,
+    double? glycemicLoad,
+    List<MealFoodItem>? foods,
+    Map<String, dynamic>? nutrition,
+    int? updatedAt,
+  }) {
+    return MealRecordData(
+      id: id ?? this.id,
+      userId: userId,
+      clientId: clientId,
+      name: name ?? this.name,
+      mealType: mealType ?? this.mealType,
+      eatenAt: eatenAt ?? this.eatenAt,
+      imagePath: imagePath ?? this.imagePath,
+      totalCalories: totalCalories ?? this.totalCalories,
+      proteinG: proteinG ?? this.proteinG,
+      carbsG: carbsG ?? this.carbsG,
+      fatG: fatG ?? this.fatG,
+      healthScore: healthScore ?? this.healthScore,
+      glycemicLoad: glycemicLoad ?? this.glycemicLoad,
+      foods: foods ?? this.foods,
+      nutrition: nutrition ?? this.nutrition,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      version: version,
+      isDirty: 1,
+      syncAt: syncAt,
+    );
+  }
+}
+
+class DailyNutritionTargets {
+  const DailyNutritionTargets({
+    required this.calories,
+    required this.proteinG,
+    required this.carbsG,
+    required this.fatG,
+  });
+
+  final double calories;
+  final double proteinG;
+  final double carbsG;
+  final double fatG;
+
+  factory DailyNutritionTargets.fromProfile(UserProfileData? profile) {
+    final p = profile ?? UserProfileData.empty();
+    final weight = p.weightKg > 0 ? p.weightKg : 65.0;
+    final height = p.heightCm > 0 ? p.heightCm : 170.0;
+    final age = p.age > 0 ? p.age : 35;
+    final isMale = p.gender == 'male';
+    final bmr = isMale
+        ? 10 * weight + 6.25 * height - 5 * age + 5
+        : 10 * weight + 6.25 * height - 5 * age - 161;
+    final activity = switch (p.exerciseBase) {
+      'moderate' => 1.55,
+      'light' => 1.375,
+      _ => 1.2,
+    };
+    final tdee = bmr * activity;
+    final calories = switch (p.goal) {
+      'fat_loss' => (tdee - 400).clamp(1200, 3000).toDouble(),
+      'glucose_control' ||
+      'bp_control' =>
+        (tdee - 200).clamp(1200, 3000).toDouble(),
+      _ => tdee.clamp(1200, 3000).toDouble(),
+    };
+    final protein =
+        (weight * (p.goal == 'fat_loss' ? 1.6 : 1.2)).clamp(50, 180);
+    final fat = (calories * 0.25 / 9).clamp(30, 90);
+    final carbs = ((calories - protein * 4 - fat * 9) / 4).clamp(100, 380);
+    return DailyNutritionTargets(
+      calories: calories,
+      proteinG: protein.toDouble(),
+      carbsG: carbs.toDouble(),
+      fatG: fat.toDouble(),
+    );
+  }
+}
+
 class PlanRecordData {
   const PlanRecordData({
     this.id,
@@ -683,7 +910,8 @@ double _asDouble(Object? value) => _asDoubleOrNull(value) ?? 0;
 double? _asDoubleOrNull(Object? value) {
   if (value == null) return null;
   if (value is num) return value.toDouble();
-  return double.tryParse('$value');
+  final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch('$value');
+  return match == null ? null : double.tryParse(match.group(0)!);
 }
 
 String _fmt(Object? value, {int digits = 0}) {

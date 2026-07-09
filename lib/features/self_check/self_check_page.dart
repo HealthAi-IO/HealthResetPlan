@@ -197,9 +197,10 @@ class _SkinIntroCard extends StatelessWidget {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 20),
-          const _SkinFeatureRow(text: '请在光线充足的环境中正脸居中拍摄'),
-          const _SkinFeatureRow(text: '尽量素颜，避免强滤镜、强美颜和过暗环境'),
-          const _SkinFeatureRow(text: '结果仅用于智能测肤及面部特征分析'),
+          const _SkinFeatureRow(text: '白天自然光或均匀补光，避免逆光、阴影、彩色灯光'),
+          const _SkinFeatureRow(text: '正脸居中拍摄，额头、双颊、鼻翼、下巴尽量完整入镜'),
+          const _SkinFeatureRow(text: '尽量素颜，关闭美颜滤镜，避免厚重底妆遮挡毛孔、泛红和痘印'),
+          const _SkinFeatureRow(text: '拍摄前保持面部干燥清洁，不要刚敷面膜、刚运动或刚洗热水脸'),
           const SizedBox(height: 18),
           SizedBox(
             width: double.infinity,
@@ -280,6 +281,11 @@ class _UploadCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(type.hint, style: const TextStyle(color: AppTheme.muted)),
+          const SizedBox(height: 6),
+          const Text(
+            '图片需小于 10MB，建议画面清晰、主体完整；系统会自动压缩后上传。',
+            style: TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4),
+          ),
           const SizedBox(height: 14),
           Wrap(
             spacing: 10,
@@ -320,6 +326,7 @@ class _ResultCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSkin = result.type == 'skin';
+    final adviceSections = _adviceSections(result);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: _cardDecoration(),
@@ -346,28 +353,31 @@ class _ResultCard extends StatelessWidget {
           ],
           if (result.observations.isNotEmpty) ...[
             const SizedBox(height: 12),
-            const Text('可见观察', style: TextStyle(fontWeight: FontWeight.w800)),
+            const _SectionTitle('可见观察'),
             const SizedBox(height: 6),
             for (final item in result.observations)
               Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('• $item'),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _BulletText(text: item),
               ),
           ],
-          if (result.careRoutine.isNotEmpty) ...[
+          if (adviceSections.isNotEmpty) ...[
             const SizedBox(height: 12),
-            const Text('护理建议', style: TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 6),
-            for (final item in result.careRoutine)
+            const _SectionTitle('综合调理建议'),
+            const SizedBox(height: 8),
+            for (final entry in adviceSections.entries)
               Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('• $item'),
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _AdviceSection(title: entry.key, items: entry.value),
               ),
+          ] else ...[
+            const SizedBox(height: 12),
+            const _SectionTitle('综合调理建议'),
+            const SizedBox(height: 6),
+            Text(result.advice, style: const TextStyle(height: 1.5)),
           ],
           const SizedBox(height: 12),
-          const Text('综合建议', style: TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-          Text(result.advice, style: const TextStyle(height: 1.5)),
+          const _DisclaimerBox(),
           if (result.provider.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
@@ -376,6 +386,106 @@ class _ResultCard extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Map<String, List<String>> _adviceSections(AiVisionResult result) {
+    final raw = result.structured['adviceSections'];
+    final sections = <String, List<String>>{};
+    if (raw is Map) {
+      for (final entry in raw.entries) {
+        final items = _stringList(entry.value);
+        if (items.isNotEmpty) sections['${entry.key}'] = items;
+      }
+    }
+    if (sections.isNotEmpty) return sections;
+
+    final routine = result.careRoutine;
+    if (routine.isNotEmpty) {
+      sections['日常护理'] = routine;
+    } else if (result.advice.trim().isNotEmpty) {
+      sections['执行建议'] = [result.advice.trim()];
+    }
+    return sections;
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(text,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900));
+  }
+}
+
+class _BulletText extends StatelessWidget {
+  const _BulletText({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('•  ',
+          style:
+              TextStyle(color: AppTheme.deepBlue, fontWeight: FontWeight.w900)),
+      Expanded(child: Text(text, style: const TextStyle(height: 1.55))),
+    ]);
+  }
+}
+
+class _AdviceSection extends StatelessWidget {
+  const _AdviceSection({required this.title, required this.items});
+
+  final String title;
+  final List<String> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title,
+            style: const TextStyle(
+                color: AppTheme.deepBlue, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 8),
+        for (final item in items)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: _BulletText(text: item),
+          ),
+      ]),
+    );
+  }
+}
+
+class _DisclaimerBox extends StatelessWidget {
+  const _DisclaimerBox();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF1F2),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
+      child: const Text(
+        'AI 视觉识别仅作日常健康参考，不能替代中医师 / 皮肤科医生线下专业诊断、开药；身体不适或脱发持续加重请前往正规医院就诊。',
+        style: TextStyle(color: Color(0xFFB91C1C), height: 1.45),
       ),
     );
   }
@@ -504,6 +614,17 @@ BoxDecoration _cardDecoration() {
   );
 }
 
+List<String> _stringList(Object? raw) {
+  if (raw is List) {
+    return raw
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  if (raw is String && raw.trim().isNotEmpty) return [raw.trim()];
+  return const [];
+}
+
 enum _CheckType {
   skin(
     'skin',
@@ -516,14 +637,14 @@ enum _CheckType {
     'tongue',
     '看舌苔',
     '看舌苔',
-    '伸舌后拍清楚舌面，避免刚吃完有颜色的食物。',
+    '自然光下伸舌拍清舌尖、舌中、舌根和两侧齿痕；避开灯光、美颜滤镜。检测前 30 分钟不吃染色食物、不漱口喝水，防止舌苔失真。',
     'AI 拍照自查',
   ),
   hair(
     'hair',
     '测脱发',
     '测脱发',
-    '拍发际线、头顶或分缝位置，尽量保持光线均匀。',
+    '白天自然光拍摄，关闭美颜滤镜；头发保持干燥，不抹发油发蜡。垂直拍头顶分缝或发际线，避免逆光、阴影遮挡头皮。',
     'AI 拍照自查',
   );
 

@@ -10,6 +10,7 @@ import '../features/clock/clock_page.dart';
 import '../features/home/home_page.dart';
 import '../features/indicators/indicator_input_page.dart';
 import '../features/indicators/indicator_list_page.dart';
+import '../features/meals/meal_record_page.dart';
 // import '../features/membership/membership_page.dart';
 import '../features/plan/plan_page.dart';
 import '../features/profile/profile_page.dart';
@@ -102,6 +103,35 @@ class AppRouter {
         pageBuilder: (_, state) {
           final existing = state.extra as HealthIndicatorEntry?;
           return _page(state, IndicatorInputPage(existing: existing));
+        },
+      ),
+      GoRoute(
+        path: '/meals/input',
+        pageBuilder: (_, state) {
+          final extra = state.extra;
+          if (extra is MealRecordData) {
+            return _page(state, MealRecordPage(record: extra));
+          }
+          if (extra is MealInputArgs) {
+            return _page(
+              state,
+              MealRecordPage(
+                mealType: extra.mealType,
+                eatenDate: extra.eatenDate,
+              ),
+            );
+          }
+          return _page(
+            state,
+            MealRecordPage(mealType: extra is String ? extra : 'lunch'),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/meals/detail/:id',
+        pageBuilder: (_, state) {
+          final id = int.tryParse(state.pathParameters['id'] ?? '') ?? 0;
+          return _page(state, MealDetailPage(id: id));
         },
       ),
       GoRoute(

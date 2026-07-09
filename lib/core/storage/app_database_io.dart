@@ -53,7 +53,7 @@ class _SqfliteAppDatabase extends AppDatabase {
 
   sqflite.Database? _db;
   static const String _fileName = 'health_reset_plan.sqlite';
-  static const int _schemaVersion = 8;
+  static const int _schemaVersion = 9;
 
   Future<sqflite.Database> _ensureDb() async {
     if (_db != null) return _db!;
@@ -190,6 +190,7 @@ class _SqfliteAppDatabase extends AppDatabase {
     await db.execute(_ddlAiMessage);
     await db.execute(_idxAiMessageSession);
     await db.execute(_ddlHealthReport);
+    await db.execute(_ddlMealRecord);
   }
 
   Future<void> _onUpgrade(
@@ -235,6 +236,9 @@ class _SqfliteAppDatabase extends AppDatabase {
           db, 'health_report', 'is_dirty', 'INTEGER NOT NULL DEFAULT 1');
       await _addColumnIfMissing(
           db, 'health_report', 'sync_at', 'INTEGER NOT NULL DEFAULT 0');
+    }
+    if (oldVersion < 9) {
+      await db.execute(_ddlMealRecord);
     }
   }
 
@@ -494,6 +498,31 @@ const String _ddlHealthReport = '''
       raw_text        TEXT    NOT NULL DEFAULT '',
       structured_json TEXT    NOT NULL DEFAULT '{}',
       provider        TEXT    NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      version         INTEGER NOT NULL DEFAULT 0,
+      is_dirty        INTEGER NOT NULL DEFAULT 1,
+      sync_at         INTEGER NOT NULL DEFAULT 0
+    );
+''';
+
+const String _ddlMealRecord = '''
+    CREATE TABLE IF NOT EXISTS meal_record (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         TEXT    NOT NULL,
+      client_id       TEXT    NOT NULL,
+      name            TEXT    NOT NULL DEFAULT '',
+      meal_type       TEXT    NOT NULL DEFAULT 'lunch',
+      eaten_at        INTEGER NOT NULL,
+      image_path      TEXT    NOT NULL DEFAULT '',
+      total_calories  REAL    NOT NULL DEFAULT 0,
+      protein_g       REAL    NOT NULL DEFAULT 0,
+      carbs_g         REAL    NOT NULL DEFAULT 0,
+      fat_g           REAL    NOT NULL DEFAULT 0,
+      health_score    REAL    NOT NULL DEFAULT 0,
+      glycemic_load   REAL    NOT NULL DEFAULT 0,
+      foods_json      TEXT    NOT NULL DEFAULT '[]',
+      nutrition_json  TEXT    NOT NULL DEFAULT '{}',
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL,
       version         INTEGER NOT NULL DEFAULT 0,

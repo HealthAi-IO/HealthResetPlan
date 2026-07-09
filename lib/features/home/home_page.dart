@@ -11,6 +11,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
+import '../meals/meal_record_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -28,7 +29,9 @@ class _HomePageState extends State<HomePage> {
 
   HealthDashboardData? _data;
   List<HealthIndicatorEntry> _recentIndicators = const [];
+  List<MealRecordData> _mealRecords = const [];
   MembershipStatus _memberStatus = MembershipStatus.free;
+  DateTime _selectedMealDate = DateTime.now();
   bool _loading = true;
   bool _promptOpen = false;
 
@@ -54,11 +57,13 @@ class _HomePageState extends State<HomePage> {
     final results = await Future.wait<Object?>([
       _repo.loadDashboard(),
       _repo.loadIndicatorsSince(cutoff),
+      _repo.loadMealsForDate(_selectedMealDate),
     ]);
     if (!mounted) return;
     setState(() {
       _data = results[0] as HealthDashboardData;
       _recentIndicators = results[1] as List<HealthIndicatorEntry>;
+      _mealRecords = results[2] as List<MealRecordData>;
       _loading = false;
     });
     _maybeShowNextPrompt(results[0] as HealthDashboardData);
@@ -143,6 +148,43 @@ class _HomePageState extends State<HomePage> {
 
   bool _shouldPromptForIndicator() => false;
 
+  void _selectMealDate(DateTime date) {
+    setState(() => _selectedMealDate = date);
+    _load(silent: true);
+  }
+
+  void _openMealInput(String mealType) {
+    context
+        .push(
+      '/meals/input',
+      extra: MealInputArgs(
+        mealType: mealType,
+        eatenDate: _selectedMealDate,
+      ),
+    )
+        .then((_) {
+      if (mounted) _load(silent: true);
+    });
+  }
+
+  Future<void> _openMealCalendar() async {
+    final picked = await showDialog<DateTime>(
+      context: context,
+      builder: (ctx) => _MealCalendarDialog(
+        selectedDate: _selectedMealDate,
+        records: _mealRecords,
+        onPickDate: () => showDatePicker(
+          context: ctx,
+          initialDate: _selectedMealDate,
+          firstDate: DateTime.now().subtract(const Duration(days: 365)),
+          lastDate: DateTime.now().add(const Duration(days: 30)),
+          locale: const Locale('zh', 'CN'),
+        ),
+      ),
+    );
+    if (picked != null) _selectMealDate(picked);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading && _data == null) {
@@ -186,6 +228,23 @@ class _HomePageState extends State<HomePage> {
             doneTypes: doneTypes,
             todayLabel: todayLabel,
             onClockTap: () => context.go('/clock'),
+          ),
+          const SizedBox(height: 14),
+
+          _FoodDiaryPanel(
+            selectedDate: _selectedMealDate,
+            records: _mealRecords,
+            targets: DailyNutritionTargets.fromProfile(profile),
+            onDateChanged: _selectMealDate,
+            onRecord: _openMealInput,
+            onOpenCalendar: _openMealCalendar,
+            onOpenRecord: (record) {
+              final id = record.id;
+              if (id == null) return;
+              context.push('/meals/detail/$id').then((_) {
+                if (mounted) _load(silent: true);
+              });
+            },
           ),
           const SizedBox(height: 14),
 
@@ -279,6 +338,11 @@ class _HomePageState extends State<HomePage> {
                       label: '7天计划',
                       color: Colors.green,
                       onTap: () => context.go('/plan')),
+                  _QuickEntry(
+                      icon: Icons.camera_alt_outlined,
+                      label: '拍餐识别',
+                      color: Colors.pinkAccent,
+                      onTap: () => _openMealInput('lunch')),
                   _QuickEntry(
                       icon: Icons.insights_outlined,
                       label: '趋势统计',
@@ -839,6 +903,431 @@ class _PlanSummaryRow extends StatelessWidget {
     );
   }
 }
+
+class _FoodDiaryPanel extends StatelessWidget {
+  const _FoodDiaryPanel({
+    required this.selectedDate,
+    required this.records,
+    required this.targets,
+    required this.onDateChanged,
+    required this.onRecord,
+    required this.onOpenCalendar,
+    required this.onOpenRecord,
+  });
+
+  final DateTime selectedDate;
+  final List<MealRecordData> records;
+  final DailyNutritionTargets targets;
+  final ValueChanged<DateTime> onDateChanged;
+  final ValueChanged<String> onRecord;
+  final VoidCallback onOpenCalendar;
+  final ValueChanged<MealRecordData> onOpenRecord;
+
+  @override
+  Widget build(BuildContext context) {
+    final consumed =
+        records.fold<double>(0, (sum, item) => sum + item.totalCalories);
+    final protein = records.fold<double>(0, (sum, item) => sum + item.proteinG);
+    final carbs = records.fold<double>(0, (sum, item) => sum + item.carbsG);
+    final fat = records.fold<double>(0, (sum, item) => sum + item.fatG);
+    final remaining = (targets.calories - consumed).clamp(0, 9999).toDouble();
+
+    return _Panel(
+      title: '每日饮食',
+      action: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: '饮食日历',
+            icon: const Icon(Icons.calendar_month_outlined),
+            onPressed: onOpenCalendar,
+          ),
+          IconButton(
+            tooltip: '加一道菜',
+            icon: const Icon(Icons.add_circle_outline),
+            onPressed: () => onRecord(_defaultMealType()),
+          ),
+        ],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _MealCalendarBar(
+            selectedDate: selectedDate, onDateChanged: onDateChanged),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7FBFF),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(children: [
+            Row(children: [
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('已摄入',
+                          style: TextStyle(color: AppTheme.muted)),
+                      Text(consumed.round().toString(),
+                          style: const TextStyle(
+                              fontSize: 24, fontWeight: FontWeight.w900)),
+                    ]),
+              ),
+              MacroRing(
+                calories: remaining,
+                proteinG: protein,
+                carbsG: carbs,
+                fatG: fat,
+                size: 112,
+              ),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: const [
+                      Text('已消耗', style: TextStyle(color: AppTheme.muted)),
+                      Text('0',
+                          style: TextStyle(
+                              fontSize: 24, fontWeight: FontWeight.w900)),
+                    ]),
+              ),
+            ]),
+            const SizedBox(height: 14),
+            _NutritionProgress(
+              label: '蛋白质',
+              value: protein,
+              target: targets.proteinG,
+              color: Color(0xFF19B43B),
+            ),
+            const SizedBox(height: 10),
+            _NutritionProgress(
+              label: '碳水化合物',
+              value: carbs,
+              target: targets.carbsG,
+              color: Color(0xFFF59E0B),
+            ),
+            const SizedBox(height: 10),
+            _NutritionProgress(
+              label: '脂肪',
+              value: fat,
+              target: targets.fatG,
+              color: Color(0xFFFACC15),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        for (final section in const [
+          ('breakfast', '早餐', 0.30),
+          ('lunch', '午餐', 0.40),
+          ('dinner', '晚餐', 0.30),
+        ]) ...[
+          _MealSectionCard(
+            mealType: section.$1,
+            title: section.$2,
+            limitCalories: targets.calories * section.$3,
+            records:
+                records.where((item) => item.mealType == section.$1).toList(),
+            onRecord: () => onRecord(section.$1),
+            onOpen: onOpenRecord,
+          ),
+          if (section.$1 != 'dinner') const SizedBox(height: 12),
+        ],
+      ]),
+    );
+  }
+
+  String _defaultMealType() {
+    final hour = DateTime.now().hour;
+    if (hour < 10) return 'breakfast';
+    if (hour < 15) return 'lunch';
+    return 'dinner';
+  }
+}
+
+class _MealCalendarBar extends StatelessWidget {
+  const _MealCalendarBar({
+    required this.selectedDate,
+    required this.onDateChanged,
+  });
+
+  final DateTime selectedDate;
+  final ValueChanged<DateTime> onDateChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateTime.now();
+    final start = DateTime(today.year, today.month, today.day)
+        .subtract(const Duration(days: 3));
+    final dates = [for (var i = 0; i < 7; i++) start.add(Duration(days: i))];
+    return SizedBox(
+      height: 72,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: dates.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, index) {
+          final date = dates[index];
+          final selected = _sameDay(date, selectedDate);
+          return InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => onDateChanged(date),
+            child: Container(
+              width: 56,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: selected
+                    ? AppTheme.primaryBlue.withValues(alpha: 0.16)
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: selected ? AppTheme.primaryBlue : AppTheme.cardBorder,
+                ),
+              ),
+              child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                        DateFormat('E', 'zh_CN')
+                            .format(date)
+                            .replaceAll('周', ''),
+                        style: TextStyle(
+                          color: selected ? AppTheme.deepBlue : AppTheme.muted,
+                          fontWeight: FontWeight.w700,
+                        )),
+                    const SizedBox(height: 4),
+                    Text('${date.day}',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: selected ? AppTheme.deepBlue : AppTheme.ink,
+                        )),
+                  ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MealCalendarDialog extends StatelessWidget {
+  const _MealCalendarDialog({
+    required this.selectedDate,
+    required this.records,
+    required this.onPickDate,
+  });
+
+  final DateTime selectedDate;
+  final List<MealRecordData> records;
+  final Future<DateTime?> Function() onPickDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final total =
+        records.fold<double>(0, (sum, item) => sum + item.totalCalories);
+    return AlertDialog(
+      title: const Text('饮食日历'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Expanded(
+                  child: Text(
+                    DateFormat('yyyy年MM月dd日 EEEE', 'zh_CN')
+                        .format(selectedDate),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                Text('${total.round()} kcal',
+                    style: const TextStyle(
+                        color: AppTheme.deepBlue, fontWeight: FontWeight.w900)),
+              ]),
+              const SizedBox(height: 12),
+              if (records.isEmpty)
+                const Text('这一天还没有饮食记录。',
+                    style: TextStyle(color: AppTheme.muted))
+              else
+                for (final group in const [
+                  ('breakfast', '早餐'),
+                  ('lunch', '午餐'),
+                  ('dinner', '晚餐'),
+                ]) ...[
+                  _MealCalendarGroup(
+                    title: group.$2,
+                    records: records
+                        .where((item) => item.mealType == group.$1)
+                        .toList(),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+            ]),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+        FilledButton.icon(
+          onPressed: () async {
+            final picked = await onPickDate();
+            if (context.mounted && picked != null) {
+              Navigator.pop(context, picked);
+            }
+          },
+          icon: const Icon(Icons.calendar_month_outlined, size: 16),
+          label: const Text('选择日期'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MealCalendarGroup extends StatelessWidget {
+  const _MealCalendarGroup({required this.title, required this.records});
+
+  final String title;
+  final List<MealRecordData> records;
+
+  @override
+  Widget build(BuildContext context) {
+    final calories =
+        records.fold<double>(0, (sum, item) => sum + item.totalCalories);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('$title · ${calories.round()} kcal',
+          style: const TextStyle(fontWeight: FontWeight.w900)),
+      const SizedBox(height: 6),
+      if (records.isEmpty)
+        const Text('暂无记录',
+            style: TextStyle(color: AppTheme.muted, fontSize: 12))
+      else
+        for (final record in records)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text('${record.name} · ${record.totalCalories.round()} kcal',
+                style: const TextStyle(color: AppTheme.muted)),
+          ),
+    ]);
+  }
+}
+
+class _NutritionProgress extends StatelessWidget {
+  const _NutritionProgress({
+    required this.label,
+    required this.value,
+    required this.target,
+    required this.color,
+  });
+
+  final String label;
+  final double value;
+  final double target;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = target <= 0 ? 0.0 : (value / target).clamp(0.0, 1.0);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(
+            child: Text(label,
+                style: const TextStyle(fontWeight: FontWeight.w800))),
+        Text('${value.toStringAsFixed(1)} / ${target.toStringAsFixed(1)}克',
+            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+      ]),
+      const SizedBox(height: 5),
+      LinearProgressIndicator(
+        value: pct,
+        color: color,
+        backgroundColor: color.withValues(alpha: 0.14),
+        minHeight: 6,
+        borderRadius: BorderRadius.circular(99),
+      ),
+    ]);
+  }
+}
+
+class _MealSectionCard extends StatelessWidget {
+  const _MealSectionCard({
+    required this.mealType,
+    required this.title,
+    required this.limitCalories,
+    required this.records,
+    required this.onRecord,
+    required this.onOpen,
+  });
+
+  final String mealType;
+  final String title;
+  final double limitCalories;
+  final List<MealRecordData> records;
+  final VoidCallback onRecord;
+  final ValueChanged<MealRecordData> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final total =
+        records.fold<double>(0, (sum, item) => sum + item.totalCalories);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(children: [
+        Row(children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryBlue.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(_mealIcon(mealType), color: AppTheme.deepBlue),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w900, fontSize: 16)),
+              Text('${total.round()} / ${limitCalories.round()} kcal',
+                  style: const TextStyle(color: AppTheme.muted)),
+            ]),
+          ),
+          OutlinedButton(onPressed: onRecord, child: const Text('加菜')),
+        ]),
+        if (records.isNotEmpty) ...[
+          const Divider(height: 22),
+          for (final record in records)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              onTap: () => onOpen(record),
+              leading: CircleAvatar(
+                backgroundColor: AppTheme.pageBg,
+                child: const Icon(Icons.search, color: AppTheme.deepBlue),
+              ),
+              title: Text(record.name,
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
+              subtitle: Text('${record.totalCalories.round()} kcal，1份'),
+              trailing: const Icon(Icons.chevron_right),
+            ),
+        ],
+      ]),
+    );
+  }
+
+  IconData _mealIcon(String type) => switch (type) {
+        'breakfast' => Icons.breakfast_dining_outlined,
+        'dinner' => Icons.dinner_dining_outlined,
+        _ => Icons.lunch_dining_outlined,
+      };
+}
+
+bool _sameDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
 
 // ── 快捷入口按钮 ──────────────────────────────────────────────
 class _QuickEntry extends StatelessWidget {
