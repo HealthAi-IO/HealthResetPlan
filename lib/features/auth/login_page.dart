@@ -9,7 +9,6 @@ import '../../core/crypto/key_vault.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/sync/sync_service.dart';
@@ -153,6 +152,8 @@ class _LoginPageState extends State<LoginPage> {
         accountIdentifier: phone,
       );
       sl<ApiClient>().setAccessToken(result.accessToken);
+      final switchedAccount = await sl<KeyVault>().bindToAccount(result.userId);
+      await sl<SyncService>().bindToAccount(result.userId);
 
       if (nickname.isNotEmpty) {
         final repo = sl<HealthRepository>();
@@ -165,7 +166,13 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       final messenger = ScaffoldMessenger.of(context);
       context.go('/home');
-      unawaited(_syncLocalDataAfterLogin(messenger));
+      if (switchedAccount) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('检测到账号切换，请恢复当前账号的主密钥后再开启云同步。')),
+        );
+      } else {
+        unawaited(_syncLocalDataAfterLogin(messenger));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -175,7 +182,8 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  String _normalizePhone(String raw) => raw.trim().replaceAll(RegExp(r'\D'), '');
+  String _normalizePhone(String raw) =>
+      raw.trim().replaceAll(RegExp(r'\D'), '');
 
   Future<void> _sendLoginCode() async {
     final phone = _normalizePhone(_phoneCtrl.text);
@@ -207,19 +215,17 @@ class _LoginPageState extends State<LoginPage> {
     ScaffoldMessengerState messenger,
   ) async {
     try {
-      final status = await sl<MembershipService>().getStatus(forceRefresh: true);
-      if (!status.isActive) return;
-
       final sync = sl<SyncService>();
-      await sync.setSyncEnabled(true);
-
-      final umk = await sl<KeyVault>().readUmk();
-      if (umk == null) {
+      final keyState = await sl<KeyVault>().status();
+      if (keyState != KeyVaultState.ready) {
+        await sync.setSyncEnabled(false);
         messenger.showSnackBar(
-          const SnackBar(content: Text('登录成功。云同步前请先恢复主密钥。')),
+          SnackBar(content: Text('登录成功。${keyState.syncMessage}')),
         );
         return;
       }
+
+      await sync.setSyncEnabled(true);
 
       final result = await sync.sync();
       if (result.hasError) {
@@ -248,6 +254,26 @@ class _LoginPageState extends State<LoginPage> {
     if (updated == true && mounted) {
       setState(() => _error = '密码已重置，请使用新密码登录');
     }
+  }
+
+  Future<void> _showAccountRecoveryDialog() async {
+    final result = await showDialog<_RecoveredAccount>(
+      context: context,
+      builder: (_) => const _AccountRecoveryDialog(),
+    );
+    if (result == null || !mounted) return;
+    await UserSession.instance.setAccountSession(
+      userId: result.auth.userId,
+      accessToken: result.auth.accessToken,
+      refreshToken: result.auth.refreshToken,
+      nickname: result.auth.userId,
+      accountIdentifier: result.phone,
+    );
+    sl<ApiClient>().setAccessToken(result.auth.accessToken);
+    await sl<KeyVault>().bindToAccount(result.auth.userId);
+    await sl<KeyVault>().restoreFromMnemonic(result.mnemonic);
+    await sl<SyncService>().bindToAccount(result.auth.userId);
+    if (mounted) context.go('/sync');
   }
 
   void _toggleAccountMode() {
@@ -326,6 +352,7 @@ class _LoginPageState extends State<LoginPage> {
                     onSubmit: _submit,
                     onSendCode: _sendLoginCode,
                     onForgotPassword: _showForgotPasswordDialog,
+                    onRecoverAccount: _showAccountRecoveryDialog,
                     onToggleAccountMode: _toggleAccountMode,
                     onToggleRegisterMode: _toggleRegisterMode,
                     onLoginModeChanged: (value) => setState(() {
@@ -361,6 +388,7 @@ class _LoginCard extends StatelessWidget {
     required this.onSubmit,
     required this.onSendCode,
     required this.onForgotPassword,
+    required this.onRecoverAccount,
     required this.onToggleAccountMode,
     required this.onToggleRegisterMode,
     required this.onLoginModeChanged,
@@ -381,6 +409,7 @@ class _LoginCard extends StatelessWidget {
   final VoidCallback onSubmit;
   final VoidCallback onSendCode;
   final VoidCallback onForgotPassword;
+  final VoidCallback onRecoverAccount;
   final VoidCallback onToggleAccountMode;
   final VoidCallback onToggleRegisterMode;
   final ValueChanged<bool> onLoginModeChanged;
@@ -409,9 +438,7 @@ class _LoginCard extends StatelessWidget {
         ]),
         const SizedBox(height: 4),
         Text(
-          accountMode
-              ? '账号用于会员权益、AI 功能和云同步。'
-              : '只保存在本地，无网络也可以使用。',
+          accountMode ? '账号用于会员权益、AI 功能和云同步。' : '只保存在本地，无网络也可以使用。',
           style: const TextStyle(color: AppTheme.muted, fontSize: 13),
         ),
         const SizedBox(height: 16),
@@ -431,8 +458,9 @@ class _LoginCard extends StatelessWidget {
                 ),
               ],
               selected: {smsLoginMode},
-              onSelectionChanged:
-                  saving ? null : (selected) => onLoginModeChanged(selected.first),
+              onSelectionChanged: saving
+                  ? null
+                  : (selected) => onLoginModeChanged(selected.first),
             ),
           Align(
             alignment: Alignment.centerRight,
@@ -512,6 +540,14 @@ class _LoginCard extends StatelessWidget {
                 child: const Text('忘记密码？'),
               ),
             ),
+          if (!registerMode)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: saving ? null : onRecoverAccount,
+                child: const Text('恢复已注销账号'),
+              ),
+            ),
           const SizedBox(height: 12),
         ],
         TextField(
@@ -556,6 +592,135 @@ class _LoginCard extends StatelessWidget {
   }
 }
 
+class _RecoveredAccount {
+  const _RecoveredAccount(this.auth, this.phone, this.mnemonic);
+  final AuthResult auth;
+  final String phone;
+  final String mnemonic;
+}
+
+class _AccountRecoveryDialog extends StatefulWidget {
+  const _AccountRecoveryDialog();
+  @override
+  State<_AccountRecoveryDialog> createState() => _AccountRecoveryDialogState();
+}
+
+class _AccountRecoveryDialogState extends State<_AccountRecoveryDialog> {
+  final _phone = TextEditingController();
+  final _code = TextEditingController();
+  final _mnemonic = TextEditingController();
+  bool _sending = false;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _phone.dispose();
+    _code.dispose();
+    _mnemonic.dispose();
+    super.dispose();
+  }
+
+  String get _normalizedPhone => _phone.text.replaceAll(RegExp(r'\D'), '');
+
+  Future<void> _sendCode() async {
+    if (!RegExp(r'^1\d{10}$').hasMatch(_normalizedPhone)) {
+      setState(() => _error = '请输入正确的手机号');
+      return;
+    }
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      final result =
+          await sl<AuthApi>().sendAccountRecoveryCode(_normalizedPhone);
+      if (result.debugCode.isNotEmpty) _code.text = result.debugCode;
+    } catch (e) {
+      if (mounted) setState(() => _error = friendlyAuthError(e));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _recover() async {
+    if (!RegExp(r'^1\d{10}$').hasMatch(_normalizedPhone) ||
+        _code.text.trim().isEmpty ||
+        _mnemonic.text.trim().isEmpty) {
+      setState(() => _error = '请填写手机号、验证码和 24 词助记词');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final mnemonic = _mnemonic.text.trim();
+      final fingerprint =
+          await sl<KeyVault>().fingerprintFromMnemonic(mnemonic);
+      final auth = await sl<AuthApi>().reactivateAccount(
+          phone: _normalizedPhone,
+          code: _code.text.trim(),
+          keyFingerprint: fingerprint);
+      if (mounted) {
+        Navigator.pop(
+            context, _RecoveredAccount(auth, _normalizedPhone, mnemonic));
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = friendlyAuthError(e));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('恢复已注销账号'),
+        content: SizedBox(
+            width: 420,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text('仅在注销后 30 天内可恢复。需原手机号验证码和原 24 词助记词；助记词不会上传。',
+                  style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: '原手机号')),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                    child: TextField(
+                        controller: _code,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: '验证码'))),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                    onPressed: _sending ? null : _sendCode,
+                    child: Text(_sending ? '发送中...' : '获取验证码'))
+              ]),
+              const SizedBox(height: 10),
+              TextField(
+                  controller: _mnemonic,
+                  minLines: 3,
+                  maxLines: 4,
+                  decoration: const InputDecoration(labelText: '原 24 词助记词')),
+              if (_error != null)
+                Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(_error!,
+                        style: TextStyle(color: Colors.red.shade700))),
+            ])),
+        actions: [
+          TextButton(
+              onPressed: _saving ? null : () => Navigator.pop(context),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: _saving ? null : _recover,
+              child: Text(_saving ? '恢复中...' : '恢复并登录'))
+        ],
+      );
+}
+
 class _ForgotPasswordDialog extends StatefulWidget {
   const _ForgotPasswordDialog();
 
@@ -580,7 +745,8 @@ class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
     super.dispose();
   }
 
-  String _normalizePhone(String raw) => raw.trim().replaceAll(RegExp(r'\D'), '');
+  String _normalizePhone(String raw) =>
+      raw.trim().replaceAll(RegExp(r'\D'), '');
 
   Future<void> _sendCode() async {
     final phone = _normalizePhone(_phoneCtrl.text);

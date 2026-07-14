@@ -12,6 +12,17 @@ class AiApi {
 
   final ApiClient _client;
 
+  Future<Map<String, int>> dailyUsage() async {
+    final response = await _client.dio.get('/ai/chat/daily-usage');
+    final data = _unwrapData(response.data);
+    final result = <String, int>{};
+    for (final type in ['chat', 'plan', 'report']) {
+      final item = data[type];
+      if (item is Map) result[type] = (item['remaining'] as num?)?.toInt() ?? 0;
+    }
+    return result;
+  }
+
   static final Options _aiRequestOptions = Options(
     connectTimeout: const Duration(seconds: 15),
     sendTimeout: const Duration(seconds: 45),

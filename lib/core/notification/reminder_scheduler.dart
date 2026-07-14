@@ -9,7 +9,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 
-/// 将 [HealthRepository] 中的提醒规则同步为系统本地通知。
+/// 将 [HealthRepository] 中的提醒规则同步为今天和明天的系统本地通知。
 ///
 /// 调用顺序：initialize() → requestPermission() → syncAll()
 /// 每次新增或删除提醒后再调用一次 syncAll() 保持同步。
@@ -114,37 +114,70 @@ class ReminderScheduler {
     await _plugin.cancelAll();
 
     final reminders = await repository.loadReminders();
+    final now = tz.TZDateTime.now(tz.local);
     for (final reminder in reminders) {
-      if (reminder.id != null) {
-        await _scheduleDaily(reminder);
-      }
+      if (reminder.id == null) continue;
+      await _scheduleUpcoming(reminder, now);
     }
   }
 
   // ── 单条提醒调度 ─────────────────────────────────────────────
 
-  Future<void> _scheduleDaily(ReminderData reminder) async {
-    final time = reminder.remindTime;
-    final now = tz.TZDateTime.now(tz.local);
+  Future<void> _scheduleUpcoming(
+    ReminderData reminder,
+    tz.TZDateTime now,
+  ) async {
+    final reminderDate = reminder.remindTime;
+    final today = tz.TZDateTime(now.location, now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final isLocalRule = reminder.channel == 'local';
 
-    // 计算今日该时刻；若已过则推到明天
-    var scheduled = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      time.hour,
-      time.minute,
-    );
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
+    if (isLocalRule) {
+      final todayAt = tz.TZDateTime(
+        now.location,
+        now.year,
+        now.month,
+        now.day,
+        reminderDate.hour,
+        reminderDate.minute,
+      );
+      if (todayAt.isAfter(now)) {
+        await _scheduleOnce(reminder, todayAt, 0);
+      }
+      await _scheduleOnce(
+        reminder,
+        tz.TZDateTime(
+          now.location,
+          tomorrow.year,
+          tomorrow.month,
+          tomorrow.day,
+          reminderDate.hour,
+          reminderDate.minute,
+        ),
+        1,
+      );
+      return;
     }
 
+    final scheduled = tz.TZDateTime.from(reminderDate, now.location);
+    if (scheduled.isBefore(now) ||
+        scheduled.isAfter(tomorrow.add(const Duration(days: 1)))) {
+      return;
+    }
+    await _scheduleOnce(
+        reminder, scheduled, scheduled.day == today.day ? 0 : 1);
+  }
+
+  Future<void> _scheduleOnce(
+    ReminderData reminder,
+    tz.TZDateTime scheduled,
+    int dayOffset,
+  ) async {
     final note = reminder.payload['note'] as String? ?? '';
     final body = note.isNotEmpty ? note : reminder.label;
 
     await _plugin.zonedSchedule(
-      reminder.id!,
+      reminder.id! * 10 + dayOffset,
       reminder.label,
       body,
       scheduled,
@@ -152,7 +185,6 @@ class ReminderScheduler {
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time,
     );
   }
 

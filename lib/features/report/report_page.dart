@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
@@ -73,6 +74,8 @@ class _OcrResult {
     required this.analysisAdvice,
     required this.rawText,
     required this.provider,
+    required this.highRisk,
+    required this.riskMessage,
   });
 
   final String? reportDate;
@@ -81,6 +84,8 @@ class _OcrResult {
   final String analysisAdvice;
   final String rawText;
   final String provider;
+  final bool highRisk;
+  final String riskMessage;
 
   factory _OcrResult.fromJson(Map<String, dynamic> json) {
     final normalized = _normalizeOcrJson(json);
@@ -98,6 +103,8 @@ class _OcrResult {
       analysisAdvice: normalized['analysisAdvice'] as String? ?? '',
       rawText: _displayRawText(normalized),
       provider: normalized['provider'] as String? ?? 'vision',
+      highRisk: normalized['highRisk'] == true,
+      riskMessage: normalized['riskMessage'] as String? ?? '',
     );
   }
 
@@ -108,6 +115,8 @@ class _OcrResult {
         'analysisAdvice': _withAiDoctorDisclaimer(analysisAdvice),
         'rawText': rawText,
         'provider': provider,
+        'highRisk': highRisk,
+        'riskMessage': riskMessage,
       };
 }
 
@@ -174,12 +183,14 @@ class _ReportPageState extends State<ReportPage> {
   XFile? _pickedImage;
   _OcrResult? _ocrResult;
   List<HealthReportRecord> _reports = const [];
+  int? _aiRemaining;
 
   @override
   void initState() {
     super.initState();
     _repo.addListener(_onRepoChanged);
     _load();
+    _loadAiUsage();
   }
 
   @override
@@ -198,6 +209,17 @@ class _ReportPageState extends State<ReportPage> {
       _reports = reports;
       _loading = false;
     });
+  }
+
+  Future<void> _loadAiUsage() async {
+    try {
+      final response = await _apiClient.dio.get('/ai/chat/daily-usage');
+      final body = _unwrapResponseData(response.data);
+      final report = body['report'];
+      if (mounted && report is Map) {
+        setState(() => _aiRemaining = (report['remaining'] as num?)?.toInt());
+      }
+    } catch (_) {}
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -271,6 +293,20 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _analyzeImage(XFile file) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (preferences.getBool('report_ai_image_consent') != true) {
+      if (!mounted) return;
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('报告图片处理提示'),
+          content: const Text('报告图片会发送给已配置的 AI 服务商，仅用于本次指标识别。是否继续？'),
+          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('同意并继续'))],
+        ),
+      );
+      if (accepted != true) return;
+      await preferences.setBool('report_ai_image_consent', true);
+    }
     setState(() {
       _analyzing = true;
       _analyzeStage = 'Preparing image...';
@@ -309,6 +345,7 @@ class _ReportPageState extends State<ReportPage> {
         _analyzeStage = '';
       });
       _showReviewSheet(result);
+      _loadAiUsage();
     } on DioException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -730,6 +767,10 @@ class _ReportPageState extends State<ReportPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            if (_aiRemaining != null) Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text('今日报告识别剩余 $_aiRemaining / 5 次', style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
+            ),
             _PickCard(
               pickedImage: _pickedImage,
               analyzing: _analyzing,
@@ -926,6 +967,11 @@ class _OcrSummaryCard extends StatelessWidget {
                 fontWeight: FontWeight.w700, color: Colors.green.shade700),
           ),
         ]),
+        if (result.highRisk) ...[
+          const SizedBox(height: 10),
+          Text(result.riskMessage.isEmpty ? '报告存在高风险信息，请尽快就医。' : result.riskMessage,
+              style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.w700)),
+        ],
         if (result.summary.isNotEmpty) ...[
           const SizedBox(height: 6),
           Text(result.summary,

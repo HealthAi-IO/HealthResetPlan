@@ -21,6 +21,34 @@ class KeyVault {
 
   static const _umkKey = 'hrp_umk_v1';
   static const _backedUpKey = 'hrp_umk_backed_up';
+  static const _ownerKey = 'hrp_umk_owner_v1';
+
+  Future<KeyVaultState> status() async {
+    try {
+      final encoded = await storage.read(key: _umkKey);
+      if (encoded == null || encoded.isEmpty) return KeyVaultState.missing;
+      final decoded = base64Decode(encoded);
+      if (decoded.length != 32) return KeyVaultState.unreadable;
+      return await isBackedUp()
+          ? KeyVaultState.ready
+          : KeyVaultState.unconfirmed;
+    } catch (_) {
+      return KeyVaultState.unreadable;
+    }
+  }
+
+  /// 将设备上的 UMK 绑定到账号。首次绑定沿用已有本地密钥；切换账号时销毁旧账号密钥。
+  Future<bool> bindToAccount(String userId) async {
+    final owner = await storage.read(key: _ownerKey);
+    if (owner == null || owner.isEmpty) {
+      await storage.write(key: _ownerKey, value: userId);
+      return false;
+    }
+    if (owner == userId) return false;
+    await destroy();
+    await storage.write(key: _ownerKey, value: userId);
+    return true;
+  }
 
   /// 读取 UMK；未生成或未恢复时返回 null。
   Future<Uint8List?> readUmk() async {
@@ -92,6 +120,26 @@ class KeyVault {
   Future<String?> publicFingerprint() async {
     final umk = await readUmk();
     if (umk == null) return null;
+    final hash = await Sha256().hash([
+      ...utf8.encode('hrp-umk-public-fingerprint:v1:'),
+      ...umk,
+    ]);
+    return _bytesToHex(Uint8List.fromList(hash.bytes));
+  }
+
+  /// Validates a mnemonic and derives its public fingerprint without writing it.
+  Future<String> fingerprintFromMnemonic(String mnemonic) async {
+    final normalized =
+        mnemonic.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    if (!bip39.validateMnemonic(normalized)) {
+      throw KeyVaultException('助记词无效，请核对 24 个单词');
+    }
+    final entropy = bip39.mnemonicToEntropy(normalized);
+    final umk = Uint8List.fromList(List<int>.generate(
+      entropy.length ~/ 2,
+      (index) =>
+          int.parse(entropy.substring(index * 2, index * 2 + 2), radix: 16),
+    ));
     final hash = await Sha256().hash([
       ...utf8.encode('hrp-umk-public-fingerprint:v1:'),
       ...umk,
@@ -210,6 +258,20 @@ class KeyVault {
     }
     return sb.toString();
   }
+}
+
+enum KeyVaultState {
+  missing,
+  unconfirmed,
+  unreadable,
+  ready;
+
+  String get syncMessage => switch (this) {
+        KeyVaultState.missing => '尚未生成主密钥（UMK），请先生成并确认备份助记词。',
+        KeyVaultState.unconfirmed => '主密钥尚未确认备份，请确认已离线保存助记词后再开启云同步。',
+        KeyVaultState.unreadable => '本地安全存储不可读取，请使用原 24 词助记词恢复主密钥。',
+        KeyVaultState.ready => '',
+      };
 }
 
 class KeyVaultException implements Exception {

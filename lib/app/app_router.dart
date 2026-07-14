@@ -15,12 +15,10 @@ import '../features/meals/meal_record_page.dart';
 import '../features/plan/plan_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/report/report_page.dart';
-import '../features/self_check/self_check_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/stats_page.dart';
 import '../features/sync/cloud_sync_page.dart';
 import '../features/sync/key_setup_page.dart';
-import '../features/weather/weather_page.dart';
 
 class AppRouter {
   AppRouter._();
@@ -167,14 +165,6 @@ class AppRouter {
       GoRoute(
         path: '/chat',
         pageBuilder: (_, state) => _page(state, const ChatPage()),
-      ),
-      GoRoute(
-        path: '/self-check',
-        pageBuilder: (_, state) => _page(state, const SelfCheckPage()),
-      ),
-      GoRoute(
-        path: '/weather',
-        pageBuilder: (_, state) => _page(state, const WeatherPage()),
       ),
     ],
   );

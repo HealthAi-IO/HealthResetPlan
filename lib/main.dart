@@ -10,6 +10,7 @@ import 'core/data/health_models.dart';
 import 'core/data/health_repository.dart';
 import 'core/di/service_locator.dart';
 import 'core/notification/reminder_scheduler.dart';
+import 'core/privacy/privacy_consent_gate.dart';
 
 ThemeMode get _themeMode => ThemeMode.light;
 final GlobalKey<ScaffoldMessengerState> _messengerKey =
@@ -17,7 +18,7 @@ final GlobalKey<ScaffoldMessengerState> _messengerKey =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const _AppLoader());
+  runApp(const PrivacyConsentGate(child: _AppLoader()));
 }
 
 class _AppLoader extends StatefulWidget {
@@ -65,11 +66,7 @@ class _AppLoaderState extends State<_AppLoader> {
 
   void _initNotificationsInBackground() {
     final scheduler = sl<ReminderScheduler>();
-    scheduler
-        .initialize()
-        .then((_) => scheduler.requestPermission())
-        .then((_) => scheduler.syncAll())
-        .catchError((_) {});
+    scheduler.initialize().then((_) => scheduler.syncAll()).catchError((_) {});
   }
 
   @override

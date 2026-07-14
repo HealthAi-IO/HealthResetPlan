@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -29,6 +31,7 @@ class _KeySetupPageState extends State<KeySetupPage> {
   String? _restoreMnemonicError;
   String? _restoreStatusMessage;
   bool _restoreStatusError = false;
+  Timer? _clipboardClearTimer;
 
   @override
   void initState() {
@@ -38,6 +41,7 @@ class _KeySetupPageState extends State<KeySetupPage> {
 
   @override
   void dispose() {
+    _clipboardClearTimer?.cancel();
     _restoreController.dispose();
     super.dispose();
   }
@@ -102,12 +106,12 @@ class _KeySetupPageState extends State<KeySetupPage> {
         await sl<SyncService>().setSyncEnabled(false);
         if (!mounted) return;
         setState(() {
-          _restoreStatusMessage = '主密钥已恢复到本地。登录账号并开通会员后，可在云同步页拉取云端数据。';
+          _restoreStatusMessage = '主密钥已恢复到本地。登录原账号后，可在云同步页拉取云端数据。';
           _restoreStatusError = false;
         });
         messenger.showSnackBar(
           const SnackBar(
-            content: Text('主密钥已恢复到本地。登录账号并开通会员后，可在云同步页拉取云端数据。'),
+            content: Text('主密钥已恢复到本地。登录原账号后，可在云同步页拉取云端数据。'),
           ),
         );
         return;
@@ -162,6 +166,14 @@ class _KeySetupPageState extends State<KeySetupPage> {
     if (_mnemonic == null) return;
     final messenger = ScaffoldMessenger.of(context);
     await Clipboard.setData(ClipboardData(text: _mnemonic!));
+    _clipboardClearTimer?.cancel();
+    final copied = _mnemonic!;
+    _clipboardClearTimer = Timer(const Duration(seconds: 60), () async {
+      final current = await Clipboard.getData(Clipboard.kTextPlain);
+      if (current?.text == copied) {
+        await Clipboard.setData(const ClipboardData(text: ''));
+      }
+    });
     if (!mounted) return;
     messenger.showSnackBar(const SnackBar(content: Text('助记词已复制到剪贴板，请立即离线保存')));
   }

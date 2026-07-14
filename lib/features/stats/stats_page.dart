@@ -3,7 +3,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
@@ -14,7 +13,6 @@ import '../../core/di/service_locator.dart';
 import '../../core/membership/membership_service.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
-import '../../core/sync/sync_service.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -25,153 +23,15 @@ class StatsPage extends StatefulWidget {
 
 class _StatsPageState extends State<StatsPage> {
   final HealthRepository _repo = sl<HealthRepository>();
-  final MembershipService _membership = sl<MembershipService>();
 
   bool _loading = true;
   HealthDashboardData? _data;
   ClockStats? _clockStats;
   String? _error;
-  MembershipStatus _memberStatus = MembershipStatus.free;
-  AccountInfo? _accountInfo;
 
   List<HealthIndicatorEntry> _weightEntries = const [];
   List<HealthIndicatorEntry> _bpEntries = const [];
   List<HealthIndicatorEntry> _glucoseEntries = const [];
-
-  Future<void> _pickAndUploadAvatar() async {
-    if (!UserSession.instance.isAccountLogin) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先登录账号后再上传头像')),
-      );
-      return;
-    }
-
-    final picker = ImagePicker();
-    final file = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 82,
-    );
-    if (file == null) return;
-    if (!mounted) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      messenger.showSnackBar(const SnackBar(content: Text('正在上传头像...')));
-      final auth = sl<AuthApi>();
-      final avatarUrl = await auth.uploadAvatar(file.path);
-      final updated = await auth.updateAccountProfile(avatarUrl: avatarUrl);
-      if (!mounted) return;
-      setState(() => _accountInfo = updated ?? _accountInfo);
-      await _load(silent: true);
-      messenger.showSnackBar(const SnackBar(content: Text('头像已更新')));
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('头像上传失败：$e'),
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
-    }
-  }
-
-  Future<void> _signOut() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('退出登录'),
-        content: const Text(
-          '退出后会清除当前账号登录状态，并自动回到本地免费版。已录入的本地健康数据、聊天记录和打卡数据都会保留。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('退出登录'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final refresh = UserSession.instance.refreshToken;
-    if (refresh != null && refresh.isNotEmpty) {
-      try {
-        await sl<AuthApi>().logout(refresh);
-      } catch (_) {
-        // Local sign-out should still finish when the server is unreachable.
-      }
-    }
-
-    await UserSession.instance.signOut();
-    sl<ApiClient>().setAccessToken(null);
-    _membership.invalidateCache();
-    if (!mounted) return;
-    setState(() {
-      _memberStatus = MembershipStatus.free;
-      _accountInfo = null;
-    });
-    await _load(silent: true);
-  }
-
-  Future<void> _cancelAccount() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('注销账号'),
-        content: const Text(
-          '注销后账号将无法继续登录，云端加密数据会保留 90 天。\n\n'
-          '90 天内如果使用同一组助记词恢复并同步，可继续看到原云端数据；'
-          '超过 90 天未使用该密钥，云端数据会永久清空，之后无法恢复。\n\n'
-          '本机本地数据不会自动删除，如需删除请到档案页使用“清空全部本地数据”。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确认注销'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await sl<AuthApi>().cancelAccount();
-      await UserSession.instance.signOut();
-      sl<ApiClient>().setAccessToken(null);
-      await sl<SyncService>().setSyncEnabled(false);
-      await sl<SyncService>().resetLastSyncMs();
-      _membership.invalidateCache();
-      if (!mounted) return;
-      messenger.showSnackBar(
-        const SnackBar(content: Text('账号已注销，云端加密数据进入 90 天保留期')),
-      );
-      setState(() {
-        _memberStatus = MembershipStatus.free;
-        _accountInfo = null;
-      });
-      await _load(silent: true);
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('注销账号失败：$e'),
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
-    }
-  }
 
   @override
   void initState() {
@@ -217,7 +77,6 @@ class _StatsPageState extends State<StatsPage> {
             (results[4] as List<HealthIndicatorEntry>).reversed.toList();
         _loading = false;
       });
-      _loadAccountState();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -225,23 +84,6 @@ class _StatsPageState extends State<StatsPage> {
         _error = e.toString();
       });
     }
-  }
-
-  Future<void> _loadAccountState() async {
-    final status = await _membership.getStatus();
-    AccountInfo? accountInfo;
-    if (UserSession.instance.isAccountLogin) {
-      try {
-        accountInfo = await sl<AuthApi>().fetchAccountInfo();
-      } catch (_) {
-        accountInfo = _accountInfo;
-      }
-    }
-    if (!mounted) return;
-    setState(() {
-      _memberStatus = status;
-      _accountInfo = accountInfo;
-    });
   }
 
   @override
@@ -282,23 +124,8 @@ class _StatsPageState extends State<StatsPage> {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         cacheExtent: 900,
         children: [
-          _UnifiedProfileCard(
-            accountInfo: _accountInfo,
-            memberStatus: _memberStatus,
+          _TrendHeader(
             profile: profile,
-            onAvatarTap: _pickAndUploadAvatar,
-            onLogin: () => context.push('/login', extra: true).then((_) {
-              if (mounted) _load(silent: true);
-            }),
-            onMembership: () {
-              /*
-              context.push('/membership').then((_) {
-                if (mounted) _load(silent: true);
-              });
-              */
-            },
-            onSignOut: _signOut,
-            onCancelAccount: _cancelAccount,
             onEditProfile: () => context.go('/profile'),
           ),
           const SizedBox(height: 14),
@@ -411,52 +238,26 @@ class _StatsSkeletonBlock extends StatelessWidget {
 }
 
 // ── 账号状态卡片 ──────────────────────────────────────────────
-class _UnifiedProfileCard extends StatelessWidget {
-  const _UnifiedProfileCard({
-    required this.accountInfo,
-    required this.memberStatus,
+class _TrendHeader extends StatelessWidget {
+  const _TrendHeader({
     required this.profile,
-    required this.onAvatarTap,
-    required this.onLogin,
-    required this.onMembership,
-    required this.onSignOut,
-    required this.onCancelAccount,
     required this.onEditProfile,
   });
 
-  final AccountInfo? accountInfo;
-  final MembershipStatus memberStatus;
   final UserProfileData? profile;
-  final VoidCallback onAvatarTap;
-  final VoidCallback onLogin;
-  final VoidCallback onMembership;
-  final VoidCallback onSignOut;
-  final VoidCallback onCancelAccount;
   final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context) {
     final profile = this.profile;
-    final isLoggedIn = UserSession.instance.isAccountLogin;
     final displayName = (profile?.nickname.isNotEmpty == true)
         ? profile!.nickname
         : UserSession.instance.name;
-    final name = displayName.isNotEmpty ? displayName : '未设置昵称';
-    final imageUrl = _avatarImageUrl(accountInfo);
-    final savedPhone = UserSession.instance.accountIdentifier?.trim() ?? '';
-    final phoneTail = accountInfo?.phoneTail.trim() ?? '';
-    final phoneText = savedPhone.isNotEmpty
-        ? '手机号 $savedPhone'
-        : phoneTail.isEmpty
-            ? '手机号未绑定'
-            : '手机号 **** $phoneTail';
+    final name = displayName.isNotEmpty ? displayName : '健康趋势';
     final age = profile?.age;
     final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
     final bmi = profile?.bmi ?? 0;
     final bmiText = bmi == 0 ? 'BMI --' : 'BMI ${bmi.toStringAsFixed(1)}';
-    final membershipText = '免费使用';
-    final cloudText = accountInfo?.hasCloudSync == true ? '已开启' : '未开启';
-
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -480,23 +281,16 @@ class _UnifiedProfileCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              GestureDetector(
-                onTap: isLoggedIn ? onAvatarTap : null,
-                child: CircleAvatar(
-                  radius: 31,
-                  backgroundColor: Colors.white24,
-                  foregroundImage:
-                      imageUrl == null ? null : NetworkImage(imageUrl),
-                  child: imageUrl == null
-                      ? Text(
-                          name.characters.first,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        )
-                      : null,
+              CircleAvatar(
+                radius: 31,
+                backgroundColor: Colors.white24,
+                child: Text(
+                  name.characters.first,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
@@ -529,9 +323,9 @@ class _UnifiedProfileCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      isLoggedIn ? phoneText : '本地免费版',
-                      style: const TextStyle(
+                    const Text(
+                      '查看已记录指标的变化与完成情况',
+                      style: TextStyle(
                         color: Colors.white70,
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -539,106 +333,18 @@ class _UnifiedProfileCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: [
-                        _MiniStatusChip(text: ageText),
-                        _MiniStatusChip(text: bmiText),
-                        _MiniStatusChip(text: isLoggedIn ? '已绑定账号' : '未绑定账号'),
-                      ],
-                    ),
+                    Wrap(spacing: 8, runSpacing: 6, children: [
+                      _MiniStatusChip(text: ageText),
+                      _MiniStatusChip(text: bmiText)
+                    ]),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              Expanded(
-                child: _CardInfoPill(
-                  icon: Icons.cloud_outlined,
-                  label: '云同步',
-                  value: cloudText,
-                  highlight: accountInfo?.hasCloudSync == true,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _CardInfoPill(
-                  icon: Icons.verified_user_outlined,
-                  label: '使用状态',
-                  value: membershipText,
-                  highlight: true,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (!isLoggedIn)
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: onLogin,
-                icon: const Icon(Icons.login, size: 18),
-                label: const Text('注册 / 登录账号'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0277BD),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            )
-          else ...[
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: null,
-                icon: const Icon(Icons.verified_user_outlined, size: 18),
-                label: const Text('免费使用中'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Colors.white60),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Center(
-              child: TextButton.icon(
-                onPressed: onSignOut,
-                icon: const Icon(Icons.logout, size: 18),
-                label: const Text('退出登录'),
-                style: TextButton.styleFrom(foregroundColor: Colors.white70),
-              ),
-            ),
-            Center(
-              child: TextButton.icon(
-                onPressed: onCancelAccount,
-                icon: const Icon(Icons.person_remove_outlined, size: 18),
-                label: const Text('注销账号'),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.red.shade100,
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
-  }
-
-  String? _avatarImageUrl(AccountInfo? info) {
-    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
-      return null;
-    }
-    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
-    final apiRoot = baseUrl.endsWith('/api/v1')
-        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
-        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
-    final stamp = Uri.encodeComponent(info.avatarUrl);
-    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
   }
 }
 

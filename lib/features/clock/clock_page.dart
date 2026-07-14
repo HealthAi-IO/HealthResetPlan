@@ -143,7 +143,7 @@ class _ClockPageState extends State<ClockPage> {
     _showSnack('称重 $result kg 已记录 ✓');
   }
 
-  Future<void> _syncToAlarm(int hour, int minute, String label) async {
+  Future<void> _openSystemAlarm(int hour, int minute, String label) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     final intent = AndroidIntent(
       action: 'android.intent.action.SET_ALARM',
@@ -151,11 +151,25 @@ class _ClockPageState extends State<ClockPage> {
         'android.intent.extra.alarm.HOUR': hour,
         'android.intent.extra.alarm.MINUTES': minute,
         'android.intent.extra.alarm.MESSAGE': label,
-        'android.intent.extra.alarm.SKIP_UI': true,
         'android.intent.extra.alarm.VIBRATE': true,
       },
     );
     await intent.launch();
+  }
+
+  Future<void> _syncReminderToSystemAlarm(ReminderData reminder) async {
+    try {
+      await _openSystemAlarm(
+        reminder.remindTime.hour,
+        reminder.remindTime.minute,
+        reminder.label,
+      );
+      if (mounted) {
+        _showSnack('已打开系统闹钟，请在系统界面确认创建');
+      }
+    } catch (_) {
+      if (mounted) _showSnack('无法打开系统闹钟，请在手机时钟 App 中手动创建');
+    }
   }
 
   Future<void> _addReminder(String type) async {
@@ -165,15 +179,31 @@ class _ClockPageState extends State<ClockPage> {
     if (result == null) return;
     await _repo.addReminder(type: type, time: result.time, note: result.note);
     try {
+      await _scheduler.initialize();
+      await _scheduler.requestPermission();
       await _scheduler.syncAll();
     } catch (_) {}
-    if (result.syncAlarm) {
-      try {
-        await _syncToAlarm(result.time.hour, result.time.minute, result.note);
-      } catch (_) {}
-    }
     if (!mounted) return;
-    _showSnack(result.syncAlarm ? '提醒规则已保存，已同步到系统闹钟' : '提醒规则已保存');
+    _showSnack(result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存');
+    if (result.syncAlarm) {
+      await _syncReminderToSystemAlarm(
+        ReminderData(
+          type: type,
+          remindAt: DateTime(
+            DateTime.now().year,
+            DateTime.now().month,
+            DateTime.now().day,
+            result.time.hour,
+            result.time.minute,
+          ).millisecondsSinceEpoch,
+          payload: const {},
+          channel: 'local',
+          status: 'pending',
+          createdAt: 0,
+          updatedAt: 0,
+        ),
+      );
+    }
   }
 
   Future<String?> _showNoteDialog(
@@ -335,7 +365,7 @@ class _ClockPageState extends State<ClockPage> {
           // 新增提醒
           _Panel(
             title: '新增提醒',
-            subtitle: '设置每日提醒时间',
+            subtitle: '仅提醒今天和明天',
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -388,8 +418,7 @@ class _ClockPageState extends State<ClockPage> {
                     await _scheduler.syncAll();
                   } catch (_) {}
                 },
-                onSyncAlarm: (r) => _syncToAlarm(
-                    r.remindTime.hour, r.remindTime.minute, r.label),
+                onSyncAlarm: _syncReminderToSystemAlarm,
               ),
             );
             if (wide) {

@@ -20,7 +20,7 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
   final KeyVault _vault = sl<KeyVault>();
 
   bool _syncEnabled = false;
-  bool _backedUp = false;
+  KeyVaultState _keyState = KeyVaultState.missing;
   int _lastSyncMs = 0;
   bool _syncing = false;
   String? _syncMessage;
@@ -33,13 +33,18 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
 
   Future<void> _load() async {
     final enabled = await _syncService.isSyncEnabled();
-    final backedUp = await _vault.isBackedUp();
+    final keyState = await _vault.status();
     final lastMs = await _syncService.getLastSyncMs();
+    final effectiveEnabled = enabled && keyState == KeyVaultState.ready;
+    if (enabled && !effectiveEnabled) {
+      await _syncService.setSyncEnabled(false);
+    }
     if (!mounted) return;
     setState(() {
-      _syncEnabled = enabled;
-      _backedUp = backedUp;
+      _syncEnabled = effectiveEnabled;
+      _keyState = keyState;
       _lastSyncMs = lastMs;
+      if (enabled && !effectiveEnabled) _syncMessage = keyState.syncMessage;
     });
   }
 
@@ -54,8 +59,8 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
         return;
       }
 
-      final backed = await _vault.isBackedUp();
-      if (!backed && mounted) {
+      final keyState = await _vault.status();
+      if (keyState != KeyVaultState.ready && mounted) {
         final goSetup = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -93,6 +98,18 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
 
   Future<void> _sync() async {
     if (_syncing) return;
+    final keyState = await _vault.status();
+    if (keyState != KeyVaultState.ready) {
+      await _syncService.setSyncEnabled(false);
+      if (mounted) {
+        setState(() {
+          _syncEnabled = false;
+          _keyState = keyState;
+          _syncMessage = keyState.syncMessage;
+        });
+      }
+      return;
+    }
     setState(() {
       _syncing = true;
       _syncMessage = null;
@@ -133,7 +150,7 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
           const _UsageGuideCard(),
           const SizedBox(height: 16),
           _KeyStatusCard(
-            backedUp: _backedUp,
+            state: _keyState,
             onSetupTap: () async {
               await context.push('/sync/key-setup');
               _load();
@@ -284,11 +301,11 @@ class _SyncToggleCard extends StatelessWidget {
 
 class _KeyStatusCard extends StatelessWidget {
   const _KeyStatusCard({
-    required this.backedUp,
+    required this.state,
     required this.onSetupTap,
   });
 
-  final bool backedUp;
+  final KeyVaultState state;
   final VoidCallback onSetupTap;
 
   @override
@@ -299,14 +316,20 @@ class _KeyStatusCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: backedUp ? Colors.green.shade200 : AppTheme.cardBorder,
+          color: state == KeyVaultState.ready
+              ? Colors.green.shade200
+              : AppTheme.cardBorder,
         ),
       ),
       child: Row(
         children: [
           Icon(
-            backedUp ? Icons.verified_user_outlined : Icons.key_outlined,
-            color: backedUp ? Colors.green.shade700 : AppTheme.muted,
+            state == KeyVaultState.ready
+                ? Icons.verified_user_outlined
+                : Icons.key_outlined,
+            color: state == KeyVaultState.ready
+                ? Colors.green.shade700
+                : AppTheme.muted,
             size: 28,
           ),
           const SizedBox(width: 14),
@@ -315,17 +338,24 @@ class _KeyStatusCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  backedUp ? '主密钥已备份' : '主密钥未备份',
+                  switch (state) {
+                    KeyVaultState.ready => '主密钥已备份',
+                    KeyVaultState.missing => '尚未生成主密钥',
+                    KeyVaultState.unconfirmed => '主密钥未确认备份',
+                    KeyVaultState.unreadable => '本地安全存储不可读取',
+                  },
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
-                    color: backedUp ? Colors.green.shade700 : AppTheme.ink,
+                    color: state == KeyVaultState.ready
+                        ? Colors.green.shade700
+                        : AppTheme.ink,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  backedUp
+                  state == KeyVaultState.ready
                       ? '密钥安全存储在本设备，换机时可用助记词恢复。'
-                      : '请生成主密钥并离线保存助记词，以防止数据丢失。',
+                      : state.syncMessage,
                   style: const TextStyle(
                     color: AppTheme.muted,
                     fontSize: 12,

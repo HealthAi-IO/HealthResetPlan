@@ -26,12 +26,6 @@ class _AppShellState extends State<AppShell> {
       selectedIcon: Icons.dashboard,
     ),
     _TabItem(
-      label: '档案',
-      path: '/profile',
-      icon: Icons.assignment_ind_outlined,
-      selectedIcon: Icons.assignment_ind,
-    ),
-    _TabItem(
       label: '计划',
       path: '/plan',
       icon: Icons.event_note_outlined,
@@ -44,8 +38,14 @@ class _AppShellState extends State<AppShell> {
       selectedIcon: Icons.check_circle,
     ),
     _TabItem(
-      label: '我的',
+      label: '趋势',
       path: '/stats',
+      icon: Icons.insights_outlined,
+      selectedIcon: Icons.insights,
+    ),
+    _TabItem(
+      label: '我的',
+      path: '/profile',
       icon: Icons.person_outline,
       selectedIcon: Icons.person,
     ),
@@ -95,10 +95,6 @@ class _AppShellState extends State<AppShell> {
                     context.push('/chat');
                   } else if (value == 'report') {
                     context.push('/report');
-                  } else if (value == 'self-check') {
-                    context.push('/self-check');
-                  } else if (value == 'weather') {
-                    context.push('/weather');
                   } else if (value == 'onboarding') {
                     context.push('/onboarding');
                   } else if (value == 'security') {
@@ -108,8 +104,6 @@ class _AppShellState extends State<AppShell> {
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'chat', child: Text('AI 健康顾问')),
                   PopupMenuItem(value: 'report', child: Text('报告识别')),
-                  PopupMenuItem(value: 'self-check', child: Text('AI 拍照自查')),
-                  PopupMenuItem(value: 'weather', child: Text('天气')),
                   PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
                   PopupMenuItem(value: 'security', child: Text('数据安全与密钥')),
                 ],

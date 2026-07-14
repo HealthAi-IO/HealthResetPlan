@@ -443,6 +443,15 @@ class _ProfilePageState extends State<ProfilePage> {
             },
           ),
           const SizedBox(height: 20),
+          _AccountSecurityPanel(
+            onLogin: () => context
+                .push('/login', extra: true)
+                .then((_) => setState(() {})),
+            onSecurity: () => context.push('/sync'),
+            onSignOut: _signOut,
+            onCancelAccount: _cancelAccount,
+          ),
+          const SizedBox(height: 20),
           _DangerZone(onClearAll: _clearAllData),
           const SizedBox(height: 20),
         ],
@@ -479,6 +488,87 @@ class _ProfilePageState extends State<ProfilePage> {
       const SnackBar(content: Text('本地健康数据已清空，账号登录状态已保留；下次同步会重新拉取云端数据')),
     );
     setState(() {});
+  }
+
+  Future<void> _signOut() async {
+    final refreshToken = UserSession.instance.refreshToken;
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      try {
+        await sl<AuthApi>().logout(refreshToken);
+      } catch (_) {}
+    }
+    await UserSession.instance.signOut();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _cancelAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('注销账号'),
+        content: const Text(
+            '注销后可在 30 天内使用原手机号验证码和原 24 词助记词恢复。到期后云端密文、会话和相关资料将彻底删除。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认注销'))
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await sl<AuthApi>().cancelAccount();
+    await sl<SyncService>().setSyncEnabled(false);
+    await sl<SyncService>().resetLastSyncMs();
+    await UserSession.instance.signOut();
+    if (mounted) setState(() {});
+  }
+}
+
+class _AccountSecurityPanel extends StatelessWidget {
+  const _AccountSecurityPanel(
+      {required this.onLogin,
+      required this.onSecurity,
+      required this.onSignOut,
+      required this.onCancelAccount});
+  final VoidCallback onLogin;
+  final VoidCallback onSecurity;
+  final VoidCallback onSignOut;
+  final VoidCallback onCancelAccount;
+
+  @override
+  Widget build(BuildContext context) {
+    final loggedIn = UserSession.instance.isAccountLogin;
+    return _Panel(
+      title: '账号与数据安全',
+      subtitle: loggedIn ? '云同步与助记词恢复由此管理' : '登录后可使用云同步和 AI 在线能力',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (!loggedIn)
+          FilledButton.icon(
+              onPressed: onLogin,
+              icon: const Icon(Icons.login_outlined),
+              label: const Text('注册 / 登录账号'))
+        else ...[
+          OutlinedButton.icon(
+              onPressed: onSecurity,
+              icon: const Icon(Icons.security_outlined),
+              label: const Text('云同步与助记词')),
+          const SizedBox(height: 8),
+          TextButton.icon(
+              onPressed: onSignOut,
+              icon: const Icon(Icons.logout_outlined),
+              label: const Text('退出登录')),
+          TextButton.icon(
+              onPressed: onCancelAccount,
+              icon: const Icon(Icons.person_remove_outlined),
+              label: const Text('注销账号'),
+              style:
+                  TextButton.styleFrom(foregroundColor: Colors.red.shade700)),
+        ],
+      ]),
+    );
   }
 }
 

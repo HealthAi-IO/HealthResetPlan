@@ -12,7 +12,6 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
-import '../weather/weather_compact_card.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
 
@@ -34,12 +33,21 @@ class _PlanPageState extends State<PlanPage> {
   List<PlanRecordData> _plans = const [];
   PlanRecordData? _riskPlan;
   String _filter = 'all';
+  int? _aiRemaining;
 
   @override
   void initState() {
     super.initState();
     _repo.addListener(_onRepoChanged);
     _load();
+    _loadAiUsage();
+  }
+
+  Future<void> _loadAiUsage() async {
+    try {
+      final usage = await _aiApi.dailyUsage();
+      if (mounted) setState(() => _aiRemaining = usage['plan']);
+    } catch (_) {}
   }
 
   @override
@@ -77,7 +85,7 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   Future<void> _generateWithAi() async {
-    // 1. 账号 + 会员校验
+    // 1. 登录校验：所有登录用户均可使用 AI 能力。
     if (!mounted) return;
     final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
     if (!ok) return;
@@ -118,6 +126,7 @@ class _PlanPageState extends State<PlanPage> {
 
       // 5. 展示 AI 方案（底部弹窗）
       await _showAiPlanSheet(result);
+      _loadAiUsage();
     } catch (e) {
       if (!mounted) return;
       await _ensureLocalPlanAfterAiFailure();
@@ -471,7 +480,7 @@ class _PlanPageState extends State<PlanPage> {
       if (body is Map) {
         final code = (body['code'] as num?)?.toInt() ?? 0;
         final message = (body['message'] ?? body['msg'])?.toString();
-        if (code == 40301) return 'AI 方案生成需要会员权益，请先开通或续费。';
+        if (code == 40301) return '请先登录账号后再生成 AI 方案。';
         if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置。';
         if (code == 40101) return 'AI 服务密钥失效，请联系管理员检查后台配置。';
         if (code == 50301) {
@@ -489,7 +498,7 @@ class _PlanPageState extends State<PlanPage> {
       }
     }
     final s = e.toString();
-    if (s.contains('40301')) return '会员权益已过期，请续费';
+    if (s.contains('40301')) return '请先登录账号后再试';
     if (s.contains('50301')) return 'AI 服务暂时繁忙，已为你保留本地规则计划，稍后可重试。';
     if (s.contains('Connection') || s.contains('Socket')) {
       return '网络连接失败，请检查后端服务和 WiFi。';
@@ -523,8 +532,12 @@ class _PlanPageState extends State<PlanPage> {
             onAiGenerate: _generateWithAi,
             aiGenerating: _aiGenerating,
           ),
-          const SizedBox(height: 16),
-          const WeatherCompactCard(),
+          if (_aiRemaining != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text('今日 AI 计划剩余 $_aiRemaining / 3 次',
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
+            ),
           const SizedBox(height: 16),
           if (_riskPlan != null) ...[
             _RiskCard(plan: _riskPlan!),

@@ -84,9 +84,29 @@ class AuthApi {
     }
   }
 
-  /// 注销账号：服务端停用账号，并让该账号云端密文进入 90 天保留期。
+  /// 注销账号：服务端停用账号，并让该账号云端密文进入 30 天保留期。
   Future<void> cancelAccount() async {
     await _client.dio.post('/auth/cancel-account');
+  }
+
+  Future<PasswordResetCodeResult> sendAccountRecoveryCode(String phone) async {
+    final resp = await _client.dio.post('/auth/account-recovery/send-code',
+        data: {'phone': phone});
+    return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
+  }
+
+  /// The mnemonic stays on-device. Only its public fingerprint is submitted.
+  Future<AuthResult> reactivateAccount({
+    required String phone,
+    required String code,
+    required String keyFingerprint,
+  }) async {
+    final resp = await _client.dio.post('/auth/account-recovery/reactivate', data: {
+      'phone': phone,
+      'code': code,
+      'keyFingerprint': keyFingerprint,
+    });
+    return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
   Future<PasswordResetCodeResult> sendPasswordResetCode({

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
+import '../auth/user_session.dart';
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import '../network/api_client.dart';
@@ -65,33 +66,38 @@ class SyncService {
   static const String _kSyncEnabled = 'sync_enabled';
   static const String _kDeviceId = 'sync_device_id';
   static const String _kLastKeyFingerprint = 'sync_last_key_fingerprint';
+  static const String _kSyncAccountId = 'sync_account_id';
   static const _uuid = Uuid();
 
   static const _tables = [
     _TableConfig(
       table: 'user_profile',
-      metaKeys: ['nickname', 'updated_at'],
+      metaKeys: [],
       profileSingleton: true,
     ),
     _TableConfig(
       table: 'health_indicator',
-      metaKeys: ['type', 'measured_at', 'source'],
+      metaKeys: [],
     ),
     _TableConfig(
       table: 'plan',
-      metaKeys: ['type', 'plan_date', 'ai_provider', 'ai_model'],
+      metaKeys: [],
     ),
     _TableConfig(
       table: 'clock_record',
-      metaKeys: ['type', 'clock_at', 'status'],
+      metaKeys: [],
     ),
     _TableConfig(
       table: 'reminder',
-      metaKeys: ['type', 'remind_at', 'status'],
+      metaKeys: [],
     ),
     _TableConfig(
       table: 'health_report',
-      metaKeys: ['report_time', 'provider'],
+      metaKeys: [],
+    ),
+    _TableConfig(
+      table: 'meal_record',
+      metaKeys: [],
     ),
   ];
 
@@ -106,7 +112,31 @@ class SyncService {
 
   Future<void> setSyncEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
+    if (enabled) {
+      final state = await keyVault.status();
+      if (state != KeyVaultState.ready) {
+        await prefs.setBool(_kSyncEnabled, false);
+        throw StateError(state.syncMessage);
+      }
+    }
     await prefs.setBool(_kSyncEnabled, enabled);
+  }
+
+  /// 隔离同一设备上的不同账号，避免把上一个账号的本地数据或密钥上传到新账号。
+  Future<bool> bindToAccount(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final owner = prefs.getString(_kSyncAccountId);
+    if (owner == null || owner.isEmpty) {
+      await prefs.setString(_kSyncAccountId, userId);
+      return false;
+    }
+    if (owner == userId) return false;
+    await _clearLocalSyncedData();
+    await prefs.setString(_kSyncAccountId, userId);
+    await prefs.setBool(_kSyncEnabled, false);
+    await prefs.remove(_kLastSyncMs);
+    await prefs.remove(_kLastKeyFingerprint);
+    return true;
   }
 
   Future<int> getLastSyncMs() async {
@@ -172,6 +202,7 @@ class SyncService {
   Future<SyncResult> _performSync() async {
     try {
       return await _runWithRetry(() async {
+        await _requireReadyKey();
         final keyFingerprint = await _keyFingerprintOrEmpty();
         await _prepareKeyFingerprintChange(keyFingerprint);
         final pushed = await _push();
@@ -187,6 +218,7 @@ class SyncService {
   Future<SyncResult> restoreFromCloud({bool replaceLocal = false}) async {
     try {
       return await _runWithRetry(() async {
+        await _requireReadyKey();
         await resetLastSyncMs();
         if (replaceLocal) {
           await _clearLocalSyncedData();
@@ -197,6 +229,11 @@ class SyncService {
     } catch (e) {
       return SyncResult(pushed: 0, pulled: 0, error: _friendlySyncError(e));
     }
+  }
+
+  Future<void> _requireReadyKey() async {
+    final state = await keyVault.status();
+    if (state != KeyVaultState.ready) throw StateError(state.syncMessage);
   }
 
   Future<SyncResult> _runWithRetry(
@@ -268,15 +305,19 @@ class SyncService {
         final prepared = await _ensureClientId(db, config, row);
         final clientId = prepared['client_id'] as String;
         final payload = await _buildEncryptedRowPayload(config.table, prepared);
-        final enc = await cryptoService.encryptString(jsonEncode(payload));
+        final version = _asInt(prepared['version']) ?? 0;
+        final enc = await cryptoService.encryptString(
+          jsonEncode(payload),
+          aad: _syncAad(config.table, clientId, version),
+        );
 
         items.add({
           'table': config.table,
           'clientId': clientId,
-          'version': _asInt(prepared['version']) ?? 0,
+          'version': version,
           'clientUpdatedAt': _asInt(prepared['updated_at']) ??
               DateTime.now().millisecondsSinceEpoch,
-          ...enc.toJson(),
+          ...enc.toJson()..['alg'] = 'aes-256-gcm:v2',
           'deleted': false,
           'meta': _buildMeta(config, prepared),
         });
@@ -324,16 +365,19 @@ class SyncService {
       final clientId = payload['clientId'] as String? ?? '';
       if (!_configByTable.containsKey(table) || clientId.isEmpty) continue;
 
-      final enc =
-          await cryptoService.encryptString(jsonEncode({'deleted': true}));
+      final version = _asInt(payload['version']) ?? 0;
+      final enc = await cryptoService.encryptString(
+        jsonEncode({'deleted': true}),
+        aad: _syncAad(table, clientId, version),
+      );
       items.add({
         'table': table,
         'clientId': clientId,
-        'version': _asInt(payload['version']) ?? 0,
+        'version': version,
         'clientUpdatedAt': _asInt(payload['clientUpdatedAt']) ??
             _asInt(row['updated_at']) ??
             DateTime.now().millisecondsSinceEpoch,
-        ...enc.toJson(),
+        ...enc.toJson()..['alg'] = 'aes-256-gcm:v2',
         'deleted': true,
         'meta': {'deleted': true},
       });
@@ -369,21 +413,31 @@ class SyncService {
 
   Future<int> _pull() async {
     final since = await getLastSyncMs();
-    final resp = await apiClient.dio.get(
-      '/sync/pull',
-      options: Options(
-          headers: {
-            'X-Key-Fingerprint': await _keyFingerprintOrEmpty(),
-          },
-          connectTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 90),
-          receiveTimeout: const Duration(seconds: 90)),
-      queryParameters: {'since': since, 'limit': 500},
-    );
-
-    final data = _responseData(resp.data);
-    final rawItems = data['items'] as List? ?? [];
-    final serverTime = (data['serverTime'] as num?)?.toInt();
+    final rawItems = <dynamic>[];
+    int? serverTime;
+    var offset = 0;
+    while (true) {
+      final resp = await apiClient.dio.get(
+        '/sync/pull',
+        options: Options(
+            headers: {'X-Key-Fingerprint': await _keyFingerprintOrEmpty()},
+            connectTimeout: const Duration(seconds: 15),
+            sendTimeout: const Duration(seconds: 90),
+            receiveTimeout: const Duration(seconds: 90)),
+        queryParameters: {
+          'since': since,
+          'limit': 500,
+          'offset': offset,
+          if (serverTime != null) 'until': serverTime,
+        },
+      );
+      final data = _responseData(resp.data);
+      final page = data['items'] as List? ?? [];
+      rawItems.addAll(page);
+      serverTime ??= (data['serverTime'] as num?)?.toInt();
+      if (data['hasMore'] != true || page.isEmpty) break;
+      offset += page.length;
+    }
 
     var merged = 0;
     if (rawItems.isNotEmpty) {
@@ -414,7 +468,13 @@ class SyncService {
 
           decryptableRows++;
           final enc = EncryptedPayload.fromJson(item);
-          final plaintext = await cryptoService.decryptToString(enc);
+          final version = (item['version'] as num?)?.toInt() ?? 0;
+          final plaintext = await cryptoService.decryptToString(
+            enc,
+            aad: enc.alg == 'aes-256-gcm:v2'
+                ? _syncAad(table, clientId, version)
+                : null,
+          );
           final payload = _decodePayload(table, plaintext, item);
           final effectiveClientId = clientId.isNotEmpty
               ? clientId
@@ -508,7 +568,7 @@ class SyncService {
     };
     payload['user_id'] = kLocalUserId;
 
-    if (table == 'health_report') {
+    if (table == 'health_report' || table == 'meal_record') {
       final imagePath = row['image_path'] as String? ?? '';
       final imageBytes = await readReportImage(imagePath);
       if (imageBytes != null) {
@@ -593,6 +653,21 @@ class SyncService {
           'raw_text': row['raw_text'] ?? '',
           'structured_json': row['structured_json'] ?? '{}',
           'provider': row['provider'] ?? '',
+        });
+      case 'meal_record':
+        row.addAll({
+          'name': row['name'] ?? '',
+          'meal_type': row['meal_type'] ?? 'lunch',
+          'eaten_at': _asInt(row['eaten_at']) ?? clientUpdatedAt,
+          'image_path': await _restoreReportImage(payload, clientId),
+          'total_calories': _asDouble(row['total_calories']),
+          'protein_g': _asDouble(row['protein_g']),
+          'carbs_g': _asDouble(row['carbs_g']),
+          'fat_g': _asDouble(row['fat_g']),
+          'health_score': _asDouble(row['health_score']),
+          'glycemic_load': _asDouble(row['glycemic_load']),
+          'foods_json': row['foods_json'] ?? '[]',
+          'nutrition_json': row['nutrition_json'] ?? '{}',
         });
     }
     return row;
@@ -686,6 +761,11 @@ class SyncService {
       for (final key in config.metaKeys)
         if (row[key] != null) key: row[key],
     };
+  }
+
+  List<int> _syncAad(String table, String clientId, int version) {
+    final userId = UserSession.instance.userId ?? '';
+    return utf8.encode('hrp-sync:v2:$userId:$table:$clientId:$version');
   }
 
   Map<String, dynamic> _responseData(Object? body) {
