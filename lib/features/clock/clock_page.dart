@@ -9,6 +9,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
+import '../../core/network/telemetry_api.dart';
 
 class ClockPage extends StatefulWidget {
   const ClockPage({super.key});
@@ -64,6 +65,7 @@ class _ClockPageState extends State<ClockPage> {
     );
     if (note == null) return;
     await _repo.addClockRecord(type: type, status: 'done', note: note);
+    sl<TelemetryApi>().record('clock_recorded');
     if (!mounted) return;
     _showSnack('${_clockTitle(type)}已保存 ✓');
   }

@@ -12,8 +12,10 @@ import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
 import '../membership/membership_service.dart';
 import '../network/ai_api.dart';
+import '../network/ai_consent_api.dart';
 import '../network/api_client.dart';
 import '../network/auth_api.dart';
+import '../network/telemetry_api.dart';
 import '../notification/reminder_scheduler.dart';
 import '../storage/app_database.dart';
 import '../sync/sync_service.dart';
@@ -87,6 +89,7 @@ Future<void> setupServiceLocator() async {
   }
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
+  sl.registerSingleton<TelemetryApi>(TelemetryApi(client: apiClient, platform: _platformName()));
 
   sl.registerSingleton<SyncService>(SyncService(
     apiClient: apiClient,
@@ -101,6 +104,7 @@ Future<void> setupServiceLocator() async {
     () => MembershipService(client: apiClient),
   );
   sl.registerLazySingleton<AiApi>(() => AiApi(client: apiClient));
+  sl.registerLazySingleton<AiConsentApi>(() => AiConsentApi(client: apiClient));
 
   // 通知调度也改为延迟（main.dart 后台再触发 initialize）
   sl.registerLazySingleton<ReminderScheduler>(

@@ -344,6 +344,11 @@ class _HomePageState extends State<HomePage> {
                       color: Colors.pinkAccent,
                       onTap: () => _openMealInput('lunch')),
                   _QuickEntry(
+                      icon: Icons.face_retouching_natural_outlined,
+                      label: 'AI 图像分析',
+                      color: Colors.purple,
+                      onTap: () => context.push('/self-check')),
+                  _QuickEntry(
                       icon: Icons.insights_outlined,
                       label: '趋势统计',
                       color: Colors.orange,

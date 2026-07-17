@@ -16,7 +16,7 @@ class AiApi {
     final response = await _client.dio.get('/ai/chat/daily-usage');
     final data = _unwrapData(response.data);
     final result = <String, int>{};
-    for (final type in ['chat', 'plan', 'report']) {
+    for (final type in ['chat', 'plan', 'report', 'image']) {
       final item = data[type];
       if (item is Map) result[type] = (item['remaining'] as num?)?.toInt() ?? 0;
     }
@@ -263,6 +263,7 @@ class AiApi {
 
   String _friendlyCode(int code, String msg) {
     if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置';
+    if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试';
     if (code == 40101) return '当前 AI 模型暂不可用，请稍后重试或切换模型';
     if (code == 40301) return '此功能需要开通会员';
     return msg;

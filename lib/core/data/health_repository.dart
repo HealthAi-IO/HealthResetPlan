@@ -465,7 +465,10 @@ class HealthRepository extends ChangeNotifier {
   // 仅重新计算风险，更新 DB 里的 risk 记录，不 notifyListeners（防止循环触发）
   Future<void> recalculateRisk() async {
     final db = await database.open();
-    final profile = await loadProfile() ?? UserProfileData.empty();
+    final profile = await loadProfile();
+    if (profile == null || !profile.isComplete || profile.gender == 'unknown') {
+      throw StateError('请先完善性别、出生年份、身高和体重，再生成基础计划');
+    }
     final r = await _assessRisk(profile);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);

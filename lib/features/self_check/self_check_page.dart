@@ -7,6 +7,8 @@ import '../../app/app_theme.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
+import '../../core/privacy/ai_consent_gate.dart';
+import '../../core/widgets/ai_content_notice.dart';
 
 class SelfCheckPage extends StatefulWidget {
   const SelfCheckPage({super.key});
@@ -30,6 +32,9 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
   Future<void> _pick(ImageSource source) async {
     final ok = await requireAccountAndMember(context, PaywallFeature.reportOcr);
     if (!ok) return;
+    if (!mounted) return;
+    if (!await ensureAiConsent(context)) return;
+    if (!mounted) return;
 
     try {
       final image = await _picker.pickImage(
@@ -275,6 +280,8 @@ class _UploadCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const AiContentNotice(feature: 'AI图片分析'),
+          const SizedBox(height: 12),
           Text(
             type.title,
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),

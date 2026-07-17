@@ -203,12 +203,43 @@ class _LoginPageState extends State<LoginPage> {
         _debugCode = result.debugCode;
         if (result.debugCode.isNotEmpty) _codeCtrl.text = result.debugCode;
       });
+      if (result.debugCode.isNotEmpty) {
+        await _showDebugCodeDialog(result.debugCode);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = friendlyAuthError(e));
     } finally {
       if (mounted) setState(() => _sendingCode = false);
     }
+  }
+
+  Future<void> _showDebugCodeDialog(String code) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('验证码'),
+        content: Text(
+          code,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+          FilledButton(
+            onPressed: () {
+              _codeCtrl.text = code;
+              Navigator.pop(dialogContext);
+            },
+            child: const Text('自动填入'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _syncLocalDataAfterLogin(
@@ -635,7 +666,36 @@ class _AccountRecoveryDialogState extends State<_AccountRecoveryDialog> {
     try {
       final result =
           await sl<AuthApi>().sendAccountRecoveryCode(_normalizedPhone);
-      if (result.debugCode.isNotEmpty) _code.text = result.debugCode;
+      if (result.debugCode.isNotEmpty) {
+        _code.text = result.debugCode;
+        if (mounted) {
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('验证码'),
+              content: Text(
+                result.debugCode,
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 32, fontWeight: FontWeight.w800),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('关闭'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    _code.text = result.debugCode;
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text('自动填入'),
+                ),
+              ],
+            ),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) setState(() => _error = friendlyAuthError(e));
     } finally {

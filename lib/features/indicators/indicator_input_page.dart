@@ -5,6 +5,7 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/network/telemetry_api.dart';
 
 // 录入新指标 / 编辑已有指标
 class IndicatorInputPage extends StatefulWidget {
@@ -189,6 +190,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           payload: payload,
           measuredAt: _measuredAt,
         );
+        sl<TelemetryApi>().record('indicator_recorded');
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

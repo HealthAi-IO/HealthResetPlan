@@ -8,6 +8,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/network/ai_consent_api.dart';
 import '../../core/sync/sync_service.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -165,6 +166,32 @@ class _ProfilePageState extends State<ProfilePage> {
     return '健康档案已保存并同步到云端';
   }
 
+  Future<void> _manageAiConsent() async {
+    if (!UserSession.instance.isAccountLogin) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('登录账号后可管理 AI 授权')));
+      return;
+    }
+    final api = sl<AiConsentApi>();
+    final accepted = await api.accepted();
+    if (!mounted) return;
+    final action = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(accepted ? '管理 AI 数据处理授权' : 'AI 数据处理说明'),
+        content: Text(accepted
+            ? '你已同意云端 AI 数据处理。撤回后，AI 问诊、7 天计划和报告识别将停止；本地记录与加密云同步不受影响。'
+            : '使用 AI 问诊、7 天计划或报告识别时，你主动提交的必要健康信息或报告图片会由本服务的受控服务器短暂转发给已配置的千问、豆包或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(accepted ? '撤回授权' : '同意并启用 AI')),
+        ],
+      ),
+    );
+    if (action != true) return;
+    if (accepted) { await api.revoke(); } else { await api.accept(); }
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(accepted ? '已撤回 AI 授权' : '已启用 AI 功能')));
+  }
+
   Future<void> _addIndicatorDialog(String type) async {
     final messenger = ScaffoldMessenger.of(context);
     final result = await showDialog<_IndicatorDraft>(
@@ -202,6 +229,16 @@ class _ProfilePageState extends State<ProfilePage> {
         padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
         children: [
           _OverviewCard(profile: profile, indicators: _indicators),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.psychology_outlined),
+              title: const Text('AI 数据处理授权'),
+              subtitle: const Text('管理云端 AI 问诊、计划和报告识别授权'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _manageAiConsent,
+            ),
+          ),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {

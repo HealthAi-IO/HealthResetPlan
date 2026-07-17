@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/auth/user_session.dart';
 import '../core/data/health_models.dart';
+import '../core/telemetry/telemetry_observer.dart';
 import '../features/auth/login_page.dart';
 import '../features/auth/onboarding_page.dart';
 import '../features/chat/chat_page.dart';
@@ -15,6 +16,7 @@ import '../features/meals/meal_record_page.dart';
 import '../features/plan/plan_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/report/report_page.dart';
+import '../features/self_check/self_check_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/stats_page.dart';
 import '../features/sync/cloud_sync_page.dart';
@@ -49,6 +51,7 @@ class AppRouter {
 
   static final GoRouter router = GoRouter(
     initialLocation: '/home',
+    observers: [TelemetryObserver()],
     redirect: (context, state) {
       final path = state.uri.path;
       final hasLocalIdentity =
@@ -65,6 +68,7 @@ class AppRouter {
           GoRoute(path: '/', redirect: (_, __) => '/home'),
           GoRoute(
             path: '/home',
+            name: '/home',
             pageBuilder: (_, state) => _shellPage(state, const HomePage()),
           ),
           GoRoute(
@@ -73,10 +77,12 @@ class AppRouter {
           ),
           GoRoute(
             path: '/plan',
+            name: '/plan',
             pageBuilder: (_, state) => _shellPage(state, const PlanPage()),
           ),
           GoRoute(
             path: '/clock',
+            name: '/clock',
             pageBuilder: (_, state) => _shellPage(state, const ClockPage()),
           ),
           GoRoute(
@@ -87,10 +93,12 @@ class AppRouter {
       ),
       GoRoute(
         path: '/indicators',
+        name: '/indicators',
         pageBuilder: (_, state) => _page(state, const IndicatorListPage()),
       ),
       GoRoute(
         path: '/indicators/input',
+        name: '/indicators/input',
         pageBuilder: (_, state) {
           final defaultType = state.extra as String?;
           return _page(state, IndicatorInputPage(defaultType: defaultType));
@@ -146,6 +154,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/sync',
+        name: '/sync',
         pageBuilder: (_, state) => _page(state, const CloudSyncPage()),
       ),
       GoRoute(
@@ -156,6 +165,11 @@ class AppRouter {
         path: '/report',
         pageBuilder: (_, state) => _page(state, const ReportPage()),
       ),
+      GoRoute(
+        path: '/self-check',
+        name: '/self-check',
+        pageBuilder: (_, state) => _page(state, const SelfCheckPage()),
+      ),
       /*
       GoRoute(
         path: '/membership',
@@ -164,6 +178,7 @@ class AppRouter {
       */
       GoRoute(
         path: '/chat',
+        name: '/chat',
         pageBuilder: (_, state) => _page(state, const ChatPage()),
       ),
     ],

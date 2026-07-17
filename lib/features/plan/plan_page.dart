@@ -12,6 +12,9 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
+import '../../core/network/telemetry_api.dart';
+import '../../core/privacy/ai_consent_gate.dart';
+import '../../core/widgets/ai_content_notice.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
 
@@ -79,13 +82,47 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _generate() async {
     final messenger = ScaffoldMessenger.of(context);
-    await _repo.generateWeeklyPlan();
-    if (!mounted) return;
-    messenger.showSnackBar(const SnackBar(content: Text('本地计划已更新')));
+    if (_profile == null ||
+        !_profile!.isComplete ||
+        _profile!.gender == 'unknown') {
+      messenger.showSnackBar(
+        SnackBar(
+          content: const Text('请先完善性别、出生年份、身高和体重，再生成基础计划'),
+          action: SnackBarAction(
+              label: '去完善', onPressed: () => context.push('/profile')),
+        ),
+      );
+      return;
+    }
+    try {
+      await _repo.generateWeeklyPlan();
+      sl<TelemetryApi>().record('plan_generated');
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('已根据你的档案生成基础计划')));
+    } catch (_) {
+      if (mounted) {
+        messenger
+            .showSnackBar(const SnackBar(content: Text('计划生成失败，请检查档案后重试')));
+      }
+    }
   }
 
   Future<void> _generateWithAi() async {
     // 1. 登录校验：所有登录用户均可使用 AI 能力。
+    if (!mounted) return;
+    if (_profile == null ||
+        !_profile!.isComplete ||
+        _profile!.gender == 'unknown') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('请先完善性别、出生年份、身高和体重，再生成个性化 AI 计划'),
+          action: SnackBarAction(
+              label: '去完善', onPressed: () => context.push('/profile')),
+        ),
+      );
+      return;
+    }
+    if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
     final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
     if (!ok) return;
@@ -126,6 +163,7 @@ class _PlanPageState extends State<PlanPage> {
 
       // 5. 展示 AI 方案（底部弹窗）
       await _showAiPlanSheet(result);
+      sl<TelemetryApi>().record('plan_generated');
       _loadAiUsage();
     } catch (e) {
       if (!mounted) return;
@@ -265,6 +303,8 @@ class _PlanPageState extends State<PlanPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    const AiContentNotice(feature: 'AI健康方案'),
+                    const SizedBox(height: 8),
                     Text(summary,
                         style: const TextStyle(
                             color: AppTheme.muted, fontSize: 13)),
@@ -482,6 +522,7 @@ class _PlanPageState extends State<PlanPage> {
         final message = (body['message'] ?? body['msg'])?.toString();
         if (code == 40301) return '请先登录账号后再生成 AI 方案。';
         if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置。';
+        if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试。';
         if (code == 40101) return 'AI 服务密钥失效，请联系管理员检查后台配置。';
         if (code == 50301) {
           return 'AI 服务暂时繁忙，已为你保留本地规则计划，稍后可重试。';

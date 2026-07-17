@@ -16,8 +16,10 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
+import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
 import '../../core/sync/sync_service.dart';
+import '../../core/widgets/ai_content_notice.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常结果、不适症状或用药调整需求，请及时咨询医生。';
 
@@ -293,6 +295,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _analyzeImage(XFile file) async {
+    if (!await ensureAiConsent(context)) return;
     final preferences = await SharedPreferences.getInstance();
     if (preferences.getBool('report_ai_image_consent') != true) {
       if (!mounted) return;
@@ -301,7 +304,14 @@ class _ReportPageState extends State<ReportPage> {
         builder: (context) => AlertDialog(
           title: const Text('报告图片处理提示'),
           content: const Text('报告图片会发送给已配置的 AI 服务商，仅用于本次指标识别。是否继续？'),
-          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('同意并继续'))],
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('同意并继续'))
+          ],
         ),
       );
       if (accepted != true) return;
@@ -767,10 +777,13 @@ class _ReportPageState extends State<ReportPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            if (_aiRemaining != null) Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text('今日报告识别剩余 $_aiRemaining / 5 次', style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
-            ),
+            if (_aiRemaining != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text('今日报告识别剩余 $_aiRemaining / 5 次',
+                    style:
+                        const TextStyle(color: AppTheme.muted, fontSize: 13)),
+              ),
             _PickCard(
               pickedImage: _pickedImage,
               analyzing: _analyzing,
@@ -957,6 +970,8 @@ class _OcrSummaryCard extends StatelessWidget {
         border: Border.all(color: Colors.green.shade200),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const AiContentNotice(feature: '体检报告识别'),
+        const SizedBox(height: 10),
         Row(children: [
           Icon(Icons.check_circle_outline,
               size: 16, color: Colors.green.shade700),
@@ -969,8 +984,12 @@ class _OcrSummaryCard extends StatelessWidget {
         ]),
         if (result.highRisk) ...[
           const SizedBox(height: 10),
-          Text(result.riskMessage.isEmpty ? '报告存在高风险信息，请尽快就医。' : result.riskMessage,
-              style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.w700)),
+          Text(
+              result.riskMessage.isEmpty
+                  ? '报告存在高风险信息，请尽快就医。'
+                  : result.riskMessage,
+              style: TextStyle(
+                  color: Colors.red.shade800, fontWeight: FontWeight.w700)),
         ],
         if (result.summary.isNotEmpty) ...[
           const SizedBox(height: 6),

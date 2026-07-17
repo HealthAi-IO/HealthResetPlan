@@ -77,7 +77,7 @@ class SyncService {
     ),
     _TableConfig(
       table: 'health_indicator',
-      metaKeys: [],
+      metaKeys: ['type'],
     ),
     _TableConfig(
       table: 'plan',

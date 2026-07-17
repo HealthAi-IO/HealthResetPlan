@@ -7,7 +7,7 @@ import '../../app/app_theme.dart';
 
 const privacyPolicyUrl = 'https://jkcqplan.com/privacy';
 const termsOfServiceUrl = 'https://jkcqplan.com/terms';
-const _privacyPolicyVersion = '2026-07-14';
+const _privacyPolicyVersion = '2026-07-17';
 const _privacyConsentKey = 'privacy_policy_version';
 
 class PrivacyConsentGate extends StatefulWidget {
@@ -97,7 +97,7 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                           TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
                   const Text(
-                    '健康重启计划将在你同意后处理必要信息以提供本地健康记录、账号同步和提醒服务。未注册账号时，健康数据仅保存在本机；注册并开启服务后，数据会加密上传用于同步。',
+                    '健康重启计划将在你同意后处理必要信息以提供本地健康记录、账号同步和提醒服务。未注册账号时，健康数据仅保存在本机；注册并开启服务后，数据会加密上传用于同步。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
                     style: TextStyle(height: 1.55, color: AppTheme.muted),
                   ),
                   const SizedBox(height: 16),
@@ -110,18 +110,35 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                             setState(() => _agreed = value ?? false),
                       ),
                       Expanded(
-                        child: Wrap(
-                          crossAxisAlignment: WrapCrossAlignment.center,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text('我已阅读并同意'),
-                            TextButton(
-                              onPressed: () => _openUrl(privacyPolicyUrl),
-                              child: const Text('《隐私政策》'),
-                            ),
-                            const Text('和'),
-                            TextButton(
-                              onPressed: () => _openUrl(termsOfServiceUrl),
-                              child: const Text('《用户协议》'),
+                            const SizedBox(height: 2),
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 2,
+                              children: [
+                                TextButton(
+                                  onPressed: () => _openUrl(privacyPolicyUrl),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text('《隐私政策》'),
+                                ),
+                                const Text('及'),
+                                TextButton(
+                                  onPressed: () => _openUrl(termsOfServiceUrl),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text('《用户协议》'),
+                                ),
+                              ],
                             ),
                           ],
                         ),

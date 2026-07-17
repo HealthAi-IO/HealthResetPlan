@@ -67,6 +67,23 @@ void main() {
     expect(meals.where((item) => item.type == 'exercise'), hasLength(7));
   });
 
+  test('weekly plan does not require a nickname', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.saveProfile(
+      UserProfileData.empty().copyWith(
+        gender: 'female',
+        birthYear: 1990,
+        heightCm: 165,
+        weightKg: 52,
+      ),
+    );
+
+    await repo.generateWeeklyPlan();
+
+    expect(await repo.loadPlans(), isNotEmpty);
+  });
+
   test('report record is saved as dirty sync data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
     await repo.initialize();

@@ -10,6 +10,7 @@ import 'core/data/health_models.dart';
 import 'core/data/health_repository.dart';
 import 'core/di/service_locator.dart';
 import 'core/notification/reminder_scheduler.dart';
+import 'core/network/telemetry_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
 
 ThemeMode get _themeMode => ThemeMode.light;
@@ -49,6 +50,7 @@ class _AppLoaderState extends State<_AppLoader> {
 
       _hydrateUserNameInBackground();
       _initNotificationsInBackground();
+      sl<TelemetryApi>().record('app_open');
     } catch (e) {
       if (mounted) setState(() => _initError = e.toString());
     }
@@ -68,6 +70,7 @@ class _AppLoaderState extends State<_AppLoader> {
     final scheduler = sl<ReminderScheduler>();
     scheduler.initialize().then((_) => scheduler.syncAll()).catchError((_) {});
   }
+
 
   @override
   Widget build(BuildContext context) {

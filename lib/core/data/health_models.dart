@@ -62,8 +62,7 @@ class UserProfileData {
     return '肥胖';
   }
 
-  bool get isComplete =>
-      nickname.isNotEmpty && heightCm > 0 && weightKg > 0 && birthYear > 0;
+  bool get isComplete => heightCm > 0 && weightKg > 0 && birthYear > 0;
 
   UserProfileData copyWith({
     int? id,

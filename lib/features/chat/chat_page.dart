@@ -9,17 +9,8 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
-
-const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
-
-String _withAiDoctorDisclaimer(String value) {
-  final text = value.trim();
-  if (text.isEmpty) return _aiDoctorDisclaimer;
-  if (text.contains('不能代替医生') || text.contains('不代替医生')) {
-    return text;
-  }
-  return '$text\n\n$_aiDoctorDisclaimer';
-}
+import '../../core/privacy/ai_consent_gate.dart';
+import '../../core/widgets/ai_content_notice.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -285,6 +276,7 @@ class _ChatPageState extends State<ChatPage> {
   // ── 发送消息 ──────────────────────────────────────────────────
 
   Future<void> _sendMessage(String content) async {
+    if (!await ensureAiConsent(context)) return;
     if (content.trim().isEmpty || _sending) return;
 
     // 校验账号 + 会员
@@ -357,7 +349,7 @@ class _ChatPageState extends State<ChatPage> {
         if (!mounted) return;
         final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
         if (idx >= 0) {
-          final finalContent = _withAiDoctorDisclaimer(_messages[idx].content);
+          final finalContent = _messages[idx].content.trim();
           // 流结束，标记非 streaming，并把最终内容写库
           setState(() {
             _messages[idx] = _messages[idx].copyWith(
@@ -761,6 +753,10 @@ class _MessageBubble extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (!isUser && !isError && !streaming) ...[
+                      const AiContentNotice(feature: 'AI健康顾问'),
+                      const SizedBox(height: 8),
+                    ],
                     Text(
                       content,
                       style: TextStyle(
@@ -773,16 +769,6 @@ class _MessageBubble extends StatelessWidget {
                                 : AppTheme.ink,
                       ),
                     ),
-                    if (!isUser && provider.isNotEmpty && !streaming) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        provider,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: isError ? Colors.red.shade300 : AppTheme.muted,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),

@@ -10,7 +10,9 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/ai_api.dart';
+import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
+import '../../core/widgets/ai_content_notice.dart';
 
 const _proteinColor = Color(0xFF19B43B);
 const _carbColor = Color(0xFFF59E0B);
@@ -107,6 +109,8 @@ class _MealRecordPageState extends State<MealRecordPage> {
       _nutrition = const {};
     });
     try {
+      if (!await ensureAiConsent(context)) return;
+      if (!mounted) return;
       final result = await _api.analyzeVision(image: image, type: 'meal');
       if (!mounted) return;
       _provider = result.provider;
@@ -402,6 +406,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
             carbsG: _carbsG,
             fatG: _fatG,
             healthScore: _healthScore,
+            isAiRecognized: _provider.isNotEmpty,
           ),
           const SizedBox(height: 14),
           _FoodListCard(
@@ -590,6 +595,7 @@ class _MealSummaryCard extends StatelessWidget {
     required this.carbsG,
     required this.fatG,
     required this.healthScore,
+    required this.isAiRecognized,
   });
 
   final TextEditingController nameCtrl;
@@ -600,11 +606,16 @@ class _MealSummaryCard extends StatelessWidget {
   final double carbsG;
   final double fatG;
   final double healthScore;
+  final bool isAiRecognized;
 
   @override
   Widget build(BuildContext context) {
     return _MealCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (isAiRecognized) ...[
+          const AiContentNotice(feature: '餐食图片识别'),
+          const SizedBox(height: 12),
+        ],
         TextField(
           controller: nameCtrl,
           decoration: const InputDecoration(labelText: '餐单名称'),
