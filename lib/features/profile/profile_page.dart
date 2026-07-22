@@ -219,7 +219,11 @@ class _ProfilePageState extends State<ProfilePage> {
         measuredAt: result.measuredAt,
       );
       if (!mounted) return;
-      messenger.showSnackBar(const SnackBar(content: Text('已保存健康指标')));
+      final isCritical = HealthSafety.isCriticalIndicator(type, result.payload);
+      messenger.showSnackBar(SnackBar(
+        content: Text(isCritical ? '检测到紧急健康风险，请立即就医，已停止运动计划' : '已保存健康指标'),
+        duration: Duration(seconds: isCritical ? 6 : 2),
+      ));
     } catch (_) {
       if (!mounted) return;
       messenger.showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
@@ -292,10 +296,11 @@ class _ProfilePageState extends State<ProfilePage> {
                                 const InputDecoration(labelText: '出生年份'),
                             validator: (value) {
                               final year = int.tryParse(value?.trim() ?? '');
+                              final currentYear = DateTime.now().year;
                               if (year == null ||
-                                  year < 1900 ||
-                                  year > DateTime.now().year) {
-                                return '请输入正确年份';
+                                  currentYear - year < HealthRanges.minAge ||
+                                  currentYear - year > HealthRanges.maxAge) {
+                                return '仅支持 18–100 岁成年人';
                               }
                               return null;
                             },
@@ -312,7 +317,11 @@ class _ProfilePageState extends State<ProfilePage> {
                             validator: (value) {
                               final height =
                                   double.tryParse(value?.trim() ?? '');
-                              if (height == null || height <= 0) return '请输入身高';
+                              if (height == null ||
+                                  height < HealthRanges.minHeightCm ||
+                                  height > HealthRanges.maxHeightCm) {
+                                return '请输入 100–230 cm';
+                              }
                               return null;
                             },
                           ),
@@ -327,7 +336,11 @@ class _ProfilePageState extends State<ProfilePage> {
                       decoration: const InputDecoration(labelText: '体重（kg）'),
                       validator: (value) {
                         final weight = double.tryParse(value?.trim() ?? '');
-                        if (weight == null || weight <= 0) return '请输入体重';
+                        if (weight == null ||
+                            weight < HealthRanges.minWeightKg ||
+                            weight > HealthRanges.maxWeightKg) {
+                          return '请输入 20–300 kg';
+                        }
                         return null;
                       },
                     ),
@@ -1110,10 +1123,11 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                         controller: _systolic,
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(labelText: '收缩压'),
-                        validator: (value) {
-                          if (int.tryParse(value ?? '') == null) return '请输入数字';
-                          return null;
-                        },
+                        validator: (value) => _validateRange(
+                          value,
+                          HealthRanges.minSystolic,
+                          HealthRanges.maxSystolic,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1123,7 +1137,19 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(labelText: '舒张压'),
                         validator: (value) {
-                          if (int.tryParse(value ?? '') == null) return '请输入数字';
+                          final rangeError = _validateRange(
+                            value,
+                            HealthRanges.minDiastolic,
+                            HealthRanges.maxDiastolic,
+                          );
+                          if (rangeError != null) return rangeError;
+                          final systolic = int.tryParse(_systolic.text.trim());
+                          final diastolic = int.tryParse(value?.trim() ?? '');
+                          if (systolic != null &&
+                              diastolic != null &&
+                              systolic <= diastolic) {
+                            return '舒张压需低于收缩压';
+                          }
                           return null;
                         },
                       ),
@@ -1136,10 +1162,11 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: '体重（kg）'),
-                  validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数字';
-                    return null;
-                  },
+                  validator: (value) => _validateRange(
+                    value,
+                    HealthRanges.minWeightKg,
+                    HealthRanges.maxWeightKg,
+                  ),
                 ),
               ] else if (widget.type == 'glucose') ...[
                 TextFormField(
@@ -1147,10 +1174,11 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: '血糖（mmol/L）'),
-                  validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数字';
-                    return null;
-                  },
+                  validator: (value) => _validateRange(
+                    value,
+                    HealthRanges.minGlucoseMmol,
+                    HealthRanges.maxGlucoseMmol,
+                  ),
                 ),
               ] else if (widget.type == 'lipid') ...[
                 TextFormField(
@@ -1158,10 +1186,11 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: '总胆固醇（mmol/L）'),
-                  validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数字';
-                    return null;
-                  },
+                  validator: (value) => _validateRange(
+                    value,
+                    HealthRanges.minTcMmol,
+                    HealthRanges.maxTcMmol,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -1169,10 +1198,11 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(labelText: 'LDL-C（mmol/L）'),
-                  validator: (value) {
-                    if (double.tryParse(value ?? '') == null) return '请输入数字';
-                    return null;
-                  },
+                  validator: (value) => _validateRange(
+                    value,
+                    HealthRanges.minLdlMmol,
+                    HealthRanges.maxLdlMmol,
+                  ),
                 ),
               ],
               const SizedBox(height: 12),
@@ -1211,6 +1241,13 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
       'lipid' => '血脂',
       _ => '指标',
     };
+  }
+
+  String? _validateRange(String? text, double min, double max) {
+    final value = double.tryParse(text?.trim() ?? '');
+    if (value == null) return '请输入数字';
+    if (value < min || value > max) return '请输入 $min–$max';
+    return null;
   }
 
   Future<void> _pickTime() async {

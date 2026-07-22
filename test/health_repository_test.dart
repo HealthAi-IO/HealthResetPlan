@@ -13,6 +13,48 @@ void main() {
     expect(targets.fatG, 0);
   });
 
+  test('profile is complete only for valid adults and physical values', () {
+    final currentYear = DateTime.now().year;
+    final valid = UserProfileData.empty().copyWith(
+      gender: 'female',
+      birthYear: currentYear - 18,
+      heightCm: 165,
+      weightKg: 60,
+    );
+
+    expect(valid.isComplete, isTrue);
+    expect(valid.copyWith(birthYear: currentYear - 17).isComplete, isFalse);
+    expect(valid.copyWith(birthYear: currentYear - 101).isComplete, isFalse);
+    expect(valid.copyWith(gender: 'unknown').isComplete, isFalse);
+    expect(valid.copyWith(heightCm: 99).isComplete, isFalse);
+    expect(valid.copyWith(weightKg: 301).isComplete, isFalse);
+  });
+
+  test('critical indicator boundaries are classified consistently', () {
+    expect(
+      HealthSafety.isCriticalIndicator(
+        'bp',
+        {'systolic': 179, 'diastolic': 119},
+      ),
+      isFalse,
+    );
+    expect(
+      HealthSafety.isCriticalIndicator(
+        'bp',
+        {'systolic': 180, 'diastolic': 80},
+      ),
+      isTrue,
+    );
+    expect(
+      HealthSafety.isCriticalIndicator('spo2', {'spo2Pct': 90}),
+      isFalse,
+    );
+    expect(
+      HealthSafety.isCriticalIndicator('spo2', {'spo2Pct': 89}),
+      isTrue,
+    );
+  });
+
   test('initialize starts with empty local dashboard data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
 
@@ -93,6 +135,82 @@ void main() {
     expect(await repo.loadPlans(), isNotEmpty);
   });
 
+  test('blood pressure crisis blocks every weekly plan', () async {
+    for (final bp in [(180, 80), (120, 120), (181, 121)]) {
+      final repo = HealthRepository(database: _MemoryAppDatabase());
+      await repo.initialize();
+      await repo.saveProfile(_validProfile());
+      await repo.addIndicator(
+        type: 'bp',
+        payload: {'systolic': bp.$1, 'diastolic': bp.$2},
+      );
+
+      await expectLater(
+        repo.generateWeeklyPlan(),
+        throwsA(isA<PlanBlockedException>()),
+      );
+      final plans = await repo.loadPlans();
+      expect(plans.where((plan) => plan.type == 'exercise'), isEmpty);
+      final risk = plans.firstWhere((plan) => plan.type == 'risk');
+      expect(risk.payload['isCritical'], isTrue);
+      expect(risk.payload['targetKcal'], 0);
+      expect(risk.summary, contains('立即就医'));
+    }
+  });
+
+  test('blood pressure below crisis boundary still allows a plan', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.saveProfile(_validProfile());
+    await repo.addIndicator(
+      type: 'bp',
+      payload: {'systolic': 179, 'diastolic': 119},
+    );
+
+    await repo.generateWeeklyPlan();
+
+    expect(await repo.loadPlans(), isNotEmpty);
+  });
+
+  test('new normal blood pressure clears the critical plan state', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.saveProfile(_validProfile());
+    await repo.addIndicator(
+      type: 'bp',
+      payload: {'systolic': 180, 'diastolic': 80},
+      measuredAt: DateTime(2026, 7, 21),
+    );
+    await repo.addIndicator(
+      type: 'bp',
+      payload: {'systolic': 120, 'diastolic': 80},
+      measuredAt: DateTime(2026, 7, 22),
+    );
+
+    await repo.generateWeeklyPlan();
+
+    final plans = await repo.loadPlans();
+    expect(plans.where((plan) => plan.type == 'exercise'), hasLength(7));
+    final risk = plans.firstWhere((plan) => plan.type == 'risk');
+    expect(risk.payload['isCritical'], isFalse);
+  });
+
+  test('oxygen saturation below 90 blocks every weekly plan', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.saveProfile(_validProfile());
+    await repo.addIndicator(type: 'spo2', payload: {'spo2Pct': 89});
+
+    await expectLater(
+      repo.generateWeeklyPlan(),
+      throwsA(isA<PlanBlockedException>()),
+    );
+    expect(
+      (await repo.loadPlans()).where((plan) => plan.type == 'exercise'),
+      isEmpty,
+    );
+  });
+
   test('report record is saved as dirty sync data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
     await repo.initialize();
@@ -123,6 +241,14 @@ void main() {
     expect(report.indicatorCount, 1);
   });
 }
+
+UserProfileData _validProfile() => UserProfileData.empty().copyWith(
+      nickname: '测试用户',
+      gender: 'female',
+      birthYear: 1990,
+      heightCm: 165,
+      weightKg: 60,
+    );
 
 class _MemoryAppDatabase implements AppDatabase {
   static const _tables = [

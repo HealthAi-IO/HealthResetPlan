@@ -75,7 +75,9 @@ class _PlanPageState extends State<PlanPage> {
       _profile = profile;
       final riskList = plans.where((p) => p.type == 'risk').toList();
       _riskPlan = riskList.isEmpty ? null : riskList.first;
-      _plans = plans.where((p) => p.type != 'risk').toList();
+      final isCritical = _isCriticalRiskPlan(_riskPlan);
+      _plans =
+          isCritical ? const [] : plans.where((p) => p.type != 'risk').toList();
       _loading = false;
     });
   }
@@ -99,6 +101,10 @@ class _PlanPageState extends State<PlanPage> {
       sl<TelemetryApi>().record('plan_generated');
       if (!mounted) return;
       messenger.showSnackBar(const SnackBar(content: Text('已根据你的档案生成基础计划')));
+    } on PlanBlockedException catch (error) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(error.message)));
+      }
     } catch (_) {
       if (mounted) {
         messenger
@@ -122,6 +128,15 @@ class _PlanPageState extends State<PlanPage> {
       );
       return;
     }
+    try {
+      await _repo.ensurePlanEligible(_profile);
+    } on PlanBlockedException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
+      return;
+    }
+    if (!mounted) return;
     if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
     final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
@@ -714,6 +729,8 @@ class _PlanHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     final hasCompleteProfile = profile?.isComplete == true;
+    final isCritical = _isCriticalRiskPlan(riskPlan);
+    final canGenerate = hasCompleteProfile && !isCritical;
     final bmi = profile?.bmi ?? 0;
     final goalNote = riskPlan?.payload['goalNote'] as String? ?? '';
     return Container(
@@ -737,13 +754,15 @@ class _PlanHero extends StatelessWidget {
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
               Text(
-                !hasCompleteProfile
-                    ? '先完善档案，系统会基于 BMI、指标和目标生成个性化建议。'
-                    : (goalNote.isNotEmpty
-                        ? goalNote
-                        : targetKcal > 0
-                            ? '基于档案生成，每日约 $targetKcal kcal，低盐低脂高纤维。'
-                            : '档案已完善，点击生成你的 7 天健康规划。'),
+                isCritical
+                    ? '检测到紧急健康风险，请立即就医，暂不提供健康或运动计划。'
+                    : !hasCompleteProfile
+                        ? '先完善档案，系统会基于 BMI、指标和目标生成个性化建议。'
+                        : (goalNote.isNotEmpty
+                            ? goalNote
+                            : targetKcal > 0
+                                ? '基于档案生成，每日约 $targetKcal kcal，低盐低脂高纤维。'
+                                : '档案已完善，点击生成你的 7 天健康规划。'),
                 style: const TextStyle(color: AppTheme.muted, height: 1.5),
               ),
               const SizedBox(height: 14),
@@ -756,10 +775,16 @@ class _PlanHero extends StatelessWidget {
                       value: bmi == 0 ? '--' : bmi.toStringAsFixed(1)),
                   _InfoPill(
                       label: '热量',
-                      value: targetKcal == 0 ? '--' : '$targetKcal kcal'),
+                      value: isCritical || targetKcal == 0
+                          ? '--'
+                          : '$targetKcal kcal'),
                   _InfoPill(
                       label: '状态',
-                      value: hasCompleteProfile ? profile!.bmiLevel : '待完善'),
+                      value: isCritical
+                          ? '需立即就医'
+                          : hasCompleteProfile
+                              ? profile!.bmiLevel
+                              : '待完善'),
                 ],
               ),
               const SizedBox(height: 16),
@@ -768,7 +793,7 @@ class _PlanHero extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   FilledButton.icon(
-                    onPressed: hasCompleteProfile ? onGenerate : null,
+                    onPressed: canGenerate ? onGenerate : null,
                     icon: const Icon(Icons.auto_awesome_outlined, size: 16),
                     label: const Text('本地生成'),
                     style: FilledButton.styleFrom(
@@ -778,9 +803,8 @@ class _PlanHero extends StatelessWidget {
                     ),
                   ),
                   FilledButton.icon(
-                    onPressed: !hasCompleteProfile || aiGenerating
-                        ? null
-                        : onAiGenerate,
+                    onPressed:
+                        !canGenerate || aiGenerating ? null : onAiGenerate,
                     icon: aiGenerating
                         ? const SizedBox(
                             width: 14,
@@ -805,17 +829,23 @@ class _PlanHero extends StatelessWidget {
               color: AppTheme.pageBg,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: const Column(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('生成规则', style: TextStyle(fontWeight: FontWeight.w800)),
-                SizedBox(height: 10),
-                Text('· 风险评估 → 确定热量 → 饮食原则',
-                    style: TextStyle(color: AppTheme.muted, height: 1.5)),
-                Text('· 运动强度：有氧 + 力量 + 恢复轮替',
-                    style: TextStyle(color: AppTheme.muted, height: 1.5)),
-                Text('· 7 天饮食 / 运动 / 测量计划全覆盖',
-                    style: TextStyle(color: AppTheme.muted, height: 1.5)),
+                Text(isCritical ? '紧急提示' : '生成规则',
+                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 10),
+                if (isCritical)
+                  const Text('请停止运动并立即就医；如有明显不适，请呼叫急救。',
+                      style: TextStyle(color: AppTheme.muted, height: 1.5))
+                else ...[
+                  const Text('· 风险评估 → 确定热量 → 饮食原则',
+                      style: TextStyle(color: AppTheme.muted, height: 1.5)),
+                  const Text('· 运动强度：有氧 + 力量 + 恢复轮替',
+                      style: TextStyle(color: AppTheme.muted, height: 1.5)),
+                  const Text('· 7 天饮食 / 运动 / 测量计划全覆盖',
+                      style: TextStyle(color: AppTheme.muted, height: 1.5)),
+                ],
               ],
             ),
           );
@@ -851,8 +881,12 @@ class _RiskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final risks = _stringList(plan.payload['risks']);
-    final summary = plan.payload['summary']?.toString() ?? '';
-    final dietNote = plan.payload['dietNote']?.toString() ?? '';
+    final isCritical = _isCriticalRiskPlan(plan);
+    final summary = isCritical
+        ? '检测到紧急健康风险，请立即就医，暂不提供健康或运动计划。'
+        : plan.payload['summary']?.toString() ?? '';
+    final dietNote =
+        isCritical ? '' : plan.payload['dietNote']?.toString() ?? '';
     final hasRisk = risks.isNotEmpty;
 
     // 零风险：轻量摘要条
@@ -1234,6 +1268,14 @@ List<String> _stringList(Object? raw) {
       .map((item) => item.toString().trim())
       .where((item) => item.isNotEmpty)
       .toList(growable: false);
+}
+
+bool _isCriticalRiskPlan(PlanRecordData? plan) {
+  if (plan?.payload['isCritical'] == true) return true;
+  final risks = _stringList(plan?.payload['risks']);
+  return risks.any(
+    (risk) => risk.contains('高血压危象') || risk.contains('血氧饱和度危险偏低'),
+  );
 }
 
 class _FilterChip extends StatelessWidget {

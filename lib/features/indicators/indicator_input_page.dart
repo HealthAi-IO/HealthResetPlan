@@ -192,10 +192,13 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         );
         sl<TelemetryApi>().record('indicator_recorded');
         if (!mounted) return;
+        final isCritical = HealthSafety.isCriticalIndicator(_type, payload);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('已保存，可继续录入下一项'),
-            duration: Duration(seconds: 2),
+          SnackBar(
+            content: Text(isCritical
+                ? '检测到紧急健康风险，请立即就医，已停止运动计划'
+                : '已保存，可继续录入下一项'),
+            duration: Duration(seconds: isCritical ? 6 : 2),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -288,23 +291,38 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           label: '体重',
           unit: 'kg',
           hint: '例如 70.5',
-          min: 20,
-          max: 300,
+          min: HealthRanges.minWeightKg,
+          max: HealthRanges.maxWeightKg,
           decimal: true,
           required: true,
         )),
       'bp' => _Card(
           child: Column(children: [
-            _NumField(controller: _systolicCtrl, label: '收缩压（高压）', unit: 'mmHg', hint: '例如 115', min: 60, max: 250, required: true),
+            _NumField(controller: _systolicCtrl, label: '收缩压（高压）', unit: 'mmHg', hint: '例如 115', min: HealthRanges.minSystolic, max: HealthRanges.maxSystolic, required: true),
             const SizedBox(height: 14),
-            _NumField(controller: _diastolicCtrl, label: '舒张压（低压）', unit: 'mmHg', hint: '例如 75', min: 40, max: 160, required: true),
+            _NumField(
+              controller: _diastolicCtrl,
+              label: '舒张压（低压）',
+              unit: 'mmHg',
+              hint: '例如 75',
+              min: HealthRanges.minDiastolic,
+              max: HealthRanges.maxDiastolic,
+              required: true,
+              extraValidator: (value) {
+                final systolic = double.tryParse(_systolicCtrl.text);
+                if (systolic != null && value >= systolic) {
+                  return '舒张压需低于收缩压';
+                }
+                return null;
+              },
+            ),
             const SizedBox(height: 14),
             _NumField(controller: _bpmCtrl, label: '同测心率（选填）', unit: 'bpm', hint: '例如 72', min: 30, max: 220),
           ]),
         ),
       'glucose' => _Card(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _NumField(controller: _glucoseCtrl, label: '血糖', unit: 'mmol/L', hint: '例如 5.0', min: 1, max: 40, decimal: true, required: true),
+            _NumField(controller: _glucoseCtrl, label: '血糖', unit: 'mmol/L', hint: '例如 5.0', min: HealthRanges.minGlucoseMmol, max: HealthRanges.maxGlucoseMmol, decimal: true, required: true),
             const SizedBox(height: 14),
             const Text('测量类型', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
             const SizedBox(height: 8),
@@ -332,9 +350,9 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         )),
       'lipid' => _Card(
           child: Column(children: [
-            _NumField(controller: _tcCtrl, label: '总胆固醇 TC', unit: 'mmol/L', hint: '例如 4.8', min: 1, max: 20, decimal: true),
+            _NumField(controller: _tcCtrl, label: '总胆固醇 TC', unit: 'mmol/L', hint: '例如 4.8', min: HealthRanges.minTcMmol, max: HealthRanges.maxTcMmol, decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _ldlCtrl, label: 'LDL 低密度脂蛋白', unit: 'mmol/L', hint: '例如 2.8', min: 0.5, max: 15, decimal: true),
+            _NumField(controller: _ldlCtrl, label: 'LDL 低密度脂蛋白', unit: 'mmol/L', hint: '例如 2.8', min: HealthRanges.minLdlMmol, max: HealthRanges.maxLdlMmol, decimal: true),
             const SizedBox(height: 14),
             _NumField(controller: _hdlCtrl, label: 'HDL 高密度脂蛋白', unit: 'mmol/L', hint: '例如 1.4', min: 0.3, max: 5, decimal: true),
             const SizedBox(height: 14),
@@ -556,6 +574,7 @@ class _NumField extends StatelessWidget {
     required this.max,
     this.decimal = false,
     this.required = false,
+    this.extraValidator,
   });
 
   final TextEditingController controller;
@@ -566,6 +585,7 @@ class _NumField extends StatelessWidget {
   final double max;
   final bool decimal;
   final bool required;
+  final String? Function(double value)? extraValidator;
 
   @override
   Widget build(BuildContext context) {
@@ -586,6 +606,8 @@ class _NumField extends StatelessWidget {
         final num = double.tryParse(v);
         if (num == null) return '请输入有效数字';
         if (num < min || num > max) return '请输入 $min ~ $max 之间的值';
+        final extraError = extraValidator?.call(num);
+        if (extraError != null) return extraError;
         return null;
       },
     );

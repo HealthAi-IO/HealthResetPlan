@@ -2,6 +2,40 @@ import 'dart:convert';
 
 const String kLocalUserId = 'local-user';
 
+abstract final class HealthRanges {
+  static const int minAge = 18;
+  static const int maxAge = 100;
+  static const double minHeightCm = 100;
+  static const double maxHeightCm = 230;
+  static const double minWeightKg = 20;
+  static const double maxWeightKg = 300;
+  static const double minSystolic = 60;
+  static const double maxSystolic = 250;
+  static const double minDiastolic = 40;
+  static const double maxDiastolic = 160;
+  static const double minGlucoseMmol = 1;
+  static const double maxGlucoseMmol = 40;
+  static const double minTcMmol = 1;
+  static const double maxTcMmol = 20;
+  static const double minLdlMmol = 0.5;
+  static const double maxLdlMmol = 15;
+}
+
+abstract final class HealthSafety {
+  static bool isCriticalIndicator(String type, Map<String, dynamic> payload) {
+    if (type == 'bp') {
+      final systolic = (payload['systolic'] as num?)?.toDouble() ?? 0;
+      final diastolic = (payload['diastolic'] as num?)?.toDouble() ?? 0;
+      return systolic >= 180 || diastolic >= 120;
+    }
+    if (type == 'spo2') {
+      final spo2 = (payload['spo2Pct'] as num?)?.toDouble() ?? 0;
+      return spo2 > 0 && spo2 < 90;
+    }
+    return false;
+  }
+}
+
 class UserProfileData {
   const UserProfileData({
     this.id,
@@ -43,8 +77,9 @@ class UserProfileData {
   final int isDirty;
 
   int get age {
-    if (birthYear <= 1900) return 0;
-    return DateTime.now().year - birthYear;
+    final value = DateTime.now().year - birthYear;
+    if (value < HealthRanges.minAge || value > HealthRanges.maxAge) return 0;
+    return value;
   }
 
   double get bmi {
@@ -62,7 +97,13 @@ class UserProfileData {
     return '肥胖';
   }
 
-  bool get isComplete => heightCm > 0 && weightKg > 0 && birthYear > 0;
+  bool get isComplete =>
+      (gender == 'female' || gender == 'male') &&
+      age >= HealthRanges.minAge &&
+      heightCm >= HealthRanges.minHeightCm &&
+      heightCm <= HealthRanges.maxHeightCm &&
+      weightKg >= HealthRanges.minWeightKg &&
+      weightKg <= HealthRanges.maxWeightKg;
 
   UserProfileData copyWith({
     int? id,

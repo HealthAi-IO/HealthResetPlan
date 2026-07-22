@@ -286,6 +286,11 @@ class _HomePageState extends State<HomePage> {
                 ScaffoldMessenger.of(
                         context) // ignore: use_build_context_synchronously
                     .showSnackBar(const SnackBar(content: Text('已生成 7 天本地计划')));
+              } on PlanBlockedException catch (error) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(
+                        context) // ignore: use_build_context_synchronously
+                    .showSnackBar(SnackBar(content: Text(error.message)));
               } catch (_) {
                 if (!mounted) return;
                 ScaffoldMessenger.of(

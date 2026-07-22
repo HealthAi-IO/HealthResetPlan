@@ -7,6 +7,15 @@ import 'package:uuid/uuid.dart';
 import '../storage/app_database.dart';
 import 'health_models.dart';
 
+class PlanBlockedException implements Exception {
+  const PlanBlockedException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class HealthRepository extends ChangeNotifier {
   HealthRepository({required this.database});
 
@@ -118,6 +127,8 @@ class HealthRepository extends ChangeNotifier {
     );
     await db.insert('health_indicator', entry.toRow());
 
+    await _applyCriticalIndicatorSafety(type, db);
+
     if (type == 'weight' && payload['weightKg'] is num) {
       final profile = await loadProfile();
       if (profile != null) {
@@ -152,6 +163,24 @@ class HealthRepository extends ChangeNotifier {
       }
     }
     notifyListeners();
+  }
+
+  Future<void> _applyCriticalIndicatorSafety(
+    String type,
+    AppDatabase db,
+  ) async {
+    if (type != 'bp' && type != 'spo2') return;
+    final profile = await loadProfile();
+    if (profile?.isComplete != true) return;
+    final risk = await _assessRisk(profile!);
+    if (risk.crisisBp || risk.dangerSpo2) {
+      await db.delete(
+        'plan',
+        where: 'user_id = ? AND type = ?',
+        whereArgs: [kLocalUserId, 'exercise'],
+      );
+    }
+    await _saveRiskPlan(db, risk);
   }
 
   Future<List<PlanRecordData>> loadPlans({int limit = 30}) async {
@@ -462,14 +491,37 @@ class HealthRepository extends ChangeNotifier {
     );
   }
 
+  Future<void> ensurePlanEligible(UserProfileData? profile) async {
+    await _eligibleRisk(profile);
+  }
+
+  Future<_RiskResult> _eligibleRisk(UserProfileData? profile) async {
+    final value = profile ?? await loadProfile();
+    if (value == null || !value.isComplete) {
+      throw const PlanBlockedException('请先填写有效的性别、出生年份、身高和体重');
+    }
+    final risk = await _assessRisk(value);
+    if (risk.crisisBp || risk.dangerSpo2) {
+      throw const PlanBlockedException(
+        '检测到紧急健康风险，请立即就医，暂不生成健康或运动计划',
+      );
+    }
+    return risk;
+  }
+
   // 仅重新计算风险，更新 DB 里的 risk 记录，不 notifyListeners（防止循环触发）
   Future<void> recalculateRisk() async {
     final db = await database.open();
     final profile = await loadProfile();
-    if (profile == null || !profile.isComplete || profile.gender == 'unknown') {
+    if (profile == null || !profile.isComplete) {
       throw StateError('请先完善性别、出生年份、身高和体重，再生成基础计划');
     }
     final r = await _assessRisk(profile);
+    await _saveRiskPlan(db, r);
+    // 不调用 notifyListeners，由调用方决定是否刷新 UI
+  }
+
+  Future<void> _saveRiskPlan(AppDatabase db, _RiskResult risk) async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final ts = now.millisecondsSinceEpoch;
@@ -481,20 +533,19 @@ class HealthRepository extends ChangeNotifier {
       PlanRecordData(
         type: 'risk',
         planDate: today.millisecondsSinceEpoch,
-        payload: r.toPayload(),
+        payload: risk.toPayload(),
         aiProvider: 'local',
         aiModel: 'rules-v2',
         createdAt: ts,
         updatedAt: ts,
       ).toRow(),
     );
-    // 不调用 notifyListeners，由调用方决定是否刷新 UI
   }
 
   Future<void> generateWeeklyPlan() async {
     final db = await database.open();
     final profile = await loadProfile() ?? UserProfileData.empty();
-    final r = await _assessRisk(profile);
+    final r = await _eligibleRisk(profile);
 
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -1145,6 +1196,16 @@ class HealthRepository extends ChangeNotifier {
       where: 'id = ?',
       whereArgs: [id],
     );
+    final updatedRows = await db.query(
+      'health_indicator',
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+      limit: 1,
+    );
+    if (updatedRows.isNotEmpty) {
+      final updated = HealthIndicatorEntry.fromRow(updatedRows.first);
+      await _applyCriticalIndicatorSafety(updated.type, db);
+    }
     notifyListeners();
   }
 
@@ -1670,18 +1731,23 @@ class _RiskResult {
   final double glucoseMmol, tc, ldl, bmi;
 
   Map<String, dynamic> toPayload() {
+    final isCritical = crisisBp || dangerSpo2;
     return {
       'summary': _buildSummary(),
       'risks': risks,
-      'targetKcal': targetKcal,
-      'bmr': bmr,
-      'goalNote': goalNote,
-      'dietNote': dietNote,
+      'isCritical': isCritical,
+      'targetKcal': isCritical ? 0 : targetKcal,
+      'bmr': isCritical ? 0 : bmr,
+      'goalNote': isCritical ? '检测到紧急健康风险，请立即就医。' : goalNote,
+      'dietNote': isCritical ? '' : dietNote,
     };
   }
 
   String _buildSummary() {
     if (risks.isEmpty) return _buildHealthySummary();
+    if (crisisBp || dangerSpo2) {
+      return '检测到紧急健康风险，请立即就医，暂不提供健康或运动计划。';
+    }
 
     // 有风险：按严重程度描述主要问题
     final severe = risks
