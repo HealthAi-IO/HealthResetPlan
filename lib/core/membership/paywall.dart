@@ -81,7 +81,7 @@ Future<bool> requireAccountAndMember(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('需要登录账号'),
         content: const Text(
-          '该功能需要服务端能力支持。\n请先使用手机号或邮箱登录，再开通会员。',
+          '该功能需要服务端能力支持。\n请先使用手机号登录。',
           style: TextStyle(height: 1.5),
         ),
         actions: [

@@ -40,6 +40,7 @@ class _ChatPageState extends State<ChatPage> {
     _ProviderOption('auto', '自动择优', 'AI'),
     _ProviderOption('deepseek', 'DeepSeek', '🤖'),
     _ProviderOption('doubao', '豆包', '🫘'),
+    _ProviderOption('glm', '智谱 GLM', 'GLM'),
     _ProviderOption('qwen', '通义千问', '🌟'),
   ];
 

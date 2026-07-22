@@ -546,9 +546,17 @@ class DailyNutritionTargets {
 
   factory DailyNutritionTargets.fromProfile(UserProfileData? profile) {
     final p = profile ?? UserProfileData.empty();
-    final weight = p.weightKg > 0 ? p.weightKg : 65.0;
-    final height = p.heightCm > 0 ? p.heightCm : 170.0;
-    final age = p.age > 0 ? p.age : 35;
+    if (!p.isComplete) {
+      return const DailyNutritionTargets(
+        calories: 0,
+        proteinG: 0,
+        carbsG: 0,
+        fatG: 0,
+      );
+    }
+    final weight = p.weightKg;
+    final height = p.heightCm;
+    final age = p.age;
     final isMale = p.gender == 'male';
     final bmr = isMale
         ? 10 * weight + 6.25 * height - 5 * age + 5

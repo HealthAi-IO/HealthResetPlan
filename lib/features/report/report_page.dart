@@ -232,9 +232,9 @@ class _ReportPageState extends State<ReportPage> {
     try {
       file = await _picker.pickImage(
         source: source,
-        maxWidth: 1600,
-        maxHeight: 1600,
-        imageQuality: 78,
+        maxWidth: 3000,
+        maxHeight: 3000,
+        imageQuality: 95,
       );
     } catch (e) {
       if (!mounted) return;

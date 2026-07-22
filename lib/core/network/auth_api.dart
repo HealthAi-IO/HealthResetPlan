@@ -2,41 +2,46 @@ import 'package:dio/dio.dart';
 
 import 'api_client.dart';
 
-/// 认证 API：注册 / 登录 / 刷新 Token / 注销。
-///
-/// 后端约定：
-/// - {@code credType}：phone 或 email
-/// - 密码 8-64 位
-/// - 成功返回 {accessToken, refreshToken, accessExpiresIn, userId}
+/// 认证 API：手机号注册 / 登录 / 刷新 Token / 注销。
 class AuthApi {
   AuthApi({required ApiClient client}) : _client = client;
   final ApiClient _client;
 
-  /// 注册新账号
-  Future<AuthResult> register({
-    required String credType, // 'phone' / 'email'
-    required String identifier,
-    required String password,
-    String? nickname,
+  Future<AuthResult> registerPhone({
+    required String phone,
+    required String registrationTicket,
+    String? password,
+    required String nickname,
+    required String agreementVersion,
   }) async {
-    final resp = await _client.dio.post('/auth/register', data: {
-      'credType': credType,
-      'identifier': identifier,
-      'password': password,
-      if (nickname != null) 'nickname': nickname,
+    final resp = await _client.dio.post('/auth/sms/register', data: {
+      'phone': phone,
+      'registrationTicket': registrationTicket,
+      if (password != null && password.isNotEmpty) 'password': password,
+      'nickname': nickname,
+      'agreedToTerms': true,
+      'agreementVersion': agreementVersion,
     });
     return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
-  /// 登录现有账号
-  Future<AuthResult> login({
-    required String credType,
-    required String identifier,
+  Future<PhoneVerificationResult> verifyPhone({
+    required String phone,
+    required String code,
+  }) async {
+    final resp = await _client.dio.post('/auth/sms/verify', data: {
+      'phone': phone,
+      'code': code,
+    });
+    return PhoneVerificationResult.fromJson(_unwrapData(resp.data));
+  }
+
+  Future<AuthResult> loginWithPhonePassword({
+    required String phone,
     required String password,
   }) async {
     final resp = await _client.dio.post('/auth/login', data: {
-      'credType': credType,
-      'identifier': identifier,
+      'phone': phone,
       'password': password,
     });
     return AuthResult.fromJson(_unwrapData(resp.data));
@@ -49,20 +54,6 @@ class AuthApi {
       'phone': phone,
     });
     return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
-  }
-
-  Future<AuthResult> smsLogin({
-    required String phone,
-    required String code,
-    String? nickname,
-  }) async {
-    final resp = await _client.dio.post('/auth/sms/login', data: {
-      'phone': phone,
-      'code': code,
-      if (nickname != null && nickname.trim().isNotEmpty)
-        'nickname': nickname.trim(),
-    });
-    return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
   /// 刷新 Access Token
@@ -84,14 +75,18 @@ class AuthApi {
     }
   }
 
+  Future<void> setInitialPassword(String password) async {
+    await _client.dio.post('/auth/password/set', data: {'password': password});
+  }
+
   /// 注销账号：服务端停用账号，并让该账号云端密文进入 30 天保留期。
   Future<void> cancelAccount() async {
     await _client.dio.post('/auth/cancel-account');
   }
 
   Future<PasswordResetCodeResult> sendAccountRecoveryCode(String phone) async {
-    final resp = await _client.dio.post('/auth/account-recovery/send-code',
-        data: {'phone': phone});
+    final resp = await _client.dio
+        .post('/auth/account-recovery/send-code', data: {'phone': phone});
     return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
   }
 
@@ -101,7 +96,8 @@ class AuthApi {
     required String code,
     required String keyFingerprint,
   }) async {
-    final resp = await _client.dio.post('/auth/account-recovery/reactivate', data: {
+    final resp =
+        await _client.dio.post('/auth/account-recovery/reactivate', data: {
       'phone': phone,
       'code': code,
       'keyFingerprint': keyFingerprint,
@@ -118,13 +114,7 @@ class AuthApi {
       'credType': credType,
       'identifier': identifier,
     });
-    final body = resp.data;
-    if (body is Map && body['code'] == 0 && body['data'] is Map) {
-      return PasswordResetCodeResult.fromJson(
-        Map<String, dynamic>.from(body['data'] as Map),
-      );
-    }
-    throw StateError('验证码发送失败');
+    return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
   }
 
   Future<void> resetPassword({
@@ -224,18 +214,21 @@ class AuthResult {
     required this.accessToken,
     required this.refreshToken,
     required this.accessExpiresIn,
+    required this.hasPassword,
   });
 
   final String userId;
   final String accessToken;
   final String refreshToken;
   final int accessExpiresIn;
+  final bool hasPassword;
 
   factory AuthResult.fromJson(Map<String, dynamic> j) => AuthResult(
         userId: j['userId'] as String,
         accessToken: j['accessToken'] as String,
         refreshToken: j['refreshToken'] as String,
         accessExpiresIn: (j['accessExpiresIn'] as num).toInt(),
+        hasPassword: j['hasPassword'] == true,
       );
 }
 
@@ -276,6 +269,29 @@ class PasswordResetCodeResult {
     return PasswordResetCodeResult(
       debugCode: j['debugCode'] as String? ?? '',
       expiresIn: (j['expiresIn'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class PhoneVerificationResult {
+  const PhoneVerificationResult({
+    required this.status,
+    this.auth,
+    this.registrationTicket,
+  });
+
+  final String status;
+  final AuthResult? auth;
+  final String? registrationTicket;
+
+  factory PhoneVerificationResult.fromJson(Map<String, dynamic> j) {
+    final token = j['token'];
+    return PhoneVerificationResult(
+      status: j['status'] as String? ?? '',
+      auth: token is Map
+          ? AuthResult.fromJson(Map<String, dynamic>.from(token))
+          : null,
+      registrationTicket: j['registrationTicket'] as String?,
     );
   }
 }

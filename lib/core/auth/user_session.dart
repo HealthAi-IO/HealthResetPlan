@@ -13,11 +13,12 @@ class UserSession {
   // 公开存储（昵称）
   static const _kName = 'user_display_name';
   static const _kUserId = 'user_account_id';
-  static const _kAccountIdentifier = 'user_account_identifier';
+  static const _kLegacyAccountIdentifier = 'user_account_identifier';
 
   // 安全存储（Token）
   static const _kAccess = 'hrp_access_token';
   static const _kRefresh = 'hrp_refresh_token';
+  static const _kPasswordPromptRequired = 'hrp_password_prompt_required';
 
   // 用 flutter_secure_storage 保存 Token；昵称用 SharedPreferences
   static const _secureStorage = FlutterSecureStorage(
@@ -29,15 +30,15 @@ class UserSession {
 
   String _name = '';
   String? _userId;
-  String? _accountIdentifier;
   String? _accessToken;
   String? _refreshToken;
+  bool _passwordPromptRequired = false;
 
   String get name => _name;
   String? get userId => _userId;
-  String? get accountIdentifier => _accountIdentifier;
   String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
+  bool get passwordPromptRequired => _passwordPromptRequired;
 
   bool get hasName => _name.isNotEmpty;
 
@@ -50,10 +51,11 @@ class UserSession {
     final prefs = await SharedPreferences.getInstance();
     _name = prefs.getString(_kName) ?? '';
     _userId = prefs.getString(_kUserId);
-    _accountIdentifier = prefs.getString(_kAccountIdentifier);
+    await prefs.remove(_kLegacyAccountIdentifier);
 
     _accessToken = await _secureStorage.read(key: _kAccess);
     _refreshToken = await _secureStorage.read(key: _kRefresh);
+    _passwordPromptRequired = prefs.getBool(_kPasswordPromptRequired) ?? false;
   }
 
   /// 仅设置本地昵称（本地模式）
@@ -69,37 +71,42 @@ class UserSession {
     required String accessToken,
     required String refreshToken,
     String? nickname,
-    String? accountIdentifier,
+    bool? passwordPromptRequired,
   }) async {
     _userId = userId;
-    _accountIdentifier = accountIdentifier?.trim().isNotEmpty == true
-        ? accountIdentifier!.trim()
-        : _accountIdentifier;
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    if (passwordPromptRequired != null) {
+      _passwordPromptRequired = passwordPromptRequired;
+    }
     if (nickname != null && nickname.isNotEmpty) _name = nickname;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_kUserId, userId);
-    if (_accountIdentifier != null && _accountIdentifier!.isNotEmpty) {
-      await prefs.setString(_kAccountIdentifier, _accountIdentifier!);
-    }
     if (nickname != null && nickname.isNotEmpty) {
       await prefs.setString(_kName, _name);
     }
+    await prefs.setBool(_kPasswordPromptRequired, _passwordPromptRequired);
     await _secureStorage.write(key: _kAccess, value: accessToken);
     await _secureStorage.write(key: _kRefresh, value: refreshToken);
+  }
+
+  Future<void> resolvePasswordPrompt() async {
+    _passwordPromptRequired = false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kPasswordPromptRequired, false);
   }
 
   /// 退出账号登录（保留本地昵称，仅清除 Token）
   Future<void> signOut() async {
     _userId = null;
-    _accountIdentifier = null;
     _accessToken = null;
     _refreshToken = null;
+    _passwordPromptRequired = false;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kUserId);
-    await prefs.remove(_kAccountIdentifier);
+    await prefs.remove(_kLegacyAccountIdentifier);
+    await prefs.remove(_kPasswordPromptRequired);
     await _secureStorage.delete(key: _kAccess);
     await _secureStorage.delete(key: _kRefresh);
   }

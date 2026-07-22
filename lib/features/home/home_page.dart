@@ -100,7 +100,7 @@ class _HomePageState extends State<HomePage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, _HomePromptAction.dismiss),
-            child: const Text('删除提醒'),
+            child: const Text('不再提醒'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, prompt.confirmAction),
@@ -935,7 +935,10 @@ class _FoodDiaryPanel extends StatelessWidget {
     final protein = records.fold<double>(0, (sum, item) => sum + item.proteinG);
     final carbs = records.fold<double>(0, (sum, item) => sum + item.carbsG);
     final fat = records.fold<double>(0, (sum, item) => sum + item.fatG);
-    final remaining = (targets.calories - consumed).clamp(0, 9999).toDouble();
+    final hasTargets = targets.calories > 0;
+    final remaining = hasTargets
+        ? (targets.calories - consumed).clamp(0, 9999).toDouble()
+        : -1.0;
 
     return _Panel(
       title: '每日饮食',
@@ -1237,7 +1240,10 @@ class _NutritionProgress extends StatelessWidget {
         Expanded(
             child: Text(label,
                 style: const TextStyle(fontWeight: FontWeight.w800))),
-        Text('${value.toStringAsFixed(1)} / ${target.toStringAsFixed(1)}克',
+        Text(
+            target <= 0
+                ? '${value.toStringAsFixed(1)} / -- 克'
+                : '${value.toStringAsFixed(1)} / ${target.toStringAsFixed(1)}克',
             style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
       ]),
       const SizedBox(height: 5),
@@ -1298,7 +1304,10 @@ class _MealSectionCard extends StatelessWidget {
               Text(title,
                   style: const TextStyle(
                       fontWeight: FontWeight.w900, fontSize: 16)),
-              Text('${total.round()} / ${limitCalories.round()} kcal',
+              Text(
+                  limitCalories <= 0
+                      ? '${total.round()} / -- kcal'
+                      : '${total.round()} / ${limitCalories.round()} kcal',
                   style: const TextStyle(color: AppTheme.muted)),
             ]),
           ),

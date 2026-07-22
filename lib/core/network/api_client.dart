@@ -107,6 +107,7 @@ class ApiClient {
     final path = error.requestOptions.path;
     if (path.contains('/auth/login') ||
         path.contains('/auth/register') ||
+        path.contains('/auth/sms/register') ||
         path.contains('/auth/refresh') ||
         path.contains('/auth/logout')) {
       return false;
@@ -160,7 +161,6 @@ class ApiClient {
       accessToken: accessToken,
       refreshToken: nextRefreshToken,
       nickname: UserSession.instance.name,
-      accountIdentifier: UserSession.instance.accountIdentifier,
     );
     setAccessToken(accessToken);
     return _RefreshedSession(accessToken: accessToken);

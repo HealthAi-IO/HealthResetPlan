@@ -5,6 +5,8 @@ import '../core/auth/user_session.dart';
 import '../core/data/health_models.dart';
 import '../core/telemetry/telemetry_observer.dart';
 import '../features/auth/login_page.dart';
+import '../features/auth/register_page.dart';
+import '../features/auth/set_password_page.dart';
 import '../features/auth/onboarding_page.dart';
 import '../features/chat/chat_page.dart';
 import '../features/clock/clock_page.dart';
@@ -24,6 +26,23 @@ import '../features/sync/key_setup_page.dart';
 
 class AppRouter {
   AppRouter._();
+
+  static bool _requiresAccount(String path) =>
+      path == '/chat' ||
+      path == '/report' ||
+      path == '/self-check' ||
+      path.startsWith('/sync');
+
+  static String _safeReturnTo(String? value) {
+    if (value == null ||
+        !value.startsWith('/') ||
+        value.startsWith('/login') ||
+        value.startsWith('/register') ||
+        value.startsWith('/set-password')) {
+      return '/home';
+    }
+    return value;
+  }
 
   static Page<void> _page(GoRouterState state, Widget child) {
     return CustomTransitionPage<void>(
@@ -56,7 +75,26 @@ class AppRouter {
       final path = state.uri.path;
       final hasLocalIdentity =
           UserSession.instance.hasName || UserSession.instance.isAccountLogin;
-      if (!hasLocalIdentity && path != '/login') return '/login';
+      if (!hasLocalIdentity && path != '/login') {
+        if (_requiresAccount(path)) {
+          return Uri(
+            path: '/login',
+            queryParameters: {'account': '1', 'returnTo': state.uri.toString()},
+          ).toString();
+        }
+        return '/login';
+      }
+      if (_requiresAccount(path) && !UserSession.instance.isAccountLogin) {
+        return Uri(
+          path: '/login',
+          queryParameters: {'account': '1', 'returnTo': state.uri.toString()},
+        ).toString();
+      }
+      if (UserSession.instance.isAccountLogin &&
+          UserSession.instance.passwordPromptRequired &&
+          path != '/set-password') {
+        return '/set-password';
+      }
       return null;
     },
     routes: [
@@ -145,7 +183,13 @@ class AppRouter {
         pageBuilder: (_, state) {
           final forceAccount = state.extra == true ||
               state.uri.queryParameters['account'] == '1';
-          return _page(state, LoginPage(initialAccountMode: forceAccount));
+          return _page(
+            state,
+            LoginPage(
+              initialAccountMode: forceAccount,
+              returnTo: _safeReturnTo(state.uri.queryParameters['returnTo']),
+            ),
+          );
         },
       ),
       GoRoute(
@@ -169,6 +213,27 @@ class AppRouter {
         path: '/self-check',
         name: '/self-check',
         pageBuilder: (_, state) => _page(state, const SelfCheckPage()),
+      ),
+      GoRoute(
+        path: '/register',
+        pageBuilder: (_, state) {
+          final args = state.extra;
+          return _page(
+            state,
+            args is RegisterArgs
+                ? RegisterPage(args: args)
+                : const LoginPage(initialAccountMode: true),
+          );
+        },
+      ),
+      GoRoute(
+        path: '/set-password',
+        pageBuilder: (_, state) => _page(
+          state,
+          SetPasswordPage(
+            returnTo: _safeReturnTo(state.uri.queryParameters['returnTo']),
+          ),
+        ),
       ),
       /*
       GoRoute(

@@ -9,6 +9,7 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
@@ -109,6 +110,11 @@ class _MealRecordPageState extends State<MealRecordPage> {
       _nutrition = const {};
     });
     try {
+      if (!mounted) return;
+      if (!await requireAccountAndMember(context, PaywallFeature.aiPlan)) {
+        return;
+      }
+      if (!mounted) return;
       if (!await ensureAiConsent(context)) return;
       if (!mounted) return;
       final result = await _api.analyzeVision(image: image, type: 'meal');
@@ -919,7 +925,7 @@ class MacroRing extends StatelessWidget {
           ),
         ),
         Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(calories.round().toString(),
+          Text(calories < 0 ? '--' : calories.round().toString(),
               style:
                   const TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
           const Text('kcal', style: TextStyle(color: AppTheme.muted)),

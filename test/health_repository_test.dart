@@ -4,6 +4,15 @@ import 'package:health_reset_plan/core/data/health_repository.dart';
 import 'package:health_reset_plan/core/storage/app_database.dart';
 
 void main() {
+  test('incomplete profile does not expose estimated nutrition targets', () {
+    final targets = DailyNutritionTargets.fromProfile(UserProfileData.empty());
+
+    expect(targets.calories, 0);
+    expect(targets.proteinG, 0);
+    expect(targets.carbsG, 0);
+    expect(targets.fatG, 0);
+  });
+
   test('initialize starts with empty local dashboard data', () async {
     final repo = HealthRepository(database: _MemoryAppDatabase());
 

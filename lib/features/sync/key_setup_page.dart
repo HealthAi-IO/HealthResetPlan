@@ -5,11 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
-import '../../core/auth/user_session.dart';
 import '../../core/crypto/key_vault.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/paywall.dart';
 import '../../core/sync/sync_service.dart';
 
 class KeySetupPage extends StatefulWidget {
@@ -100,46 +98,14 @@ class _KeySetupPageState extends State<KeySetupPage> {
       await _refreshBackupState();
 
       if (!mounted) return;
-      final canSync =
-          await requireAccountAndMember(context, PaywallFeature.cloudSync);
-      if (!canSync) {
-        await sl<SyncService>().setSyncEnabled(false);
-        if (!mounted) return;
-        setState(() {
-          _restoreStatusMessage = '主密钥已恢复到本地。登录原账号后，可在云同步页拉取云端数据。';
-          _restoreStatusError = false;
-        });
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('主密钥已恢复到本地。登录原账号后，可在云同步页拉取云端数据。'),
-          ),
-        );
-        return;
-      }
-
-      final sync = sl<SyncService>();
-      await sync.setSyncEnabled(true);
-      setState(() {
-        _restoreStatusMessage = '主密钥已恢复到本地，正在从云端拉取加密数据...';
-        _restoreStatusError = false;
-      });
-      final result = await sync.restoreFromCloud(replaceLocal: true);
-      await _refreshSessionNameFromProfile();
+      await sl<SyncService>().setSyncEnabled(false);
       if (!mounted) return;
-      final message = result.hasError
-          ? _restoreSyncFailureMessage(result.error)
-          : result.pulled == 0
-              ? '主密钥已恢复，云端没有可拉取的数据。请确认之前已成功开启云同步并上传过数据。'
-              : '主密钥已恢复，并已拉取云端数据 ${result.pulled} 条';
+      const message = '主密钥已恢复到本地，请在云同步页手动开启并同步数据。';
       setState(() {
         _restoreStatusMessage = message;
-        _restoreStatusError = result.hasError;
+        _restoreStatusError = false;
       });
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(message),
-        ),
-      );
+      messenger.showSnackBar(const SnackBar(content: Text(message)));
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -151,14 +117,6 @@ class _KeySetupPageState extends State<KeySetupPage> {
       if (mounted) {
         setState(() => _busy = false);
       }
-    }
-  }
-
-  Future<void> _refreshSessionNameFromProfile() async {
-    final profile = await sl<HealthRepository>().loadProfile();
-    final nickname = profile?.nickname.trim() ?? '';
-    if (nickname.isNotEmpty) {
-      await UserSession.instance.setName(nickname);
     }
   }
 
@@ -200,14 +158,6 @@ class _KeySetupPageState extends State<KeySetupPage> {
       return '本地存储异常，无法恢复密钥';
     }
     return text.replaceFirst('Exception: ', '');
-  }
-
-  String _restoreSyncFailureMessage(String? error) {
-    final text = error ?? '';
-    if (text.contains('密钥异常') || text.contains('密钥错误')) {
-      return '主密钥已恢复到本地，但云端数据无法用这组助记词解密。请确认使用最初开启云同步时备份的助记词。';
-    }
-    return '主密钥已恢复，但云端同步失败：$text';
   }
 
   @override

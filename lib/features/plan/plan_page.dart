@@ -713,6 +713,7 @@ class _PlanHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
+    final hasCompleteProfile = profile?.isComplete == true;
     final bmi = profile?.bmi ?? 0;
     final goalNote = riskPlan?.payload['goalNote'] as String? ?? '';
     return Container(
@@ -736,11 +737,13 @@ class _PlanHero extends StatelessWidget {
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
               Text(
-                profile == null
+                !hasCompleteProfile
                     ? '先完善档案，系统会基于 BMI、指标和目标生成个性化建议。'
                     : (goalNote.isNotEmpty
                         ? goalNote
-                        : '基于档案生成，每日约 $targetKcal kcal，低盐低脂高纤维。'),
+                        : targetKcal > 0
+                            ? '基于档案生成，每日约 $targetKcal kcal，低盐低脂高纤维。'
+                            : '档案已完善，点击生成你的 7 天健康规划。'),
                 style: const TextStyle(color: AppTheme.muted, height: 1.5),
               ),
               const SizedBox(height: 14),
@@ -754,7 +757,9 @@ class _PlanHero extends StatelessWidget {
                   _InfoPill(
                       label: '热量',
                       value: targetKcal == 0 ? '--' : '$targetKcal kcal'),
-                  _InfoPill(label: '状态', value: profile?.bmiLevel ?? '待完善'),
+                  _InfoPill(
+                      label: '状态',
+                      value: hasCompleteProfile ? profile!.bmiLevel : '待完善'),
                 ],
               ),
               const SizedBox(height: 16),
@@ -763,7 +768,7 @@ class _PlanHero extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   FilledButton.icon(
-                    onPressed: onGenerate,
+                    onPressed: hasCompleteProfile ? onGenerate : null,
                     icon: const Icon(Icons.auto_awesome_outlined, size: 16),
                     label: const Text('本地生成'),
                     style: FilledButton.styleFrom(
@@ -773,7 +778,9 @@ class _PlanHero extends StatelessWidget {
                     ),
                   ),
                   FilledButton.icon(
-                    onPressed: aiGenerating ? null : onAiGenerate,
+                    onPressed: !hasCompleteProfile || aiGenerating
+                        ? null
+                        : onAiGenerate,
                     icon: aiGenerating
                         ? const SizedBox(
                             width: 14,
@@ -782,7 +789,7 @@ class _PlanHero extends StatelessWidget {
                                 strokeWidth: 2, color: Colors.white),
                           )
                         : const Icon(Icons.psychology_outlined, size: 16),
-                    label: Text(aiGenerating ? 'AI 生成中…' : 'AI 智能生成 ⚜'),
+                    label: Text(aiGenerating ? 'AI 生成中…' : 'AI 智能生成'),
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF0277BD),
                     ),

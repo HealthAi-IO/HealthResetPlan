@@ -12,11 +12,17 @@ import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/sync/sync_service.dart';
+import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, this.initialAccountMode = false});
+  const LoginPage({
+    super.key,
+    this.initialAccountMode = false,
+    this.returnTo = '/home',
+  });
 
   final bool initialAccountMode;
+  final String returnTo;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -27,14 +33,13 @@ class _LoginPageState extends State<LoginPage> {
   final _phoneCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _confirmPasswordCtrl = TextEditingController();
 
   late bool _accountMode = widget.initialAccountMode;
   bool _smsLoginMode = true;
-  bool _registerMode = false;
   bool _saving = false;
   bool _sendingCode = false;
-  String? _debugCode;
+  int _resendSeconds = 0;
+  Timer? _resendTimer;
   String? _error;
 
   @override
@@ -43,7 +48,7 @@ class _LoginPageState extends State<LoginPage> {
     _phoneCtrl.dispose();
     _codeCtrl.dispose();
     _passwordCtrl.dispose();
-    _confirmPasswordCtrl.dispose();
+    _resendTimer?.cancel();
     super.dispose();
   }
 
@@ -88,98 +93,95 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _submitAccount() async {
     final phone = _normalizePhone(_phoneCtrl.text);
     final code = _codeCtrl.text.trim();
-    final password = _passwordCtrl.text;
-    final confirmPassword = _confirmPasswordCtrl.text;
-    final nickname = _nameCtrl.text.trim();
+    if (!_smsLoginMode) {
+      if (!RegExp(r'^1\d{10}$').hasMatch(phone) || _passwordCtrl.text.isEmpty) {
+        setState(() => _error = '请输入手机号和密码');
+        return;
+      }
+      setState(() {
+        _saving = true;
+        _error = null;
+      });
+      try {
+        await _completeAccountAuth(await sl<AuthApi>().loginWithPhonePassword(
+          phone: phone,
+          password: _passwordCtrl.text,
+        ));
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _error = friendlyAuthError(e));
+      } finally {
+        if (mounted) setState(() => _saving = false);
+      }
+      return;
+    }
 
     if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
       setState(() => _error = '请输入正确的手机号');
       return;
     }
 
-    if (_registerMode) {
-      if (password.length < 8) {
-        setState(() => _error = '密码至少 8 位');
-        return;
-      }
-      if (password != confirmPassword) {
-        setState(() => _error = '两次输入的密码不一致');
-        return;
-      }
-    } else if (_smsLoginMode) {
-      if (code.isEmpty) {
-        setState(() => _error = '请输入验证码');
-        return;
-      }
-    } else {
-      if (password.length < 8) {
-        setState(() => _error = '请输入至少 8 位密码');
-        return;
-      }
+    if (code.isEmpty) {
+      setState(() => _error = '请输入验证码');
+      return;
     }
-
     setState(() {
       _saving = true;
       _error = null;
     });
 
     try {
-      final auth = sl<AuthApi>();
-      final result = _registerMode
-          ? await auth.register(
-              credType: 'phone',
-              identifier: phone,
-              password: password,
-              nickname: nickname.isEmpty ? null : nickname,
-            )
-          : _smsLoginMode
-              ? await auth.smsLogin(
+      final result = await sl<AuthApi>().verifyPhone(phone: phone, code: code);
+      if (result.status == 'register' && result.registrationTicket != null) {
+        if (mounted) {
+          context.push('/register',
+              extra: RegisterArgs(
                   phone: phone,
-                  code: code,
-                  nickname: nickname.isEmpty ? null : nickname,
-                )
-              : await auth.login(
-                  credType: 'phone',
-                  identifier: phone,
-                  password: password,
-                );
+                  registrationTicket: result.registrationTicket!,
+                  returnTo: widget.returnTo));
+        }
+      } else if (result.auth != null) {
+        await _completeAccountAuth(result.auth!);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = friendlyAuthError(e));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
+  Future<void> _completeAccountAuth(AuthResult result) async {
+    final existingName = UserSession.instance.name;
+    await UserSession.instance.setAccountSession(
+      userId: result.userId,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      nickname: existingName.isEmpty ? null : existingName,
+      passwordPromptRequired: !result.hasPassword,
+    );
+    sl<ApiClient>().setAccessToken(result.accessToken);
+
+    final account = await sl<AuthApi>().fetchAccountInfo();
+    if (account != null && account.nickname.isNotEmpty) {
       await UserSession.instance.setAccountSession(
         userId: result.userId,
         accessToken: result.accessToken,
         refreshToken: result.refreshToken,
-        nickname: nickname.isEmpty ? phone : nickname,
-        accountIdentifier: phone,
+        nickname: account.nickname,
       );
-      sl<ApiClient>().setAccessToken(result.accessToken);
-      final switchedAccount = await sl<KeyVault>().bindToAccount(result.userId);
-      await sl<SyncService>().bindToAccount(result.userId);
-
-      if (nickname.isNotEmpty) {
-        final repo = sl<HealthRepository>();
-        final existing = await repo.loadProfile();
-        await repo.saveProfile(
-          (existing ?? UserProfileData.empty()).copyWith(nickname: nickname),
-        );
-      }
-
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.of(context);
-      context.go('/home');
-      if (switchedAccount) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('检测到账号切换，请恢复当前账号的主密钥后再开启云同步。')),
-        );
-      } else {
-        unawaited(_syncLocalDataAfterLogin(messenger));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _saving = false;
-        _error = friendlyAuthError(e);
-      });
     }
+    await sl<KeyVault>().bindToAccount(result.userId);
+    await sl<SyncService>().bindToAccount(result.userId);
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    context.go(result.hasPassword
+        ? widget.returnTo
+        : Uri(path: '/set-password', queryParameters: {
+            'returnTo': widget.returnTo,
+          }).toString());
+    unawaited(_syncLocalDataAfterLogin(messenger));
   }
 
   String _normalizePhone(String raw) =>
@@ -199,10 +201,7 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final result = await sl<AuthApi>().sendSmsLoginCode(phone: phone);
       if (!mounted) return;
-      setState(() {
-        _debugCode = result.debugCode;
-        if (result.debugCode.isNotEmpty) _codeCtrl.text = result.debugCode;
-      });
+      _startResendCountdown();
       if (result.debugCode.isNotEmpty) {
         await _showDebugCodeDialog(result.debugCode);
       }
@@ -212,6 +211,19 @@ class _LoginPageState extends State<LoginPage> {
     } finally {
       if (mounted) setState(() => _sendingCode = false);
     }
+  }
+
+  void _startResendCountdown() {
+    _resendTimer?.cancel();
+    setState(() => _resendSeconds = 60);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _resendSeconds <= 1) {
+        timer.cancel();
+        if (mounted) setState(() => _resendSeconds = 0);
+        return;
+      }
+      setState(() => _resendSeconds--);
+    });
   }
 
   Future<void> _showDebugCodeDialog(String code) async {
@@ -298,7 +310,7 @@ class _LoginPageState extends State<LoginPage> {
       accessToken: result.auth.accessToken,
       refreshToken: result.auth.refreshToken,
       nickname: result.auth.userId,
-      accountIdentifier: result.phone,
+      passwordPromptRequired: !result.auth.hasPassword,
     );
     sl<ApiClient>().setAccessToken(result.auth.accessToken);
     await sl<KeyVault>().bindToAccount(result.auth.userId);
@@ -307,18 +319,38 @@ class _LoginPageState extends State<LoginPage> {
     if (mounted) context.go('/sync');
   }
 
+  Future<void> _showLoginHelp() async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.lock_reset_outlined),
+              title: const Text('忘记密码'),
+              onTap: () => Navigator.pop(sheetContext, 'reset'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.restore_outlined),
+              title: const Text('恢复已注销账号'),
+              onTap: () => Navigator.pop(sheetContext, 'recover'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'reset') {
+      await _showForgotPasswordDialog();
+    } else if (action == 'recover') {
+      await _showAccountRecoveryDialog();
+    }
+  }
+
   void _toggleAccountMode() {
     setState(() {
       _accountMode = !_accountMode;
-      _registerMode = false;
-      _error = null;
-    });
-  }
-
-  void _toggleRegisterMode() {
-    setState(() {
-      _registerMode = !_registerMode;
-      if (_registerMode) _smsLoginMode = false;
       _error = null;
     });
   }
@@ -369,28 +401,27 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 40),
                   _LoginCard(
                     accountMode: _accountMode,
-                    registerMode: _registerMode,
                     smsLoginMode: _smsLoginMode,
                     saving: _saving,
                     sendingCode: _sendingCode,
+                    resendSeconds: _resendSeconds,
                     error: _error,
-                    debugCode: _debugCode,
                     nameCtrl: _nameCtrl,
                     phoneCtrl: _phoneCtrl,
                     codeCtrl: _codeCtrl,
                     passwordCtrl: _passwordCtrl,
-                    confirmPasswordCtrl: _confirmPasswordCtrl,
                     onSubmit: _submit,
                     onSendCode: _sendLoginCode,
-                    onForgotPassword: _showForgotPasswordDialog,
-                    onRecoverAccount: _showAccountRecoveryDialog,
-                    onToggleAccountMode: _toggleAccountMode,
-                    onToggleRegisterMode: _toggleRegisterMode,
-                    onLoginModeChanged: (value) => setState(() {
-                      _smsLoginMode = value;
-                      _registerMode = false;
-                      _error = null;
-                    }),
+                    onLoginHelp: _showLoginHelp,
+                    onLoginModeChanged: (value) =>
+                        setState(() => _smsLoginMode = value),
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: _saving ? null : _toggleAccountMode,
+                    child: Text(
+                      _accountMode ? '暂不登录，本地使用' : '返回手机号登录',
+                    ),
                   ),
                 ],
               ),
@@ -405,44 +436,34 @@ class _LoginPageState extends State<LoginPage> {
 class _LoginCard extends StatelessWidget {
   const _LoginCard({
     required this.accountMode,
-    required this.registerMode,
     required this.smsLoginMode,
     required this.saving,
     required this.sendingCode,
+    required this.resendSeconds,
     required this.error,
-    required this.debugCode,
     required this.nameCtrl,
     required this.phoneCtrl,
     required this.codeCtrl,
     required this.passwordCtrl,
-    required this.confirmPasswordCtrl,
     required this.onSubmit,
     required this.onSendCode,
-    required this.onForgotPassword,
-    required this.onRecoverAccount,
-    required this.onToggleAccountMode,
-    required this.onToggleRegisterMode,
+    required this.onLoginHelp,
     required this.onLoginModeChanged,
   });
 
   final bool accountMode;
-  final bool registerMode;
   final bool smsLoginMode;
   final bool saving;
   final bool sendingCode;
+  final int resendSeconds;
   final String? error;
-  final String? debugCode;
   final TextEditingController nameCtrl;
   final TextEditingController phoneCtrl;
   final TextEditingController codeCtrl;
   final TextEditingController passwordCtrl;
-  final TextEditingController confirmPasswordCtrl;
   final VoidCallback onSubmit;
   final VoidCallback onSendCode;
-  final VoidCallback onForgotPassword;
-  final VoidCallback onRecoverAccount;
-  final VoidCallback onToggleAccountMode;
-  final VoidCallback onToggleRegisterMode;
+  final VoidCallback onLoginHelp;
   final ValueChanged<bool> onLoginModeChanged;
 
   @override
@@ -458,48 +479,40 @@ class _LoginCard extends StatelessWidget {
         Row(children: [
           Expanded(
             child: Text(
-              accountMode ? (registerMode ? '注册账号' : '会员账号登录') : '免费版昵称',
+              accountMode ? '手机号登录' : '免费版昵称',
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
             ),
-          ),
-          TextButton(
-            onPressed: saving ? null : onToggleAccountMode,
-            child: Text(accountMode ? '使用免费版' : '会员登录'),
           ),
         ]),
         const SizedBox(height: 4),
         Text(
-          accountMode ? '账号用于会员权益、AI 功能和云同步。' : '只保存在本地，无网络也可以使用。',
+          accountMode ? '绑定手机号账号后可使用云同步和在线能力。' : '只保存在本地，无网络也可以使用。',
           style: const TextStyle(color: AppTheme.muted, fontSize: 13),
         ),
         const SizedBox(height: 16),
         if (accountMode) ...[
-          if (!registerMode)
-            SegmentedButton<bool>(
-              segments: const [
-                ButtonSegment(
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(
                   value: true,
                   label: Text('验证码登录'),
-                  icon: Icon(Icons.sms_outlined),
-                ),
-                ButtonSegment(
+                  icon: Icon(Icons.sms_outlined)),
+              ButtonSegment(
                   value: false,
                   label: Text('密码登录'),
-                  icon: Icon(Icons.lock_outline),
-                ),
-              ],
-              selected: {smsLoginMode},
-              onSelectionChanged: saving
-                  ? null
-                  : (selected) => onLoginModeChanged(selected.first),
-            ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: saving ? null : onToggleRegisterMode,
-              child: Text(registerMode ? '已有账号，去登录' : '没有账号，立即注册'),
-            ),
+                  icon: Icon(Icons.lock_outline)),
+            ],
+            selected: {smsLoginMode},
+            onSelectionChanged:
+                saving ? null : (value) => onLoginModeChanged(value.first),
           ),
+          const SizedBox(height: 8),
+          if (smsLoginMode)
+            const Text(
+              '未注册手机号验证后将自动创建账号',
+              style: TextStyle(color: AppTheme.muted, fontSize: 12),
+            ),
+          const SizedBox(height: 12),
           TextField(
             controller: phoneCtrl,
             keyboardType: TextInputType.phone,
@@ -510,87 +523,63 @@ class _LoginCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          if (!registerMode && smsLoginMode)
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: codeCtrl,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => onSubmit(),
-                  decoration: const InputDecoration(
-                    hintText: '验证码',
-                    prefixIcon: Icon(Icons.sms_outlined),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              OutlinedButton(
-                onPressed: sendingCode ? null : onSendCode,
-                child: Text(sendingCode ? '发送中...' : '获取验证码'),
-              ),
-            ])
-          else ...[
+          if (smsLoginMode) ...[
             TextField(
-              controller: passwordCtrl,
-              obscureText: true,
-              textInputAction:
-                  registerMode ? TextInputAction.next : TextInputAction.done,
-              onSubmitted: (_) => registerMode ? null : onSubmit(),
+              controller: codeCtrl,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => onSubmit(),
               decoration: const InputDecoration(
-                hintText: '密码',
-                prefixIcon: Icon(Icons.lock_outline),
+                labelText: '验证码',
+                hintText: '请输入 6 位验证码',
+                prefixIcon: Icon(Icons.sms_outlined),
               ),
             ),
-            if (registerMode) ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: confirmPasswordCtrl,
-                obscureText: true,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => onSubmit(),
-                decoration: const InputDecoration(
-                  hintText: '确认密码',
-                  prefixIcon: Icon(Icons.lock_outline),
-                ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: sendingCode || resendSeconds > 0 ? null : onSendCode,
+                child: Text(sendingCode
+                    ? '发送中...'
+                    : resendSeconds > 0
+                        ? '重新发送（$resendSeconds 秒）'
+                        : '获取验证码'),
               ),
-            ],
+            ),
           ],
-          if (debugCode != null && debugCode!.isNotEmpty) ...[
-            const SizedBox(height: 6),
+          if (resendSeconds > 0) ...[
+            const SizedBox(height: 8),
             Text(
-              '开发测试验证码：$debugCode',
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-            ),
+                '验证码已发送至 ${phoneCtrl.text.length >= 11 ? '${phoneCtrl.text.substring(0, 3)}****${phoneCtrl.text.substring(phoneCtrl.text.length - 4)}' : '该手机号'}',
+                style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
           ],
-          if (!registerMode)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: saving ? null : onForgotPassword,
-                child: const Text('忘记密码？'),
-              ),
+          if (!smsLoginMode) ...[
+            TextField(
+                controller: passwordCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                    hintText: '登录密码', prefixIcon: Icon(Icons.lock_outline))),
+          ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: saving ? null : onLoginHelp,
+              child: const Text('登录遇到问题？'),
             ),
-          if (!registerMode)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: saving ? null : onRecoverAccount,
-                child: const Text('恢复已注销账号'),
-              ),
-            ),
-          const SizedBox(height: 12),
-        ],
-        TextField(
-          controller: nameCtrl,
-          autofocus: !accountMode,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => onSubmit(),
-          decoration: InputDecoration(
-            hintText: accountMode ? '昵称（可选）' : '例如：张三、小明',
-            prefixIcon: const Icon(Icons.person_outline),
           ),
-        ),
+        ],
+        if (!accountMode)
+          TextField(
+            controller: nameCtrl,
+            autofocus: !accountMode,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => onSubmit(),
+            decoration: InputDecoration(
+              hintText: accountMode ? '昵称（可选）' : '例如：张三、小明',
+              prefixIcon: const Icon(Icons.person_outline),
+            ),
+          ),
         if (error != null) ...[
           const SizedBox(height: 10),
           Text(error!, style: TextStyle(color: Colors.red.shade700)),
@@ -610,11 +599,7 @@ class _LoginCard extends StatelessWidget {
                     ),
                   )
                 : Text(
-                    accountMode
-                        ? (registerMode
-                            ? '注册并登录'
-                            : (smsLoginMode ? '验证码登录' : '密码登录'))
-                        : '开始使用',
+                    accountMode ? (smsLoginMode ? '验证码登录' : '手机号密码登录') : '开始使用',
                   ),
           ),
         ),

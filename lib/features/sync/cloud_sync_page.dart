@@ -289,7 +289,7 @@ class _SyncToggleCard extends StatelessWidget {
           if (!enabled) ...[
             const SizedBox(height: 4),
             const Text(
-              '开启后需要有效的云同步会员权益。',
+              '登录手机号账号并完成主密钥备份后即可开启。',
               style: TextStyle(color: AppTheme.muted, fontSize: 12),
             ),
           ],

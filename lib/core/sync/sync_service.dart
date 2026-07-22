@@ -815,7 +815,7 @@ class SyncService {
       if (body is Map) {
         final code = (body['code'] as num?)?.toInt() ?? 0;
         final message = (body['message'] ?? body['msg'])?.toString();
-        if (code == 40301) return message ?? '云同步功能需要开通会员，免费版数据仅保存在本地设备';
+        if (code == 40301) return message ?? '请先登录手机号账号后再使用云同步';
         if (code == 50301) return '系统繁忙，请稍后再试';
         if (message != null && message.isNotEmpty) return message;
       }

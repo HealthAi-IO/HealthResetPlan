@@ -7,6 +7,7 @@ import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/network/ai_consent_api.dart';
 import '../../core/sync/sync_service.dart';
@@ -168,7 +169,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _manageAiConsent() async {
     if (!UserSession.instance.isAccountLogin) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('登录账号后可管理 AI 授权')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('登录账号后可管理 AI 授权')));
       return;
     }
     final api = sl<AiConsentApi>();
@@ -180,16 +182,26 @@ class _ProfilePageState extends State<ProfilePage> {
         title: Text(accepted ? '管理 AI 数据处理授权' : 'AI 数据处理说明'),
         content: Text(accepted
             ? '你已同意云端 AI 数据处理。撤回后，AI 问诊、7 天计划和报告识别将停止；本地记录与加密云同步不受影响。'
-            : '使用 AI 问诊、7 天计划或报告识别时，你主动提交的必要健康信息或报告图片会由本服务的受控服务器短暂转发给已配置的千问、豆包或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
+            : '使用 AI 问诊、7 天计划或报告识别时，你主动提交的必要健康信息或报告图片会由本服务的受控服务器短暂转发给已配置的千问、豆包、智谱 GLM 或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(accepted ? '撤回授权' : '同意并启用 AI')),
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(accepted ? '撤回授权' : '同意并启用 AI')),
         ],
       ),
     );
     if (action != true) return;
-    if (accepted) { await api.revoke(); } else { await api.accept(); }
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(accepted ? '已撤回 AI 授权' : '已启用 AI 功能')));
+    if (accepted) {
+      await api.revoke();
+    } else {
+      await api.accept();
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(accepted ? '已撤回 AI 授权' : '已启用 AI 功能')));
+    }
   }
 
   Future<void> _addIndicatorDialog(String type) async {
@@ -535,6 +547,7 @@ class _ProfilePageState extends State<ProfilePage> {
       } catch (_) {}
     }
     await UserSession.instance.signOut();
+    sl<ApiClient>().setAccessToken(null);
     if (mounted) setState(() {});
   }
 
@@ -560,6 +573,7 @@ class _ProfilePageState extends State<ProfilePage> {
     await sl<SyncService>().setSyncEnabled(false);
     await sl<SyncService>().resetLastSyncMs();
     await UserSession.instance.signOut();
+    sl<ApiClient>().setAccessToken(null);
     if (mounted) setState(() {});
   }
 }
