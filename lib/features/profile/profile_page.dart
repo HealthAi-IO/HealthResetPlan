@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
@@ -11,6 +12,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/network/ai_consent_api.dart';
 import '../../core/sync/sync_service.dart';
+import 'cancel_account_dialog.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -38,6 +40,7 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _dirty = false; // 用户已手动修改表单但尚未保存
   UserProfileData? _profile;
   List<HealthIndicatorEntry> _indicators = const [];
+  AccountInfo? _accountInfo;
 
   void _markDirty() {
     if (!_dirty && mounted) setState(() => _dirty = true);
@@ -85,9 +88,13 @@ class _ProfilePageState extends State<ProfilePage> {
     }
     final profile = await _repo.loadProfile();
     final indicators = await _repo.loadIndicators(limit: 10);
+    final accountInfo = UserSession.instance.isAccountLogin
+        ? await sl<AuthApi>().fetchAccountInfo()
+        : null;
     if (!mounted) return;
     _profile = profile;
     _indicators = indicators;
+    _accountInfo = accountInfo;
     if (syncForm) _syncControllers(profile);
     setState(() => _loading = false);
   }
@@ -506,10 +513,14 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           const SizedBox(height: 20),
           _AccountSecurityPanel(
+            accountInfo: _accountInfo,
             onLogin: () => context
                 .push('/login', extra: true)
                 .then((_) => setState(() {})),
             onSecurity: () => context.push('/sync'),
+            onSetPassword: () => context.push(
+              '/set-password?returnTo=%2Fprofile&required=1',
+            ),
             onSignOut: _signOut,
             onCancelAccount: _cancelAccount,
           ),
@@ -553,52 +564,94 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _signOut() async {
+    final sync = sl<SyncService>();
+    final hasPending = await sync.hasPendingChanges();
+    if (!mounted) return;
+    if (hasPending) {
+      final syncFirst = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('有尚未同步的数据'),
+          content: const Text('退出后本机健康数据和主密钥会被清除。请先同步，避免数据丢失。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('先同步再退出'),
+            ),
+          ],
+        ),
+      );
+      if (syncFirst != true) return;
+      final result = await sync.sync();
+      if (result.hasError) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('同步失败，已取消退出：${result.error}')),
+          );
+        }
+        return;
+      }
+    } else {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('退出登录'),
+          content: const Text('退出后将清除本机账号数据和主密钥。再次登录需使用助记词恢复云端数据。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认退出'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
     final refreshToken = UserSession.instance.refreshToken;
     if (refreshToken != null && refreshToken.isNotEmpty) {
       try {
         await sl<AuthApi>().logout(refreshToken);
       } catch (_) {}
     }
-    await UserSession.instance.signOut();
+    await sync.clearForSignOut();
+    await UserSession.instance.clear();
     sl<ApiClient>().setAccessToken(null);
-    if (mounted) setState(() {});
+    if (mounted) context.go('/login');
   }
 
   Future<void> _cancelAccount() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('注销账号'),
-        content: const Text(
-            '注销后可在 30 天内使用原手机号验证码和原 24 词助记词恢复。到期后云端密文、会话和相关资料将彻底删除。'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('确认注销'))
-        ],
-      ),
+      builder: (context) => const CancelAccountDialog(),
     );
     if (confirmed != true) return;
-    await sl<AuthApi>().cancelAccount();
-    await sl<SyncService>().setSyncEnabled(false);
-    await sl<SyncService>().resetLastSyncMs();
-    await UserSession.instance.signOut();
+    await sl<SyncService>().clearForSignOut();
+    await UserSession.instance.clear();
     sl<ApiClient>().setAccessToken(null);
-    if (mounted) setState(() {});
+    if (mounted) context.go('/login');
   }
 }
 
 class _AccountSecurityPanel extends StatelessWidget {
   const _AccountSecurityPanel(
-      {required this.onLogin,
+      {required this.accountInfo,
+      required this.onLogin,
       required this.onSecurity,
+      required this.onSetPassword,
       required this.onSignOut,
       required this.onCancelAccount});
+  final AccountInfo? accountInfo;
   final VoidCallback onLogin;
   final VoidCallback onSecurity;
+  final VoidCallback onSetPassword;
   final VoidCallback onSignOut;
   final VoidCallback onCancelAccount;
 
@@ -615,6 +668,40 @@ class _AccountSecurityPanel extends StatelessWidget {
               icon: const Icon(Icons.login_outlined),
               label: const Text('注册 / 登录账号'))
         else ...[
+          if (accountInfo != null) ...[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.account_circle_outlined),
+              title: Text(accountInfo!.nickname.isEmpty
+                  ? '健康用户'
+                  : accountInfo!.nickname),
+              subtitle: Text(
+                '手机号 *******${accountInfo!.phoneTail}\n账号 ID ${accountInfo!.userId}',
+              ),
+              trailing: IconButton(
+                tooltip: '复制账号 ID',
+                onPressed: () async {
+                  await Clipboard.setData(
+                    ClipboardData(text: accountInfo!.userId),
+                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('账号 ID 已复制')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.copy_outlined),
+              ),
+            ),
+            if (!accountInfo!.hasPassword) ...[
+              OutlinedButton.icon(
+                onPressed: onSetPassword,
+                icon: const Icon(Icons.password_outlined),
+                label: const Text('设置登录密码（可选）'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ],
           OutlinedButton.icon(
               onPressed: onSecurity,
               icon: const Icon(Icons.security_outlined),

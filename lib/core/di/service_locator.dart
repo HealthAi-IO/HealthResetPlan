@@ -79,7 +79,7 @@ Future<void> setupServiceLocator() async {
   apiClient.setDeviceHeaders(
     deviceId: deviceId,
     platform: _platformName(),
-    appVersion: '0.1.0',
+    appVersion: '1.0.7',
   );
   sl.registerSingleton<ApiClient>(apiClient);
 

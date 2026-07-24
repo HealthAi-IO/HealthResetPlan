@@ -509,14 +509,7 @@ class _TodayProgressCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.deepBlue.withValues(alpha: 0.9),
-            AppTheme.primaryBlue
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(children: [

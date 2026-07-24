@@ -7,9 +7,14 @@ import '../../core/di/service_locator.dart';
 import '../../core/network/auth_api.dart';
 
 class SetPasswordPage extends StatefulWidget {
-  const SetPasswordPage({super.key, this.returnTo = '/home'});
+  const SetPasswordPage({
+    super.key,
+    this.returnTo = '/home',
+    this.allowSkip = true,
+  });
 
   final String returnTo;
+  final bool allowSkip;
 
   @override
   State<SetPasswordPage> createState() => _SetPasswordPageState();
@@ -54,11 +59,11 @@ class _SetPasswordPageState extends State<SetPasswordPage> {
 
   @override
   Widget build(BuildContext context) => PopScope(
-        canPop: false,
+        canPop: widget.allowSkip == false,
         child: Scaffold(
           backgroundColor: AppTheme.pageBg,
           appBar: AppBar(
-            automaticallyImplyLeading: false,
+            automaticallyImplyLeading: widget.allowSkip == false,
             title: const Text('设置登录密码'),
           ),
           body: Center(
@@ -104,19 +109,21 @@ class _SetPasswordPageState extends State<SetPasswordPage> {
                           onPressed: _saving ? null : _submit,
                           child: Text(_saving ? '设置中...' : '设置密码并进入'),
                         ),
-                        const SizedBox(height: 8),
-                        OutlinedButton(
-                          onPressed: _saving
-                              ? null
-                              : () async {
-                                  await UserSession.instance
-                                      .resolvePasswordPrompt();
-                                  if (context.mounted) {
-                                    context.go(widget.returnTo);
-                                  }
-                                },
-                          child: const Text('暂时不设密码'),
-                        ),
+                        if (widget.allowSkip) ...[
+                          const SizedBox(height: 8),
+                          OutlinedButton(
+                            onPressed: _saving
+                                ? null
+                                : () async {
+                                    await UserSession.instance
+                                        .resolvePasswordPrompt();
+                                    if (context.mounted) {
+                                      context.go(widget.returnTo);
+                                    }
+                                  },
+                            child: const Text('暂时不设密码'),
+                          ),
+                        ],
                       ],
                     ),
                   ),

@@ -80,8 +80,20 @@ class AuthApi {
   }
 
   /// 注销账号：服务端停用账号，并让该账号云端密文进入 30 天保留期。
-  Future<void> cancelAccount() async {
-    await _client.dio.post('/auth/cancel-account');
+  Future<PasswordResetCodeResult> sendCancelAccountCode(String phone) async {
+    final resp = await _client.dio
+        .post('/auth/cancel-account/send-code', data: {'phone': phone});
+    return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
+  }
+
+  Future<void> cancelAccount({
+    required String phone,
+    required String code,
+  }) async {
+    await _client.dio.post('/auth/cancel-account', data: {
+      'phone': phone,
+      'code': code,
+    });
   }
 
   Future<PasswordResetCodeResult> sendAccountRecoveryCode(String phone) async {
@@ -140,10 +152,12 @@ class AuthApi {
         if (data == null) return null;
         return AccountInfo(
           userId: data['userId'] as String? ?? '',
+          customId: data['customId'] as String? ?? '',
           phoneTail: data['phoneTail'] as String? ?? '',
           nickname: data['nickname'] as String? ?? '',
           avatarUrl: data['avatarUrl'] as String? ?? '',
           hasCloudSync: data['hasCloudSync'] == true,
+          hasPassword: data['hasPassword'] == true,
         );
       }
       return null;
@@ -235,24 +249,30 @@ class AuthResult {
 class AccountInfo {
   const AccountInfo({
     required this.userId,
+    required this.customId,
     required this.phoneTail,
     required this.nickname,
     required this.avatarUrl,
     required this.hasCloudSync,
+    required this.hasPassword,
   });
 
   final String userId;
+  final String customId;
   final String phoneTail;
   final String nickname;
   final String avatarUrl;
   final bool hasCloudSync;
+  final bool hasPassword;
 
   factory AccountInfo.fromJson(Map<String, dynamic> j) => AccountInfo(
         userId: j['userId'] as String? ?? '',
+        customId: j['customId'] as String? ?? '',
         phoneTail: j['phoneTail'] as String? ?? '',
         nickname: j['nickname'] as String? ?? '',
         avatarUrl: j['avatarUrl'] as String? ?? '',
         hasCloudSync: j['hasCloudSync'] == true,
+        hasPassword: j['hasPassword'] == true,
       );
 }
 

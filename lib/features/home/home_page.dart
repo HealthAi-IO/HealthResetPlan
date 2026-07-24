@@ -28,6 +28,7 @@ class _HomePageState extends State<HomePage> {
   HealthDashboardData? _data;
   List<HealthIndicatorEntry> _recentIndicators = const [];
   List<MealRecordData> _mealRecords = const [];
+  List<HealthReportRecord> _recentReports = const [];
   DateTime _selectedMealDate = DateTime.now();
   bool _loading = true;
   bool _promptOpen = false;
@@ -55,12 +56,14 @@ class _HomePageState extends State<HomePage> {
       _repo.loadDashboard(),
       _repo.loadIndicatorsSince(cutoff),
       _repo.loadMealsForDate(_selectedMealDate),
+      _repo.loadReportRecords(limit: 3),
     ]);
     if (!mounted) return;
     setState(() {
       _data = results[0] as HealthDashboardData;
       _recentIndicators = results[1] as List<HealthIndicatorEntry>;
       _mealRecords = results[2] as List<MealRecordData>;
+      _recentReports = results[3] as List<HealthReportRecord>;
       _loading = false;
     });
     _maybeShowNextPrompt(results[0] as HealthDashboardData);
@@ -201,6 +204,31 @@ class _HomePageState extends State<HomePage> {
     final doneTypes =
         todayClocks.where((r) => r.status == 'done').map((r) => r.type).toSet();
     final completion = data?.todayCompletion ?? 0;
+    final desktop = MediaQuery.sizeOf(context).width >= 1100;
+
+    if (desktop) {
+      return _DesktopHomeDashboard(
+        data: data,
+        reports: _recentReports,
+        meals: _mealRecords,
+        todayPlans: todayPlans,
+        todayClocks: todayClocks,
+        doneTypes: doneTypes,
+        completion: completion,
+        todayLabel: todayLabel,
+        onRefresh: _load,
+        onMealRecord: _openMealInput,
+        onOpenPlan: () => context.go('/plan'),
+        onOpenClock: () => context.go('/clock'),
+        onOpenStats: () => context.go('/stats'),
+        onOpenReports: () => context.push('/report'),
+        onAddIndicator: () {
+          context.push('/indicators/input').then((_) {
+            if (mounted) _load(silent: true);
+          });
+        },
+      );
+    }
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -389,6 +417,730 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+class _DesktopHomeDashboard extends StatelessWidget {
+  const _DesktopHomeDashboard({
+    required this.data,
+    required this.reports,
+    required this.meals,
+    required this.todayPlans,
+    required this.todayClocks,
+    required this.doneTypes,
+    required this.completion,
+    required this.todayLabel,
+    required this.onRefresh,
+    required this.onMealRecord,
+    required this.onOpenPlan,
+    required this.onOpenClock,
+    required this.onOpenStats,
+    required this.onOpenReports,
+    required this.onAddIndicator,
+  });
+
+  final HealthDashboardData? data;
+  final List<HealthReportRecord> reports;
+  final List<MealRecordData> meals;
+  final List<PlanRecordData> todayPlans;
+  final List<ClockRecordData> todayClocks;
+  final Set<String> doneTypes;
+  final double completion;
+  final String todayLabel;
+  final Future<void> Function({bool silent}) onRefresh;
+  final ValueChanged<String> onMealRecord;
+  final VoidCallback onOpenPlan;
+  final VoidCallback onOpenClock;
+  final VoidCallback onOpenStats;
+  final VoidCallback onOpenReports;
+  final VoidCallback onAddIndicator;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final profile = data?.profile;
+    final weight = data?.latestIndicator('weight');
+    final bodyFat = data?.latestIndicator('body_fat');
+    final bmi = profile == null || profile.bmi == 0
+        ? null
+        : profile.bmi.toStringAsFixed(1);
+    final trends = data?.weightTrend(limit: 7) ?? const <double>[];
+    final mealTypes = meals.map((item) => item.mealType).toSet();
+    final completed = todayClocks.where((item) => item.status == 'done').length;
+
+    return RefreshIndicator(
+      onRefresh: () => onRefresh(),
+      child: ListView(
+        key: const PageStorageKey('desktop-home-scroll'),
+        padding: const EdgeInsets.fromLTRB(26, 22, 26, 26),
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '首页',
+                      style:
+                          TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(todayLabel,
+                        style: const TextStyle(color: AppTheme.muted)),
+                  ],
+                ),
+              ),
+              Text(
+                '今日完成 $completed 项',
+                style: TextStyle(color: primary, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 12),
+              IconButton.outlined(
+                tooltip: '刷新数据',
+                onPressed: () => onRefresh(),
+                icon: const Icon(Icons.refresh, size: 20),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final gap = constraints.maxWidth >= 1300 ? 14.0 : 10.0;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 31,
+                    child: _DesktopSection(
+                      title: '今日计划',
+                      trailing: Text(
+                        '${(completion * 100).round()}% 已完成',
+                        style: const TextStyle(
+                            color: AppTheme.muted, fontSize: 13),
+                      ),
+                      child: Column(
+                        children: [
+                          LinearProgressIndicator(
+                            value: completion,
+                            minHeight: 4,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          const SizedBox(height: 14),
+                          _DesktopTaskRow(
+                            icon: Icons.breakfast_dining_outlined,
+                            label: '早餐',
+                            detail: _mealPlanDetail(todayPlans, '早餐'),
+                            done: mealTypes.contains('breakfast'),
+                            onTap: () => onMealRecord('breakfast'),
+                          ),
+                          _DesktopTaskRow(
+                            icon: Icons.lunch_dining_outlined,
+                            label: '午餐',
+                            detail: _mealPlanDetail(todayPlans, '午餐'),
+                            done: mealTypes.contains('lunch'),
+                            onTap: () => onMealRecord('lunch'),
+                          ),
+                          _DesktopTaskRow(
+                            icon: Icons.dinner_dining_outlined,
+                            label: '晚餐',
+                            detail: _mealPlanDetail(todayPlans, '晚餐'),
+                            done: mealTypes.contains('dinner'),
+                            onTap: () => onMealRecord('dinner'),
+                          ),
+                          _DesktopTaskRow(
+                            icon: Icons.directions_run_outlined,
+                            label: '运动计划',
+                            detail: _planDetail(todayPlans, 'exercise'),
+                            done: doneTypes.contains('exercise'),
+                            onTap: onOpenClock,
+                          ),
+                          _DesktopTaskRow(
+                            icon: Icons.water_drop_outlined,
+                            label: '饮水目标',
+                            detail: '目标 2000 ml',
+                            done: doneTypes.contains('water'),
+                            onTap: onOpenClock,
+                          ),
+                          _DesktopTaskRow(
+                            icon: Icons.scale_outlined,
+                            label: '记录体重',
+                            detail: weight?.displayValue ?? '今日尚未记录',
+                            done: doneTypes.contains('weight'),
+                            onTap: onAddIndicator,
+                            showDivider: false,
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: TextButton.icon(
+                              onPressed: onOpenPlan,
+                              icon: const Icon(Icons.calendar_month_outlined),
+                              label: const Text('查看完整计划'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: gap),
+                  Expanded(
+                    flex: 36,
+                    child: Column(
+                      children: [
+                        _DesktopSection(
+                          title: '健康概览',
+                          trailing: TextButton(
+                            onPressed: onOpenStats,
+                            child: const Text('近 7 日'),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    weight?.displayValue ?? '-- kg',
+                                    style: const TextStyle(
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    profile?.weightKg == 0
+                                        ? '目标未设置'
+                                        : '档案体重 ${profile?.weightKg.toStringAsFixed(1)} kg',
+                                    style: const TextStyle(
+                                      color: AppTheme.muted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              SizedBox(
+                                height: 150,
+                                width: double.infinity,
+                                child: _WeightTrendChart(values: trends),
+                              ),
+                              const SizedBox(height: 12),
+                              _DesktopMetricRow(
+                                icon: Icons.monitor_weight_outlined,
+                                label: 'BMI',
+                                value: bmi ?? '--',
+                              ),
+                              _DesktopMetricRow(
+                                icon: Icons.accessibility_new_outlined,
+                                label: '体脂率',
+                                value: bodyFat?.displayValue ?? '--',
+                              ),
+                              _DesktopMetricRow(
+                                icon: Icons.task_alt_outlined,
+                                label: '今日打卡',
+                                value: '$completed 项',
+                                showDivider: false,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _DesktopSection(
+                          title: '最近健康指标',
+                          trailing: TextButton(
+                            onPressed: onAddIndicator,
+                            child: const Text('录入'),
+                          ),
+                          child: _DesktopIndicators(
+                            indicators:
+                                (data?.indicators ?? const []).take(4).toList(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: gap),
+                  Expanded(
+                    flex: 28,
+                    child: Column(
+                      children: [
+                        _DesktopSection(
+                          title: '快捷操作',
+                          child: Column(
+                            children: [
+                              _DesktopActionRow(
+                                icon: Icons.restaurant_outlined,
+                                label: '记录饮食',
+                                onTap: () => onMealRecord('lunch'),
+                              ),
+                              _DesktopActionRow(
+                                icon: Icons.scale_outlined,
+                                label: '记录健康指标',
+                                onTap: onAddIndicator,
+                              ),
+                              _DesktopActionRow(
+                                icon: Icons.check_circle_outline,
+                                label: '完成今日打卡',
+                                onTap: onOpenClock,
+                              ),
+                              _DesktopActionRow(
+                                icon: Icons.event_note_outlined,
+                                label: '查看健康计划',
+                                onTap: onOpenPlan,
+                                showDivider: false,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _DesktopSection(
+                          title: '最近报告',
+                          trailing: TextButton(
+                            onPressed: onOpenReports,
+                            child: const Text('全部'),
+                          ),
+                          child: reports.isEmpty
+                              ? const _DesktopEmpty(
+                                  icon: Icons.description_outlined,
+                                  text: '暂无报告记录',
+                                )
+                              : Column(
+                                  children: [
+                                    for (var i = 0; i < reports.length; i++)
+                                      _DesktopReportRow(
+                                        report: reports[i],
+                                        showDivider: i < reports.length - 1,
+                                        onTap: onOpenReports,
+                                      ),
+                                  ],
+                                ),
+                        ),
+                        const SizedBox(height: 12),
+                        _DesktopSection(
+                          title: '数据状态',
+                          child: ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              UserSession.instance.isAccountLogin
+                                  ? Icons.cloud_done_outlined
+                                  : Icons.cloud_off_outlined,
+                              color: UserSession.instance.isAccountLogin
+                                  ? Colors.green.shade600
+                                  : AppTheme.muted,
+                            ),
+                            title: Text(UserSession.instance.isAccountLogin
+                                ? '账号数据已关联'
+                                : '当前为本地模式'),
+                            subtitle: Text(UserSession.instance.isAccountLogin
+                                ? '可前往云同步页面立即同步'
+                                : '登录账号后可跨设备同步'),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => context.push('/sync'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _planDetail(List<PlanRecordData> plans, String type) {
+    final plan = plans.where((item) => item.type == type).firstOrNull;
+    if (plan == null) return '暂无计划';
+    return plan.summary.isEmpty ? plan.label : plan.summary;
+  }
+
+  static String _mealPlanDetail(List<PlanRecordData> plans, String meal) {
+    final detail = _planDetail(plans, 'meal');
+    return detail == '暂无计划' ? '点击记录$meal' : detail;
+  }
+}
+
+class _DesktopSection extends StatelessWidget {
+  const _DesktopSection({
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
+
+  final String title;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.cardBorder),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A0F172A),
+            blurRadius: 12,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopTaskRow extends StatelessWidget {
+  const _DesktopTaskRow({
+    required this.icon,
+    required this.label,
+    required this.detail,
+    required this.done,
+    required this.onTap,
+    this.showDivider = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final String detail;
+  final bool done;
+  final VoidCallback onTap;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Column(
+      children: [
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: Row(
+              children: [
+                Icon(
+                  done
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank,
+                  color: done ? Colors.green.shade600 : AppTheme.cardBorder,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: primary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 18, color: primary),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(
+                        detail,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: AppTheme.muted, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  done ? '已完成' : '去记录',
+                  style: TextStyle(
+                    color: done ? Colors.green.shade600 : primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+class _DesktopMetricRow extends StatelessWidget {
+  const _DesktopMetricRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.showDivider = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: primary),
+              const SizedBox(width: 10),
+              Expanded(child: Text(label)),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+class _DesktopActionRow extends StatelessWidget {
+  const _DesktopActionRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.showDivider = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Column(
+      children: [
+        ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+          leading: Icon(icon, color: primary, size: 21),
+          title:
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+          trailing: const Icon(Icons.chevron_right, size: 19),
+          onTap: onTap,
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+class _DesktopIndicators extends StatelessWidget {
+  const _DesktopIndicators({required this.indicators});
+
+  final List<HealthIndicatorEntry> indicators;
+
+  @override
+  Widget build(BuildContext context) {
+    if (indicators.isEmpty) {
+      return const _DesktopEmpty(
+        icon: Icons.monitor_heart_outlined,
+        text: '暂无健康指标',
+      );
+    }
+    return Column(
+      children: [
+        for (var i = 0; i < indicators.length; i++) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Expanded(child: Text(indicators[i].label)),
+                Text(
+                  indicators[i].displayValue,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  DateFormat('MM/dd').format(indicators[i].measuredTime),
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          if (i < indicators.length - 1) const Divider(height: 1),
+        ],
+      ],
+    );
+  }
+}
+
+class _DesktopReportRow extends StatelessWidget {
+  const _DesktopReportRow({
+    required this.report,
+    required this.showDivider,
+    required this.onTap,
+  });
+
+  final HealthReportRecord report;
+  final bool showDivider;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Column(
+      children: [
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.description_outlined, color: primary),
+          title: Text(
+            report.summary.isEmpty ? '体检报告' : report.summary,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            '${DateFormat('yyyy-MM-dd').format(report.reportDateTime)} · ${report.indicatorCount} 项指标',
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: const Icon(Icons.chevron_right, size: 19),
+          onTap: onTap,
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+class _DesktopEmpty extends StatelessWidget {
+  const _DesktopEmpty({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 18),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(icon, color: AppTheme.cardBorder, size: 30),
+            const SizedBox(height: 8),
+            Text(text,
+                style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WeightTrendChart extends StatelessWidget {
+  const _WeightTrendChart({required this.values});
+
+  final List<double> values;
+
+  @override
+  Widget build(BuildContext context) {
+    if (values.length < 2) {
+      return const _DesktopEmpty(
+        icon: Icons.show_chart,
+        text: '记录两次体重后显示趋势',
+      );
+    }
+    return CustomPaint(
+      painter: _WeightTrendPainter(
+        values: values,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    );
+  }
+}
+
+class _WeightTrendPainter extends CustomPainter {
+  const _WeightTrendPainter({required this.values, required this.color});
+
+  final List<double> values;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final gridPaint = Paint()
+      ..color = AppTheme.cardBorder.withValues(alpha: 0.65)
+      ..strokeWidth = 1;
+    for (var i = 0; i <= 3; i++) {
+      final y = size.height * i / 3;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    final minValue = values.reduce(min);
+    final maxValue = values.reduce(max);
+    final range = max(maxValue - minValue, 1);
+    final path = Path();
+    final points = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final normalized = (values[i] - minValue) / range;
+      final y = size.height - 14 - normalized * (size.height - 28);
+      final point = Offset(x, y);
+      points.add(point);
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round,
+    );
+    for (final point in points) {
+      canvas.drawCircle(point, 4, Paint()..color = color);
+      canvas.drawCircle(point, 2, Paint()..color = Colors.white);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WeightTrendPainter oldDelegate) =>
+      oldDelegate.values != values || oldDelegate.color != color;
+}
+
 class _HomeLoadingView extends StatelessWidget {
   const _HomeLoadingView();
 
@@ -474,14 +1226,7 @@ class _DashboardHero extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.deepBlue.withValues(alpha: 0.92),
-            const Color(0xFF0288D1)
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(22),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1654,4 +2399,3 @@ class _Panel extends StatelessWidget {
 extension _IterableX<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
-

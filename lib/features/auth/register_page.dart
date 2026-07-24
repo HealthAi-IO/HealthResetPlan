@@ -2,12 +2,14 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/user_session.dart';
 import '../../core/crypto/key_vault.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/privacy/privacy_consent_gate.dart';
 import '../../core/sync/sync_service.dart';
 
 class RegisterArgs {
@@ -124,7 +126,21 @@ class _RegisterPageState extends State<RegisterPage> {
               value: _agreed,
               onChanged: (value) => setState(() => _agreed = value ?? false),
               controlAffinity: ListTileControlAffinity.leading,
-              title: const Text('已阅读并同意用户协议、隐私政策')),
+              title: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  const Text('已阅读并同意'),
+                  TextButton(
+                    onPressed: () => launchUrl(Uri.parse(termsOfServiceUrl)),
+                    child: const Text('《用户协议》'),
+                  ),
+                  const Text('和'),
+                  TextButton(
+                    onPressed: () => launchUrl(Uri.parse(privacyPolicyUrl)),
+                    child: const Text('《隐私政策》'),
+                  ),
+                ],
+              )),
           if (_error != null)
             Text(_error!, style: TextStyle(color: Colors.red.shade700)),
           const SizedBox(height: 12),

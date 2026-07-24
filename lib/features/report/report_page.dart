@@ -842,11 +842,7 @@ class _PickCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppTheme.primaryBlue.withValues(alpha: 0.10), Colors.white],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentSoftGradient(context),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppTheme.cardBorder),
       ),

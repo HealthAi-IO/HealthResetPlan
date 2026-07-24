@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'app/app_router.dart';
 import 'app/app_theme.dart';
+import 'app/theme_controller.dart';
 import 'core/auth/user_session.dart';
 import 'core/data/health_models.dart';
 import 'core/data/health_repository.dart';
@@ -43,7 +44,10 @@ class _AppLoaderState extends State<_AppLoader> {
     if (mounted) setState(() => _initError = null);
     try {
       // setupServiceLocator 内部已并行执行 UserSession.load + DB 初始化
-      await setupServiceLocator();
+      await Future.wait([
+        setupServiceLocator(),
+        themeController.load(),
+      ]);
 
       // 兼容：若无昵称但 profile 有，补一下；不阻塞首屏，后台执行
       if (mounted) setState(() => _ready = true);
@@ -70,7 +74,6 @@ class _AppLoaderState extends State<_AppLoader> {
     final scheduler = sl<ReminderScheduler>();
     scheduler.initialize().then((_) => scheduler.syncAll()).catchError((_) {});
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -207,23 +210,26 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      scaffoldMessengerKey: _messengerKey,
-      title: '健康重启计划',
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: _themeMode,
-      routerConfig: AppRouter.router,
-      debugShowCheckedModeBanner: false,
-      supportedLocales: const [
-        Locale('zh', 'CN'),
-        Locale('en', 'US'),
-      ],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
+    return AnimatedBuilder(
+      animation: themeController,
+      builder: (context, _) => MaterialApp.router(
+        scaffoldMessengerKey: _messengerKey,
+        title: '健康重启计划',
+        theme: AppTheme.lightFor(themeController.colorTheme.seed),
+        darkTheme: AppTheme.dark,
+        themeMode: _themeMode,
+        routerConfig: AppRouter.router,
+        debugShowCheckedModeBanner: false,
+        supportedLocales: const [
+          Locale('zh', 'CN'),
+          Locale('en', 'US'),
+        ],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+      ),
     );
   }
 }

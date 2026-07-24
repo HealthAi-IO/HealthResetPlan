@@ -221,6 +221,7 @@ class KeyVault {
   Future<void> destroy() async {
     await storage.delete(key: _umkKey);
     await storage.delete(key: _backedUpKey);
+    await storage.delete(key: _ownerKey);
   }
 
   Future<void> _writeAndVerify(

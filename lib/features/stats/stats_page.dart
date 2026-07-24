@@ -261,11 +261,7 @@ class _TrendHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0277BD), Color(0xFF039BE5)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
@@ -418,11 +414,7 @@ class _CombinedProfileCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0277BD), Color(0xFF039BE5)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
@@ -1248,14 +1240,7 @@ class _UserCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            AppTheme.deepBlue.withValues(alpha: 0.92),
-            const Color(0xFF0288D1)
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(children: [
@@ -2109,4 +2094,3 @@ IconData _iconFor(String type) => switch (type) {
       'heart_rate' => Icons.monitor_heart_outlined,
       _ => Icons.fiber_manual_record_outlined,
     };
-

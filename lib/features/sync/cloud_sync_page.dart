@@ -134,10 +134,26 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
     });
   }
 
+  void _goBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/profile');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('云同步')),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        leading: IconButton(
+          tooltip: '返回',
+          onPressed: _goBack,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: const Text('云同步'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [

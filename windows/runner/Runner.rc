@@ -89,7 +89,7 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "io.healthresetplan" "\0"
+            VALUE "CompanyName", "健康重启计划" "\0"
             VALUE "FileDescription", "健康重启计划" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "health_reset_plan" "\0"

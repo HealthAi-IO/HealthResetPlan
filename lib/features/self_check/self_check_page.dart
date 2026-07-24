@@ -177,11 +177,7 @@ class _SkinIntroCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFEFF6FF), Color(0xFFFDF2F8)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: AppTheme.accentSoftGradient(context),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: AppTheme.cardBorder),
       ),

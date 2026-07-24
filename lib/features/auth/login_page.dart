@@ -158,7 +158,7 @@ class _LoginPageState extends State<LoginPage> {
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
       nickname: existingName.isEmpty ? null : existingName,
-      passwordPromptRequired: !result.hasPassword,
+      passwordPromptRequired: false,
     );
     sl<ApiClient>().setAccessToken(result.accessToken);
 
@@ -176,11 +176,7 @@ class _LoginPageState extends State<LoginPage> {
 
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    context.go(result.hasPassword
-        ? widget.returnTo
-        : Uri(path: '/set-password', queryParameters: {
-            'returnTo': widget.returnTo,
-          }).toString());
+    context.go(widget.returnTo);
     unawaited(_syncLocalDataAfterLogin(messenger));
   }
 
@@ -310,7 +306,7 @@ class _LoginPageState extends State<LoginPage> {
       accessToken: result.auth.accessToken,
       refreshToken: result.auth.refreshToken,
       nickname: result.auth.userId,
-      passwordPromptRequired: !result.auth.hasPassword,
+      passwordPromptRequired: false,
     );
     sl<ApiClient>().setAccessToken(result.auth.accessToken);
     await sl<KeyVault>().bindToAccount(result.auth.userId);

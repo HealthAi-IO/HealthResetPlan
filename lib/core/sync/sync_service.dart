@@ -40,6 +40,12 @@ class _PushResult {
   bool get hasRejected => rejected.isNotEmpty;
 }
 
+class _KeyStatus {
+  const _KeyStatus({required this.otherKeyRecords});
+
+  final int otherKeyRecords;
+}
+
 class _TableConfig {
   const _TableConfig({
     required this.table,
@@ -231,6 +237,27 @@ class SyncService {
   Future<String> _keyFingerprintOrEmpty() async =>
       await keyVault.publicFingerprint() ?? '';
 
+  Future<_KeyStatus> _getKeyStatus(String keyFingerprint) async {
+    final response = await apiClient.dio.get(
+      '/sync/key-status',
+      options: Options(
+        headers: {'X-Key-Fingerprint': keyFingerprint},
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
+    final data = _responseData(response.data);
+    return _KeyStatus(
+      otherKeyRecords: (data['otherKeyRecords'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<bool> _canMigrateFromPreviousKey(String keyFingerprint) async {
+    final prefs = await SharedPreferences.getInstance();
+    final previous = prefs.getString(_kLastKeyFingerprint) ?? '';
+    return previous.isNotEmpty && previous != keyFingerprint;
+  }
+
   Future<SyncResult> sync() {
     final active = _activeSync;
     if (active != null) return active;
@@ -247,11 +274,23 @@ class SyncService {
         final keyFingerprint = await _keyFingerprintOrEmpty();
         await _prepareKeyFingerprintChange(keyFingerprint);
         final keyMigration = await _isKeyMigration(keyFingerprint);
+        final keyStatus = await _getKeyStatus(keyFingerprint);
+        final canMigrate =
+            keyMigration && await _canMigrateFromPreviousKey(keyFingerprint);
+        if (keyStatus.otherKeyRecords > 0 && !canMigrate) {
+          throw StateError(
+            '检测到同一账号存在其他主密钥加密的数据，请在本设备恢复主设备的 24 词助记词后再同步',
+          );
+        }
         final pushResult = await _push(keyMigration: keyMigration);
-        if (keyMigration) await _completeKeyMigration(keyFingerprint);
+        if (keyMigration && !pushResult.hasRejected) {
+          await _completeKeyMigration(keyFingerprint);
+        }
         if (pushResult.hasRejected) await resetLastSyncMs();
         final pulled = await _pull();
-        await _saveLastKeyFingerprint(keyFingerprint);
+        if (!keyMigration || !pushResult.hasRejected) {
+          await _saveLastKeyFingerprint(keyFingerprint);
+        }
         return SyncResult(pushed: pushResult.accepted, pulled: pulled);
       });
     } catch (e) {
@@ -315,6 +354,32 @@ class SyncService {
     }
     await db.delete('sync_queue');
     repository.signalChanged();
+  }
+
+  Future<bool> hasPendingChanges() async {
+    final db = await database.open();
+    for (final config in _tables) {
+      final rows = await db.query(
+        config.table,
+        where: 'is_dirty = ?',
+        whereArgs: const [1],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) return true;
+    }
+    final queued = await db.query('sync_queue', limit: 1);
+    return queued.isNotEmpty;
+  }
+
+  Future<void> clearForSignOut() async {
+    await _clearLocalSyncedData();
+    await keyVault.destroy();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kSyncEnabled, false);
+    await prefs.remove(_kSyncAccountId);
+    await prefs.remove(_kLastSyncMs);
+    await prefs.remove(_kLastKeyFingerprint);
+    await prefs.remove(_kMigrationKeyFingerprint);
   }
 
   Future<void> _markAllLocalRowsDirty() async {
@@ -520,7 +585,8 @@ class SyncService {
       rawItems.sort((a, b) {
         final aTable = (a as Map)['table']?.toString() ?? '';
         final bTable = (b as Map)['table']?.toString() ?? '';
-        return (aTable == 'ai_session' ? 0 : 1).compareTo(bTable == 'ai_session' ? 0 : 1);
+        return (aTable == 'ai_session' ? 0 : 1)
+            .compareTo(bTable == 'ai_session' ? 0 : 1);
       });
       final db = await database.open();
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -627,7 +693,8 @@ class SyncService {
 
     final clientId =
         config.profileSingleton ? 'profile-$kLocalUserId' : _uuid.v4();
-    final updated = Map<String, Object?>.from(row)..[config.idColumn] = clientId;
+    final updated = Map<String, Object?>.from(row)
+      ..[config.idColumn] = clientId;
     await db.update(
       config.table,
       {config.idColumn: clientId},
@@ -677,6 +744,8 @@ class SyncService {
       ..remove('id')
       ..remove('image_base64')
       ..remove('image_ext')
+      ..remove('sessionUuid')
+      ..remove('messageUuid')
       ..['user_id'] = kLocalUserId
       ..[(_configByTable[table]?.idColumn ?? 'client_id')] = clientId
       ..['version'] = _asInt(payload['version']) ?? version
@@ -770,7 +839,9 @@ class SyncService {
           whereArgs: [sessionUuid],
           limit: 1,
         );
-        if (sessions.isEmpty) throw StateError('Missing AI session for message');
+        if (sessions.isEmpty) {
+          throw StateError('Missing AI session for message');
+        }
         row.addAll({
           'session_id': sessions.first['id'],
           'session_uuid': sessionUuid,
@@ -941,6 +1012,9 @@ class SyncService {
       return '密钥异常，请检查主密钥状态';
     }
     final text = '$error';
+    if (text.contains('24 词助记词')) {
+      return text.replaceFirst('Bad state: ', '');
+    }
     if (text.contains('系统繁忙') ||
         text.contains('50001') ||
         text.contains('503')) {

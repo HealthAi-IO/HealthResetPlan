@@ -14,7 +14,7 @@ class TelemetryApi {
     try {
       await _client.dio.post('/telemetry/events', data: {
         'platform': _platform,
-        'appVersion': '0.1.0',
+        'appVersion': '1.0.7',
         'eventType': eventType,
       });
     } catch (_) {}

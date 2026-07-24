@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
@@ -48,6 +49,14 @@ class _KeySetupPageState extends State<KeySetupPage> {
     final backed = await _vault.isBackedUp();
     if (!mounted) return;
     setState(() => _backedUp = backed);
+  }
+
+  void _goBack() {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/sync');
+    }
   }
 
   Future<void> _generate() async {
@@ -171,7 +180,15 @@ class _KeySetupPageState extends State<KeySetupPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('云同步与密钥')),
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        leading: IconButton(
+          tooltip: '返回',
+          onPressed: _goBack,
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: const Text('云同步与密钥'),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [

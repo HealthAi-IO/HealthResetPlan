@@ -89,11 +89,6 @@ class AppRouter {
           queryParameters: {'account': '1', 'returnTo': state.uri.toString()},
         ).toString();
       }
-      if (UserSession.instance.isAccountLogin &&
-          UserSession.instance.passwordPromptRequired &&
-          path != '/set-password') {
-        return '/set-password';
-      }
       return null;
     },
     routes: [
@@ -231,6 +226,7 @@ class AppRouter {
           state,
           SetPasswordPage(
             returnTo: _safeReturnTo(state.uri.queryParameters['returnTo']),
+            allowSkip: state.uri.queryParameters['required'] != '1',
           ),
         ),
       ),
