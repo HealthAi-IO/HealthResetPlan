@@ -1,7 +1,7 @@
 name: health_reset_plan
 description: "健康重启计划 - 面向三高与体重管理人群的智能健康管理客户端"
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: ^3.6.2

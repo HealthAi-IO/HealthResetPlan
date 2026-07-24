@@ -633,9 +633,19 @@ class _PlanPageState extends State<PlanPage> {
           Column(
             children: [
               if (grouped.isEmpty)
-                const _EmptyState(
-                  icon: Icons.event_note_outlined,
-                  text: '暂无本地计划。点击上方按钮即可生成 7 天饮食与运动计划。',
+                Column(
+                  children: [
+                    const _EmptyState(
+                      icon: Icons.event_note_outlined,
+                      text: '暂无本地计划。可以生成 7 天计划，也可以从今天开始手动添加。',
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () => _editPlan(date: DateTime.now()),
+                      icon: const Icon(Icons.add),
+                      label: const Text('添加今天的计划项'),
+                    ),
+                  ],
                 )
               else
                 ...grouped.entries.map(
@@ -645,6 +655,11 @@ class _PlanPageState extends State<PlanPage> {
                       date: entry.key,
                       plans: entry.value,
                       filter: _filter,
+                      onEdit: _editPlan,
+                      onDelete: _deletePlan,
+                      onAdd: () => _editPlan(
+                        date: DateFormat('yyyy-MM-dd').parse(entry.key),
+                      ),
                     ),
                   ),
                 ),
@@ -670,6 +685,58 @@ class _PlanPageState extends State<PlanPage> {
     if (_filter == value) return;
     setState(() => _filter = value);
   }
+
+  Future<void> _editPlan({PlanRecordData? plan, DateTime? date}) async {
+    final draft = await showDialog<_PlanDraft>(
+      context: context,
+      builder: (_) => _PlanEditDialog(plan: plan),
+    );
+    if (draft == null) return;
+    try {
+      if (plan == null) {
+        await _repo.addPlan(
+          date: date ?? DateTime.now(),
+          type: draft.type,
+          payload: draft.payload,
+        );
+      } else if (plan.id != null) {
+        await _repo.updatePlan(plan.id!, payload: draft.payload);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(plan == null ? '计划项已添加' : '计划项已更新')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('保存失败：$error')));
+      }
+    }
+  }
+
+  Future<void> _deletePlan(PlanRecordData plan) async {
+    if (plan.id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除计划项'),
+        content: const Text('删除后会同步到其他设备，确定继续吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _repo.deletePlan(plan.id!);
+  }
 }
 
 class _PlanLoadingView extends StatelessWidget {
@@ -688,6 +755,202 @@ class _PlanLoadingView extends StatelessWidget {
       ],
     );
   }
+}
+
+class _PlanDraft {
+  const _PlanDraft({required this.type, required this.payload});
+
+  final String type;
+  final Map<String, dynamic> payload;
+}
+
+class _PlanEditDialog extends StatefulWidget {
+  const _PlanEditDialog({this.plan});
+
+  final PlanRecordData? plan;
+
+  @override
+  State<_PlanEditDialog> createState() => _PlanEditDialogState();
+}
+
+class _PlanEditDialogState extends State<_PlanEditDialog> {
+  late String _type;
+  late final TextEditingController _summary;
+  late final Map<String, TextEditingController> _fields;
+
+  @override
+  void initState() {
+    super.initState();
+    final plan = widget.plan;
+    _type = plan?.type ?? 'meal';
+    final payload = plan?.payload ?? const <String, dynamic>{};
+    _summary =
+        TextEditingController(text: payload['summary']?.toString() ?? '');
+    _fields = {
+      for (final key in const [
+        'breakfast',
+        'lunch',
+        'dinner',
+        'snack',
+        'exerciseType',
+        'duration',
+        'intensity',
+        'description',
+        'items',
+      ])
+        key: TextEditingController(
+          text: _initialFieldText(key, payload),
+        ),
+    };
+  }
+
+  @override
+  void dispose() {
+    _summary.dispose();
+    for (final controller in _fields.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final editing = widget.plan != null;
+    return AlertDialog(
+      title: Text(editing ? '编辑计划项' : '添加计划项'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: _type,
+                decoration: const InputDecoration(labelText: '类型'),
+                items: const [
+                  DropdownMenuItem(value: 'meal', child: Text('饮食')),
+                  DropdownMenuItem(value: 'exercise', child: Text('运动')),
+                  DropdownMenuItem(value: 'measurement', child: Text('测量')),
+                ],
+                onChanged: editing
+                    ? null
+                    : (value) => setState(() => _type = value ?? 'meal'),
+              ),
+              TextField(
+                controller: _summary,
+                decoration: const InputDecoration(labelText: '概括'),
+                maxLength: 80,
+              ),
+              if (_type == 'meal') ...[
+                for (final field in const [
+                  ('breakfast', '早餐'),
+                  ('lunch', '午餐'),
+                  ('dinner', '晚餐'),
+                  ('snack', '加餐'),
+                ])
+                  TextField(
+                    controller: _fields[field.$1],
+                    decoration: InputDecoration(labelText: '${field.$2}（每行一项）'),
+                    maxLines: 2,
+                  ),
+              ] else if (_type == 'exercise') ...[
+                TextField(
+                  controller: _fields['exerciseType'],
+                  decoration: const InputDecoration(labelText: '运动类型'),
+                ),
+                TextField(
+                  controller: _fields['duration'],
+                  decoration: const InputDecoration(labelText: '时长（分钟）'),
+                  keyboardType: TextInputType.number,
+                ),
+                TextField(
+                  controller: _fields['intensity'],
+                  decoration: const InputDecoration(labelText: '强度'),
+                ),
+                TextField(
+                  controller: _fields['description'],
+                  decoration: const InputDecoration(labelText: '运动说明'),
+                  maxLines: 3,
+                ),
+              ] else
+                TextField(
+                  controller: _fields['items'],
+                  decoration: const InputDecoration(labelText: '测量项目（每行一项）'),
+                  maxLines: 5,
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _save,
+          child: const Text('保存'),
+        ),
+      ],
+    );
+  }
+
+  void _save() {
+    final summary = _summary.text.trim();
+    if (summary.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请填写计划概括')));
+      return;
+    }
+    final payload = <String, dynamic>{'summary': summary};
+    if (_type == 'meal') {
+      for (final key in const ['breakfast', 'lunch', 'dinner', 'snack']) {
+        payload[key] = _lines(_fields[key]!.text);
+      }
+    } else if (_type == 'exercise') {
+      final type = _fields['exerciseType']!.text.trim();
+      final duration = int.tryParse(_fields['duration']!.text.trim());
+      final intensity = _fields['intensity']!.text.trim();
+      final description = _fields['description']!.text.trim();
+      if (type.isNotEmpty) payload['type'] = type;
+      if (duration != null && duration > 0) {
+        payload['duration'] = duration;
+        payload['durationMinutes'] = duration;
+      }
+      if (intensity.isNotEmpty) payload['intensity'] = intensity;
+      if (description.isNotEmpty) {
+        payload['desc'] = description;
+        payload['items'] = [description];
+      }
+    } else {
+      payload['items'] = _lines(_fields['items']!.text);
+    }
+    Navigator.pop(context, _PlanDraft(type: _type, payload: payload));
+  }
+
+  static String _initialFieldText(String key, Map<String, dynamic> payload) {
+    if (key == 'exerciseType') return payload['type']?.toString() ?? '';
+    if (key == 'duration') {
+      return (payload['durationMinutes'] ?? payload['duration'] ?? '')
+          .toString();
+    }
+    if (key == 'intensity') return payload['intensity']?.toString() ?? '';
+    if (key == 'description') {
+      return (payload['desc'] ??
+              (payload['items'] is List && (payload['items'] as List).isNotEmpty
+                  ? (payload['items'] as List).first
+                  : ''))
+          .toString();
+    }
+    final raw = payload[key] ?? (key == 'items' ? payload['items'] : null);
+    return raw is List ? raw.join('\n') : raw?.toString() ?? '';
+  }
+
+  static List<String> _lines(String value) => value
+      .split(RegExp(r'[\r\n]+'))
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList();
 }
 
 class _PlanSkeletonBlock extends StatelessWidget {
@@ -984,11 +1247,17 @@ class _DayPlanCard extends StatelessWidget {
     required this.date,
     required this.plans,
     required this.filter,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onAdd,
   });
 
   final String date;
   final List<PlanRecordData> plans;
   final String filter;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+  final Future<void> Function(PlanRecordData plan) onDelete;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -1021,14 +1290,34 @@ class _DayPlanCard extends StatelessWidget {
         subtitle: Text('$visibleCount 条计划',
             style: const TextStyle(color: AppTheme.muted)),
         children: [
-          if (showMeal) _MealDetailSection(items: meals),
+          if (showMeal)
+            _MealDetailSection(
+              items: meals,
+              onEdit: onEdit,
+              onDelete: onDelete,
+            ),
           if (showExercise)
             _PlanSection(
               title: '运动计划',
               icon: Icons.directions_run_outlined,
               items: exercises,
+              onEdit: onEdit,
+              onDelete: onDelete,
             ),
-          if (showMeasure) _MeasurementSection(items: measurements),
+          if (showMeasure)
+            _MeasurementSection(
+              items: measurements,
+              onEdit: onEdit,
+              onDelete: onDelete,
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onAdd,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('添加计划项'),
+            ),
+          ),
         ],
       ),
     );
@@ -1040,11 +1329,15 @@ class _PlanSection extends StatelessWidget {
     required this.title,
     required this.icon,
     required this.items,
+    required this.onEdit,
+    required this.onDelete,
   });
 
   final String title;
   final IconData icon;
   final List<PlanRecordData> items;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+  final Future<void> Function(PlanRecordData plan) onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1073,10 +1366,35 @@ class _PlanSection extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             for (final item in items) ...[
-              Text(
-                item.summary,
-                style: const TextStyle(color: AppTheme.muted, height: 1.5),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      item.summary,
+                      style:
+                          const TextStyle(color: AppTheme.muted, height: 1.5),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '编辑计划项',
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    onPressed: () => onEdit(plan: item),
+                  ),
+                  IconButton(
+                    tooltip: '删除计划项',
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    onPressed: () => onDelete(item),
+                  ),
+                ],
               ),
+              for (final detail in _stringList(item.payload['items']))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text('· $detail',
+                      style:
+                          const TextStyle(color: AppTheme.muted, height: 1.5)),
+                ),
               const SizedBox(height: 8),
             ],
           ],
@@ -1087,9 +1405,15 @@ class _PlanSection extends StatelessWidget {
 }
 
 class _MealDetailSection extends StatelessWidget {
-  const _MealDetailSection({required this.items});
+  const _MealDetailSection({
+    required this.items,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final List<PlanRecordData> items;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+  final Future<void> Function(PlanRecordData plan) onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1116,6 +1440,21 @@ class _MealDetailSection extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             for (final item in items) ...[
+              Row(
+                children: [
+                  const Expanded(child: SizedBox.shrink()),
+                  IconButton(
+                    tooltip: '编辑计划项',
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    onPressed: () => onEdit(plan: item),
+                  ),
+                  IconButton(
+                    tooltip: '删除计划项',
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    onPressed: () => onDelete(item),
+                  ),
+                ],
+              ),
               if (item.summary.isNotEmpty)
                 Container(
                   margin: const EdgeInsets.only(bottom: 8),
@@ -1202,9 +1541,15 @@ class _MealRow extends StatelessWidget {
 }
 
 class _MeasurementSection extends StatelessWidget {
-  const _MeasurementSection({required this.items});
+  const _MeasurementSection({
+    required this.items,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final List<PlanRecordData> items;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+  final Future<void> Function(PlanRecordData plan) onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1228,11 +1573,25 @@ class _MeasurementSection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              children: const [
-                Icon(Icons.monitor_heart_outlined,
+              children: [
+                const Icon(Icons.monitor_heart_outlined,
                     size: 18, color: AppTheme.deepBlue),
-                SizedBox(width: 8),
-                Text('每日测量', style: TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(width: 8),
+                const Expanded(
+                    child: Text('每日测量',
+                        style: TextStyle(fontWeight: FontWeight.w700))),
+                for (final item in items) ...[
+                  IconButton(
+                    tooltip: '编辑计划项',
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    onPressed: () => onEdit(plan: item),
+                  ),
+                  IconButton(
+                    tooltip: '删除计划项',
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    onPressed: () => onDelete(item),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 10),

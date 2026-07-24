@@ -737,7 +737,7 @@ class _ReportPageState extends State<ReportPage> {
       final code = (body['code'] as num?)?.toInt() ?? 0;
       final message = (body['message'] ?? body['msg'])?.toString();
       if (code == 40101) return '视觉模型 Key 无效，请检查后端配置';
-      if (code == 40301) return '该功能需要会员权益';
+      if (code == 40301) return '请先登录手机号账号';
       if (message != null && message.isNotEmpty) return message;
     }
     final status = e.response?.statusCode;

@@ -59,6 +59,8 @@ class _WebAppDatabase extends AppDatabase {
     'sync_queue',
     'health_report',
     'meal_record',
+    'ai_session',
+    'ai_message',
   ];
 
   SharedPreferences? _prefs;

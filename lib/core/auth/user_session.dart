@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// 同时支持两种模式：
 /// - **本地模式**：仅 [name] 有值，[userId] / [accessToken] 为空，所有数据存本机
-/// - **账号模式**：登录后 [userId] / [accessToken] 都有值，可使用会员功能
+/// - **账号模式**：登录后 [userId] / [accessToken] 都有值，可使用在线功能
 class UserSession {
   UserSession._();
   static final UserSession instance = UserSession._();

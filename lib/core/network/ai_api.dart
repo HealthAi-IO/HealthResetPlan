@@ -265,7 +265,7 @@ class AiApi {
     if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置';
     if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试';
     if (code == 40101) return '当前 AI 模型暂不可用，请稍后重试或切换模型';
-    if (code == 40301) return '此功能需要开通会员';
+    if (code == 40301) return '请先登录手机号账号';
     return msg;
   }
 

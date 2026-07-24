@@ -53,7 +53,7 @@ class _SqfliteAppDatabase extends AppDatabase {
 
   sqflite.Database? _db;
   static const String _fileName = 'health_reset_plan.sqlite';
-  static const int _schemaVersion = 9;
+  static const int _schemaVersion = 10;
 
   Future<sqflite.Database> _ensureDb() async {
     if (_db != null) return _db!;
@@ -239,6 +239,18 @@ class _SqfliteAppDatabase extends AppDatabase {
     }
     if (oldVersion < 9) {
       await db.execute(_ddlMealRecord);
+    }
+    if (oldVersion < 10) {
+      await _addColumnIfMissing(db, 'ai_session', 'session_uuid', 'TEXT');
+      await _addColumnIfMissing(db, 'ai_session', 'version', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'ai_session', 'is_dirty', 'INTEGER NOT NULL DEFAULT 1');
+      await _addColumnIfMissing(db, 'ai_session', 'sync_at', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'ai_message', 'message_uuid', 'TEXT');
+      await _addColumnIfMissing(db, 'ai_message', 'session_uuid', 'TEXT');
+      await _addColumnIfMissing(db, 'ai_message', 'updated_at', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'ai_message', 'version', 'INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'ai_message', 'is_dirty', 'INTEGER NOT NULL DEFAULT 1');
+      await _addColumnIfMissing(db, 'ai_message', 'sync_at', 'INTEGER NOT NULL DEFAULT 0');
     }
   }
 
@@ -464,7 +476,11 @@ const String _ddlAiSession = '''
       provider      TEXT    NOT NULL DEFAULT 'deepseek',
       message_count INTEGER NOT NULL DEFAULT 0,
       created_at    INTEGER NOT NULL,
-      updated_at    INTEGER NOT NULL
+      updated_at    INTEGER NOT NULL,
+      session_uuid  TEXT,
+      version       INTEGER NOT NULL DEFAULT 0,
+      is_dirty      INTEGER NOT NULL DEFAULT 1,
+      sync_at       INTEGER NOT NULL DEFAULT 0
     );
 ''';
 
@@ -477,7 +493,13 @@ const String _ddlAiMessage = '''
       content     TEXT    NOT NULL DEFAULT '',
       provider    TEXT    NOT NULL DEFAULT '',
       is_error    INTEGER NOT NULL DEFAULT 0,
-      created_at  INTEGER NOT NULL
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      message_uuid TEXT,
+      session_uuid TEXT,
+      version     INTEGER NOT NULL DEFAULT 0,
+      is_dirty    INTEGER NOT NULL DEFAULT 1,
+      sync_at     INTEGER NOT NULL DEFAULT 0
     );
 ''';
 

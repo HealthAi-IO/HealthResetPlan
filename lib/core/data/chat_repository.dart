@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:uuid/uuid.dart';
+
 import '../storage/app_database.dart';
 
 /// AI 对话会话
@@ -9,6 +13,7 @@ class ChatSession {
     required this.messageCount,
     required this.createdAt,
     required this.updatedAt,
+    required this.sessionUuid,
   });
 
   final int id;
@@ -17,6 +22,7 @@ class ChatSession {
   final int messageCount;
   final int createdAt;
   final int updatedAt;
+  final String sessionUuid;
 
   factory ChatSession.fromRow(Map<String, Object?> row) => ChatSession(
         id: row['id'] as int,
@@ -25,6 +31,7 @@ class ChatSession {
         messageCount: (row['message_count'] as int?) ?? 0,
         createdAt: (row['created_at'] as int?) ?? 0,
         updatedAt: (row['updated_at'] as int?) ?? 0,
+        sessionUuid: (row['session_uuid'] as String?) ?? '',
       );
 }
 
@@ -38,6 +45,9 @@ class ChatMessage {
     required this.provider,
     required this.isError,
     required this.createdAt,
+    required this.updatedAt,
+    required this.messageUuid,
+    required this.sessionUuid,
   });
 
   final int id;
@@ -47,6 +57,9 @@ class ChatMessage {
   final String provider;
   final bool isError;
   final int createdAt;
+  final int updatedAt;
+  final String messageUuid;
+  final String sessionUuid;
 
   factory ChatMessage.fromRow(Map<String, Object?> row) => ChatMessage(
         id: row['id'] as int,
@@ -56,6 +69,9 @@ class ChatMessage {
         provider: (row['provider'] as String?) ?? '',
         isError: ((row['is_error'] as int?) ?? 0) == 1,
         createdAt: (row['created_at'] as int?) ?? 0,
+        updatedAt: (row['updated_at'] as int?) ?? (row['created_at'] as int?) ?? 0,
+        messageUuid: (row['message_uuid'] as String?) ?? '',
+        sessionUuid: (row['session_uuid'] as String?) ?? '',
       );
 
   Map<String, String> toApiFormat() => {
@@ -68,6 +84,7 @@ class ChatMessage {
 class ChatRepository {
   ChatRepository({required AppDatabase database}) : _database = database;
   final AppDatabase _database;
+  static const _uuid = Uuid();
 
   // ── 会话 ─────────────────────────────────────────────────────
 
@@ -84,6 +101,10 @@ class ChatRepository {
       'message_count': 0,
       'created_at': now,
       'updated_at': now,
+      'session_uuid': _uuid.v4(),
+      'version': now,
+      'is_dirty': 1,
+      'sync_at': 0,
     });
   }
 
@@ -102,8 +123,18 @@ class ChatRepository {
   Future<void> deleteSession(int sessionId) async {
     final db = await _database.open();
     await db.transaction((txn) async {
-      await txn.delete('ai_message',
-          where: 'session_id = ?', whereArgs: [sessionId]);
+      await _ensureUuids(txn);
+      final sessionRows = await txn.query('ai_session', where: 'id = ?', whereArgs: [sessionId]);
+      if (sessionRows.isEmpty) return;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final sessionUuid = sessionRows.first['session_uuid'] as String;
+      final messages = await txn.query('ai_message', where: 'session_id = ?', whereArgs: [sessionId]);
+      for (final message in messages) {
+        await _enqueueDelete(txn, 'ai_message', message['id'] as int,
+            message['message_uuid'] as String, now);
+      }
+      await _enqueueDelete(txn, 'ai_session', sessionId, sessionUuid, now);
+      await txn.delete('ai_message', where: 'session_id = ?', whereArgs: [sessionId]);
       await txn.delete('ai_session',
           where: 'id = ?', whereArgs: [sessionId]);
     });
@@ -117,6 +148,8 @@ class ChatRepository {
       {
         'title': title,
         'updated_at': DateTime.now().millisecondsSinceEpoch,
+        'version': DateTime.now().millisecondsSinceEpoch,
+        'is_dirty': 1,
       },
       where: 'id = ?',
       whereArgs: [sessionId],
@@ -158,6 +191,12 @@ class ChatRepository {
         'provider': provider,
         'is_error': isError ? 1 : 0,
         'created_at': now,
+        'updated_at': now,
+        'message_uuid': _uuid.v4(),
+        'session_uuid': (await txn.query('ai_session', where: 'id = ?', whereArgs: [sessionId], limit: 1)).first['session_uuid'],
+        'version': now,
+        'is_dirty': 1,
+        'sync_at': 0,
       });
 
       // 查询当前会话，准备更新计数 + 可能的标题
@@ -186,6 +225,8 @@ class ChatRepository {
         {
           'message_count': currentCount + 1,
           'updated_at': now,
+          'version': now,
+          'is_dirty': 1,
           if (autoTitle != null) 'title': autoTitle,
         },
         where: 'id = ?',
@@ -208,6 +249,9 @@ class ChatRepository {
       {
         'content': content,
         'is_error': isError ? 1 : 0,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+        'version': DateTime.now().millisecondsSinceEpoch,
+        'is_dirty': 1,
       },
       where: 'id = ?',
       whereArgs: [messageId],
@@ -221,5 +265,59 @@ class ChatRepository {
       await txn.delete('ai_message');
       await txn.delete('ai_session');
     });
+  }
+
+  Future<void> prepareForSync() async {
+    final db = await _database.open();
+    await db.transaction(_ensureUuids);
+  }
+
+  Future<void> recalculateMessageCounts() async {
+    final db = await _database.open();
+    final sessions = await db.query('ai_session');
+    for (final session in sessions) {
+      final count = await db.count('ai_message', where: 'session_id = ?', whereArgs: [session['id']]);
+      if (count != session['message_count']) {
+        await db.update('ai_session', {'message_count': count}, where: 'id = ?', whereArgs: [session['id']]);
+      }
+    }
+  }
+
+  Future<void> _ensureUuids(AppDatabase db) async {
+    final sessions = await db.query('ai_session');
+    for (final session in sessions) {
+      var sessionUuid = session['session_uuid'] as String? ?? '';
+      if (sessionUuid.isEmpty) {
+        sessionUuid = _uuid.v4();
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await db.update('ai_session', {
+          'session_uuid': sessionUuid, 'updated_at': now, 'version': now, 'is_dirty': 1, 'sync_at': 0,
+        }, where: 'id = ?', whereArgs: [session['id']]);
+      }
+      final messages = await db.query('ai_message', where: 'session_id = ?', whereArgs: [session['id']]);
+      for (final message in messages) {
+        if ((message['message_uuid'] as String? ?? '').isNotEmpty &&
+            (message['session_uuid'] as String? ?? '').isNotEmpty) {
+          continue;
+        }
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await db.update('ai_message', {
+          'message_uuid': (message['message_uuid'] as String? ?? '').isEmpty ? _uuid.v4() : message['message_uuid'],
+          'session_uuid': sessionUuid,
+          'updated_at': (message['updated_at'] as int? ?? 0) > 0 ? message['updated_at'] : now,
+          'version': (message['version'] as int? ?? 0) > 0 ? message['version'] : now,
+          'is_dirty': 1,
+          'sync_at': 0,
+        }, where: 'id = ?', whereArgs: [message['id']]);
+      }
+    }
+  }
+
+  Future<void> _enqueueDelete(AppDatabase db, String table, int rowId, String clientId, int now) {
+    return db.insert('sync_queue', {
+      'table_name': table, 'row_id': rowId, 'op': 'delete',
+      'payload_json': jsonEncode({'table': table, 'clientId': clientId, 'version': now, 'clientUpdatedAt': now}),
+      'created_at': now, 'updated_at': now,
+    }).then((_) {});
   }
 }

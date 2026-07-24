@@ -135,6 +135,46 @@ void main() {
     expect(await repo.loadPlans(), isNotEmpty);
   });
 
+  test('manual plan add, update and delete stays syncable', () async {
+    final database = _MemoryAppDatabase();
+    final repo = HealthRepository(database: database);
+    await repo.initialize();
+
+    final id = await repo.addPlan(
+      date: DateTime(2026, 7, 23),
+      type: 'exercise',
+      payload: {
+        'summary': '快走 20 分钟',
+        'items': ['热身 5 分钟', '快走 20 分钟'],
+      },
+    );
+
+    var rows = await database.query(
+      'plan',
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+    );
+    expect(rows.single['client_id'], isNotEmpty);
+    expect(rows.single['version'], 1);
+    expect(rows.single['is_dirty'], 1);
+
+    await repo.updatePlan(id, payload: {
+      'summary': '快走 30 分钟',
+      'items': ['热身 5 分钟', '快走 30 分钟'],
+    });
+    final updated = (await repo.loadPlans()).single;
+    expect(updated.summary, '快走 30 分钟');
+    expect(updated.version, 2);
+    expect(updated.isDirty, 1);
+
+    await repo.deletePlan(id);
+    expect(await repo.loadPlans(), isEmpty);
+    rows = await database.query('sync_queue');
+    expect(rows, hasLength(1));
+    expect(rows.single['op'], 'delete');
+    expect(rows.single['payload_json'], contains('"table":"plan"'));
+  });
+
   test('blood pressure crisis blocks every weekly plan', () async {
     for (final bp in [(180, 80), (120, 120), (181, 121)]) {
       final repo = HealthRepository(database: _MemoryAppDatabase());

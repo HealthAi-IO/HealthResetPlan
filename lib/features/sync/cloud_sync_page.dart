@@ -50,7 +50,7 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
 
   Future<void> _toggleSync(bool value) async {
     if (value) {
-      // 必须先登录账号 + 已开通会员
+      // 在线同步需要手机号账号。
       if (!mounted) return;
       final ok =
           await requireAccountAndMember(context, PaywallFeature.cloudSync);
@@ -222,6 +222,15 @@ class _UsageGuideCard extends StatelessWidget {
             ],
           ),
           SizedBox(height: 10),
+          Text(
+            'AI 会话和消息也会加密同步。不同设备新建的消息都会保留；修改或删除同一条消息时，以更新时间较新的版本为准。',
+            style: TextStyle(
+              color: AppTheme.ink,
+              fontSize: 12,
+              height: 1.55,
+            ),
+          ),
+          SizedBox(height: 8),
           Text(
             '1. 旧手机先登录同一个账号，生成并备份主密钥助记词。\n'
             '2. 旧手机开启云同步，点击“立即同步”，确认数据已上传。\n'

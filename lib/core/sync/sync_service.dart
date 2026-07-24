@@ -9,6 +9,7 @@ import '../crypto/crypto_service.dart';
 import '../crypto/key_vault.dart';
 import '../auth/user_session.dart';
 import '../data/health_models.dart';
+import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
 import '../network/api_client.dart';
 import '../storage/app_database.dart';
@@ -30,16 +31,27 @@ class SyncResult {
   bool get hasError => error != null;
 }
 
+class _PushResult {
+  const _PushResult({required this.accepted, required this.rejected});
+
+  final int accepted;
+  final Set<String> rejected;
+
+  bool get hasRejected => rejected.isNotEmpty;
+}
+
 class _TableConfig {
   const _TableConfig({
     required this.table,
     required this.metaKeys,
     this.profileSingleton = false,
+    this.idColumn = 'client_id',
   });
 
   final String table;
   final List<String> metaKeys;
   final bool profileSingleton;
+  final String idColumn;
 }
 
 /// Client-side encrypted incremental sync.
@@ -53,6 +65,7 @@ class SyncService {
     required this.keyVault,
     required this.database,
     required this.repository,
+    required this.chatRepository,
   });
 
   final ApiClient apiClient;
@@ -60,12 +73,15 @@ class SyncService {
   final KeyVault keyVault;
   final AppDatabase database;
   final HealthRepository repository;
+  final ChatRepository chatRepository;
   Future<SyncResult>? _activeSync;
 
   static const String _kLastSyncMs = 'sync_last_ms';
   static const String _kSyncEnabled = 'sync_enabled';
   static const String _kDeviceId = 'sync_device_id';
   static const String _kLastKeyFingerprint = 'sync_last_key_fingerprint';
+  static const String _kMigrationKeyFingerprint =
+      'sync_migration_key_fingerprint';
   static const String _kSyncAccountId = 'sync_account_id';
   static const _uuid = Uuid();
 
@@ -99,6 +115,8 @@ class SyncService {
       table: 'meal_record',
       metaKeys: [],
     ),
+    _TableConfig(table: 'ai_session', metaKeys: [], idColumn: 'session_uuid'),
+    _TableConfig(table: 'ai_message', metaKeys: [], idColumn: 'message_uuid'),
   ];
 
   static final Map<String, _TableConfig> _configByTable = {
@@ -149,6 +167,30 @@ class SyncService {
     await prefs.remove(_kLastSyncMs);
   }
 
+  /// Makes all local records eligible for re-encryption after a UMK change.
+  Future<void> prepareForKeyChange() async {
+    final keyFingerprint = await _keyFingerprintOrEmpty();
+    if (keyFingerprint.isEmpty) {
+      throw StateError('主密钥不可用，无法准备数据迁移');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await resetLastSyncMs();
+    await _markAllLocalRowsDirty();
+    await prefs.setString(_kMigrationKeyFingerprint, keyFingerprint);
+  }
+
+  Future<bool> _isKeyMigration(String keyFingerprint) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_kMigrationKeyFingerprint) == keyFingerprint;
+  }
+
+  Future<void> _completeKeyMigration(String keyFingerprint) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString(_kMigrationKeyFingerprint) == keyFingerprint) {
+      await prefs.remove(_kMigrationKeyFingerprint);
+    }
+  }
+
   Future<void> _saveLastSyncMs(int ms) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_kLastSyncMs, ms);
@@ -173,8 +215,7 @@ class SyncService {
       return;
     }
 
-    await resetLastSyncMs();
-    await _markAllLocalRowsDirty();
+    await prepareForKeyChange();
   }
 
   Future<String> _getDeviceId() async {
@@ -205,10 +246,13 @@ class SyncService {
         await _requireReadyKey();
         final keyFingerprint = await _keyFingerprintOrEmpty();
         await _prepareKeyFingerprintChange(keyFingerprint);
-        final pushed = await _push();
+        final keyMigration = await _isKeyMigration(keyFingerprint);
+        final pushResult = await _push(keyMigration: keyMigration);
+        if (keyMigration) await _completeKeyMigration(keyFingerprint);
+        if (pushResult.hasRejected) await resetLastSyncMs();
         final pulled = await _pull();
         await _saveLastKeyFingerprint(keyFingerprint);
-        return SyncResult(pushed: pushed, pulled: pulled);
+        return SyncResult(pushed: pushResult.accepted, pulled: pulled);
       });
     } catch (e) {
       return SyncResult(pushed: 0, pulled: 0, error: _friendlySyncError(e));
@@ -279,15 +323,20 @@ class SyncService {
       await db.update(
         config.table,
         {'is_dirty': 1},
-        where: 'user_id = ?',
-        whereArgs: [kLocalUserId],
+        where: config.table.startsWith('ai_') ? null : 'user_id = ?',
+        whereArgs: config.table.startsWith('ai_') ? null : [kLocalUserId],
       );
     }
   }
 
-  Future<int> _push() async {
+  Future<_PushResult> _push({required bool keyMigration}) async {
     final db = await database.open();
-    var totalAccepted = await _pushDeletes(db);
+    await chatRepository.prepareForSync();
+    var totalAccepted = 0;
+    final rejected = <String>{};
+    final deleteResult = await _pushDeletes(db);
+    totalAccepted += deleteResult.accepted;
+    rejected.addAll(deleteResult.rejected);
 
     for (final config in _tables) {
       final rows = await db.query(config.table);
@@ -303,7 +352,7 @@ class SyncService {
 
       for (final row in dirtyRows) {
         final prepared = await _ensureClientId(db, config, row);
-        final clientId = prepared['client_id'] as String;
+        final clientId = prepared[config.idColumn] as String;
         final payload = await _buildEncryptedRowPayload(config.table, prepared);
         final version = _asInt(prepared['version']) ?? 0;
         final enc = await cryptoService.encryptString(
@@ -319,6 +368,7 @@ class SyncService {
               DateTime.now().millisecondsSinceEpoch,
           ...enc.toJson()..['alg'] = 'aes-256-gcm:v2',
           'deleted': false,
+          'keyMigration': keyMigration,
           'meta': _buildMeta(config, prepared),
         });
         rowsToMark.add(clientId);
@@ -328,24 +378,29 @@ class SyncService {
       for (var start = 0; start < items.length; start += batchSize) {
         final end = min(start + batchSize, items.length);
         final batch = items.sublist(start, end);
-        totalAccepted += await _pushItems(batch);
+        final result = await _pushItems(batch);
+        totalAccepted += result.accepted;
+        rejected.addAll(result.rejected);
 
         final now = DateTime.now().millisecondsSinceEpoch;
         for (final clientId in rowsToMark.sublist(start, end)) {
+          if (result.rejected.contains(_syncRef(config.table, clientId))) {
+            continue;
+          }
           await db.update(
             config.table,
             {'is_dirty': 0, 'sync_at': now},
-            where: 'client_id = ?',
+            where: '${config.idColumn} = ?',
             whereArgs: [clientId],
           );
         }
       }
     }
 
-    return totalAccepted;
+    return _PushResult(accepted: totalAccepted, rejected: rejected);
   }
 
-  Future<int> _pushDeletes(AppDatabase db) async {
+  Future<_PushResult> _pushDeletes(AppDatabase db) async {
     final rows = await db.query(
       'sync_queue',
       where: 'op = ?',
@@ -353,7 +408,7 @@ class SyncService {
       orderBy: 'created_at ASC',
       limit: 200,
     );
-    if (rows.isEmpty) return 0;
+    if (rows.isEmpty) return const _PushResult(accepted: 0, rejected: {});
 
     final items = <Map<String, dynamic>>[];
     final queuedIds = <Object?>[];
@@ -383,21 +438,31 @@ class SyncService {
       });
       queuedIds.add(row['id']);
     }
-    if (items.isEmpty) return 0;
+    if (items.isEmpty) return const _PushResult(accepted: 0, rejected: {});
 
     var accepted = 0;
+    final rejected = <String>{};
     const batchSize = 50;
     for (var start = 0; start < items.length; start += batchSize) {
       final end = min(start + batchSize, items.length);
-      accepted += await _pushItems(items.sublist(start, end));
-      for (final id in queuedIds.sublist(start, end)) {
+      final result = await _pushItems(items.sublist(start, end));
+      accepted += result.accepted;
+      rejected.addAll(result.rejected);
+      for (var index = start; index < end; index++) {
+        final item = items[index];
+        final ref = _syncRef(
+          item['table'] as String,
+          item['clientId'] as String,
+        );
+        if (result.rejected.contains(ref)) continue;
+        final id = queuedIds[index];
         await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
       }
     }
-    return accepted;
+    return _PushResult(accepted: accepted, rejected: rejected);
   }
 
-  Future<int> _pushItems(List<Map<String, dynamic>> items) async {
+  Future<_PushResult> _pushItems(List<Map<String, dynamic>> items) async {
     final resp = await apiClient.dio.post(
       '/sync/push',
       data: {
@@ -408,8 +473,19 @@ class SyncService {
       options: _syncRequestOptions(),
     );
     final data = _responseData(resp.data);
-    return (data['accepted'] as num?)?.toInt() ?? items.length;
+    final rejected = <String>{
+      for (final raw in data['rejected'] as List? ?? const [])
+        if (raw is Map)
+          _syncRef(
+              raw['table'] as String? ?? '', raw['clientId'] as String? ?? ''),
+    }..remove(_syncRef('', ''));
+    return _PushResult(
+      accepted: (data['accepted'] as num?)?.toInt() ?? items.length,
+      rejected: rejected,
+    );
   }
+
+  String _syncRef(String table, String clientId) => '$table:$clientId';
 
   Future<int> _pull() async {
     final since = await getLastSyncMs();
@@ -441,9 +517,13 @@ class SyncService {
 
     var merged = 0;
     if (rawItems.isNotEmpty) {
+      rawItems.sort((a, b) {
+        final aTable = (a as Map)['table']?.toString() ?? '';
+        final bTable = (b as Map)['table']?.toString() ?? '';
+        return (aTable == 'ai_session' ? 0 : 1).compareTo(bTable == 'ai_session' ? 0 : 1);
+      });
       final db = await database.open();
       final now = DateTime.now().millisecondsSinceEpoch;
-      var decryptableRows = 0;
       var decryptFailures = 0;
 
       for (final raw in rawItems) {
@@ -458,7 +538,7 @@ class SyncService {
             if (clientId.isNotEmpty) {
               await db.delete(
                 table,
-                where: 'client_id = ?',
+                where: '${config.idColumn} = ?',
                 whereArgs: [clientId],
               );
               merged++;
@@ -466,7 +546,6 @@ class SyncService {
             continue;
           }
 
-          decryptableRows++;
           final enc = EncryptedPayload.fromJson(item);
           final version = (item['version'] as num?)?.toInt() ?? 0;
           final plaintext = await cryptoService.decryptToString(
@@ -478,7 +557,7 @@ class SyncService {
           final payload = _decodePayload(table, plaintext, item);
           final effectiveClientId = clientId.isNotEmpty
               ? clientId
-              : payload['client_id'] as String? ?? _uuid.v4();
+              : payload[config.idColumn] as String? ?? _uuid.v4();
           final clientUpdatedAt = (item['clientUpdatedAt'] as num?)?.toInt() ??
               _asInt(payload['updated_at']) ??
               now;
@@ -516,16 +595,16 @@ class SyncService {
             decryptFailures++;
             continue;
           }
-          // A single corrupt or incompatible row should not break all sync.
-          continue;
+          throw StateError('云端数据合并失败，请稍后重试');
         }
       }
 
-      if (decryptableRows > 0 && decryptFailures == decryptableRows) {
+      if (decryptFailures > 0) {
         throw StateError('数据损坏或密钥错误');
       }
 
       repository.signalChanged();
+      await chatRepository.recalculateMessageCounts();
     }
 
     if (serverTime != null) await _saveLastSyncMs(serverTime);
@@ -543,15 +622,15 @@ class SyncService {
     _TableConfig config,
     Map<String, Object?> row,
   ) async {
-    final existing = row['client_id'] as String?;
+    final existing = row[config.idColumn] as String?;
     if (existing != null && existing.isNotEmpty) return row;
 
     final clientId =
         config.profileSingleton ? 'profile-$kLocalUserId' : _uuid.v4();
-    final updated = Map<String, Object?>.from(row)..['client_id'] = clientId;
+    final updated = Map<String, Object?>.from(row)..[config.idColumn] = clientId;
     await db.update(
       config.table,
-      {'client_id': clientId},
+      {config.idColumn: clientId},
       where: 'id = ?',
       whereArgs: [row['id']],
     );
@@ -567,6 +646,12 @@ class SyncService {
         if (!_localOnlyColumns.contains(entry.key)) entry.key: entry.value,
     };
     payload['user_id'] = kLocalUserId;
+
+    if (table == 'ai_session') payload['sessionUuid'] = row['session_uuid'];
+    if (table == 'ai_message') {
+      payload['sessionUuid'] = row['session_uuid'];
+      payload['messageUuid'] = row['message_uuid'];
+    }
 
     if (table == 'health_report' || table == 'meal_record') {
       final imagePath = row['image_path'] as String? ?? '';
@@ -593,12 +678,14 @@ class SyncService {
       ..remove('image_base64')
       ..remove('image_ext')
       ..['user_id'] = kLocalUserId
-      ..['client_id'] = clientId
+      ..[(_configByTable[table]?.idColumn ?? 'client_id')] = clientId
       ..['version'] = _asInt(payload['version']) ?? version
       ..['is_dirty'] = 0
       ..['sync_at'] = syncAt
       ..['created_at'] = _asInt(payload['created_at']) ?? clientUpdatedAt
       ..['updated_at'] = _asInt(payload['updated_at']) ?? clientUpdatedAt;
+
+    if (table.startsWith('ai_')) row.remove('user_id');
 
     switch (table) {
       case 'user_profile':
@@ -669,6 +756,29 @@ class SyncService {
           'foods_json': row['foods_json'] ?? '[]',
           'nutrition_json': row['nutrition_json'] ?? '{}',
         });
+      case 'ai_session':
+        row.addAll({
+          'title': row['title'] ?? 'New conversation',
+          'provider': row['provider'] ?? 'deepseek',
+          'message_count': 0,
+        });
+      case 'ai_message':
+        final sessionUuid = row['session_uuid'] as String? ?? '';
+        final sessions = await database.query(
+          'ai_session',
+          where: 'session_uuid = ?',
+          whereArgs: [sessionUuid],
+          limit: 1,
+        );
+        if (sessions.isEmpty) throw StateError('Missing AI session for message');
+        row.addAll({
+          'session_id': sessions.first['id'],
+          'session_uuid': sessionUuid,
+          'role': row['role'] ?? 'assistant',
+          'content': row['content'] ?? '',
+          'provider': row['provider'] ?? '',
+          'is_error': _asInt(row['is_error']) ?? 0,
+        });
     }
     return row;
   }
@@ -735,7 +845,7 @@ class SyncService {
   ) async {
     final rows = await db.query(
       config.table,
-      where: 'client_id = ?',
+      where: '${config.idColumn} = ?',
       whereArgs: [clientId],
       limit: 1,
     );
@@ -856,6 +966,7 @@ class SyncService {
     'id',
     'is_dirty',
     'sync_at',
+    'message_count',
   };
 
   int? _asInt(Object? value) {

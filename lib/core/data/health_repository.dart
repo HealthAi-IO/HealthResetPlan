@@ -195,6 +195,75 @@ class HealthRepository extends ChangeNotifier {
     return rows.map(PlanRecordData.fromRow).toList();
   }
 
+  Future<int> addPlan({
+    required DateTime date,
+    required String type,
+    required Map<String, dynamic> payload,
+  }) async {
+    if (!const {'meal', 'exercise', 'measurement'}.contains(type)) {
+      throw ArgumentError.value(type, 'type', '不支持的计划类型');
+    }
+    final db = await database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final planDate = DateTime(date.year, date.month, date.day);
+    final id = await db.insert('plan', {
+      ...PlanRecordData(
+        type: type,
+        planDate: planDate.millisecondsSinceEpoch,
+        payload: payload,
+        aiProvider: 'manual',
+        aiModel: 'manual-edit',
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+        isDirty: 1,
+      ).toRow(),
+      'client_id': _uuid.v4(),
+    });
+    notifyListeners();
+    return id;
+  }
+
+  Future<void> updatePlan(
+    int id, {
+    required Map<String, dynamic> payload,
+  }) async {
+    final db = await database.open();
+    final rows = await db.query(
+      'plan',
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.update(
+      'plan',
+      {
+        'payload_json': jsonEncode(payload),
+        'updated_at': now,
+        'version': (_asInt(rows.first['version']) ?? 0) + 1,
+        'is_dirty': 1,
+      },
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+    );
+    notifyListeners();
+  }
+
+  Future<void> deletePlan(int id) async {
+    final db = await database.open();
+    await db.transaction((txn) async {
+      await _deleteSyncedRow(
+        txn,
+        table: 'plan',
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, kLocalUserId],
+      );
+    });
+    notifyListeners();
+  }
+
   Future<List<MealRecordData>> loadMealsForDate(DateTime date) async {
     final db = await database.open();
     final start = DateTime(date.year, date.month, date.day);

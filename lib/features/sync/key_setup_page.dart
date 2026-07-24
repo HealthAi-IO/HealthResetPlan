@@ -58,6 +58,7 @@ class _KeySetupPageState extends State<KeySetupPage> {
     try {
       final umk = await _vault.generate();
       final mnemonic = _vault.exportMnemonic(umk);
+      await sl<SyncService>().prepareForKeyChange();
       if (!mounted) return;
       setState(() {
         _umk = umk;
@@ -94,18 +95,25 @@ class _KeySetupPageState extends State<KeySetupPage> {
         _restoreStatusMessage = '主密钥已写入本地，正在检查云同步权限...';
       });
       await _vault.markBackedUp();
+      await sl<SyncService>().prepareForKeyChange();
       sl<HealthRepository>().signalChanged();
       await _refreshBackupState();
 
       if (!mounted) return;
-      await sl<SyncService>().setSyncEnabled(false);
+      final syncService = sl<SyncService>();
+      await syncService.setSyncEnabled(true);
+      final result = await syncService.sync();
       if (!mounted) return;
-      const message = '主密钥已恢复到本地，请在云同步页手动开启并同步数据。';
+      if (result.hasError) {
+        throw StateError(result.error ?? '同步失败');
+      }
+      final message = '主密钥已恢复，已合并本机与云端全部数据：'
+          '上传 ${result.pushed} 条，拉取 ${result.pulled} 条。';
       setState(() {
         _restoreStatusMessage = message;
         _restoreStatusError = false;
       });
-      messenger.showSnackBar(const SnackBar(content: Text(message)));
+      messenger.showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       if (!mounted) return;
       setState(() {

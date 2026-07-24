@@ -97,9 +97,10 @@ Future<void> setupServiceLocator() async {
     keyVault: keyVault,
     database: appDatabase,
     repository: healthRepository,
+    chatRepository: sl<ChatRepository>(),
   ));
 
-  // 延迟创建：会员/AI/通知调度首次访问时才实例化
+  // 延迟创建：在线能力与通知调度首次访问时才实例化
   sl.registerLazySingleton<MembershipService>(
     () => MembershipService(client: apiClient),
   );

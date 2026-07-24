@@ -66,7 +66,7 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  // ── 初始化：校验会员 + 加载档案 + 加载最近会话 ───────────────────
+  // ── 初始化：校验账号 + 加载档案 + 加载最近会话 ───────────────────
 
   Future<void> _bootstrap() async {
     // 等待首帧渲染完成，确保 showDialog 有可用的 InheritedWidget
@@ -280,7 +280,7 @@ class _ChatPageState extends State<ChatPage> {
     if (!await ensureAiConsent(context)) return;
     if (content.trim().isEmpty || _sending) return;
 
-    // 校验账号 + 会员
+    // 校验手机号账号
     if (!mounted) return;
     final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
     if (!ok) return;

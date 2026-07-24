@@ -10,7 +10,6 @@ import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/membership/membership_service.dart';
 import '../meals/meal_record_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -25,12 +24,10 @@ class _HomePageState extends State<HomePage> {
   static const _indicatorPromptDismissedKey =
       'home_indicator_prompt_dismissed_v1';
   final HealthRepository _repo = sl<HealthRepository>();
-  final MembershipService _membership = sl<MembershipService>();
 
   HealthDashboardData? _data;
   List<HealthIndicatorEntry> _recentIndicators = const [];
   List<MealRecordData> _mealRecords = const [];
-  MembershipStatus _memberStatus = MembershipStatus.free;
   DateTime _selectedMealDate = DateTime.now();
   bool _loading = true;
   bool _promptOpen = false;
@@ -67,15 +64,6 @@ class _HomePageState extends State<HomePage> {
       _loading = false;
     });
     _maybeShowNextPrompt(results[0] as HealthDashboardData);
-    _loadMembershipStatus();
-  }
-
-  Future<void> _loadMembershipStatus() async {
-    final status = await _membership.getStatus().catchError(
-          (_) => _memberStatus,
-        );
-    if (!mounted) return;
-    setState(() => _memberStatus = status);
   }
 
   Future<void> _maybeShowNextPrompt(HealthDashboardData data) async {
@@ -258,23 +246,6 @@ class _HomePageState extends State<HomePage> {
               }),
           const SizedBox(height: 14),
 
-          /*
-          // 会员横幅（免费用户显示升级入口，会员显示状态）
-          _HomeMembershipBanner(
-            status: _memberStatus,
-            onTap: () {
-              if (!UserSession.instance.isAccountLogin) {
-                context.push('/login', extra: true);
-              } else {
-                context.push('/membership').then((_) {
-                  if (mounted) _load(silent: true);
-                });
-              }
-            },
-          ),
-          const SizedBox(height: 14),
-          */
-
           // 今日计划摘要
           _TodayPlanCard(
             meal: todayMeal,
@@ -358,24 +329,6 @@ class _HomePageState extends State<HomePage> {
                       label: '趋势统计',
                       color: Colors.orange,
                       onTap: () => context.go('/stats')),
-                  /*
-                  _QuickEntry(
-                    icon: _memberStatus.isActive
-                        ? Icons.workspace_premium
-                        : Icons.workspace_premium_outlined,
-                    label: _memberStatus.isActive ? '会员中心' : '升级会员',
-                    color: const Color(0xFF0277BD),
-                    onTap: () {
-                      if (!UserSession.instance.isAccountLogin) {
-                        context.push('/login', extra: true);
-                      } else {
-                        context.push('/membership').then((_) {
-                          if (mounted) _load(silent: true);
-                        });
-                      }
-                    },
-                  ),
-                  */
                 ],
               );
             }),
@@ -1702,89 +1655,3 @@ extension _IterableX<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
 
-// ── 会员横幅 ──────────────────────────────────────────────────
-
-// ignore: unused_element
-class _HomeMembershipBanner extends StatelessWidget {
-  const _HomeMembershipBanner({required this.status, required this.onTap});
-  final MembershipStatus status;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    if (status.isActive) {
-      final expiry = DateFormat('yyyy/MM/dd').format(status.expiresAt!);
-      return GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0277BD), Color(0xFF0288D1)],
-            ),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Row(children: [
-            const Icon(Icons.workspace_premium, color: Colors.white, size: 18),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                '${status.planName ?? '会员版'} · 有效至 $expiry',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
-            const Icon(Icons.chevron_right, color: Colors.white70, size: 18),
-          ]),
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0277BD).withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: const Color(0xFF0277BD).withValues(alpha: 0.25)),
-        ),
-        child: Row(children: [
-          const Icon(Icons.workspace_premium_outlined,
-              color: Color(0xFF0277BD), size: 20),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('升级会员',
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF0277BD))),
-                SizedBox(height: 2),
-                Text('解锁云同步 · AI方案无限次 · 报告智能识别',
-                    style: TextStyle(fontSize: 11, color: AppTheme.muted)),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0277BD),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: const Text('开通',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700)),
-          ),
-        ]),
-      ),
-    );
-  }
-}
