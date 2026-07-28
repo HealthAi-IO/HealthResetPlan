@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_reset_plan/core/data/health_models.dart';
 import 'package:health_reset_plan/core/data/health_repository.dart';
+import 'package:health_reset_plan/core/network/online_data_api.dart';
 import 'package:health_reset_plan/core/storage/app_database.dart';
 
 void main() {
@@ -280,6 +281,49 @@ void main() {
     expect(report.syncAt, 0);
     expect(report.indicatorCount, 1);
   });
+
+  test('AI plan keeps four daily reminders and queues every replaced row',
+      () async {
+    final database = _MemoryAppDatabase();
+    final repo = HealthRepository(database: database);
+    await repo.initialize();
+    final plan = {
+      'days': List.generate(
+        7,
+        (_) => {
+          'diet': {
+            'breakfast': ['早餐'],
+            'lunch': ['午餐'],
+            'dinner': ['晚餐'],
+          },
+          'exercise': {
+            'type': '快走',
+            'durationMinutes': 30,
+            'intensity': '中等',
+          },
+          'reminders': ['饮水', '测量血压', '按时用药'],
+        },
+      ),
+    };
+
+    await repo.applyAiPlan(plan: plan, provider: 'test');
+    final firstRows = await database.query('reminder');
+    expect(firstRows, hasLength(28));
+
+    for (final row in firstRows) {
+      await database.update(
+        'reminder',
+        {'client_id': 'reminder-${row['id']}'},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
+
+    await repo.applyAiPlan(plan: plan, provider: 'test');
+
+    expect(await repo.loadReminders(), hasLength(28));
+    expect(await database.query('sync_queue'), hasLength(28));
+  });
 }
 
 UserProfileData _validProfile() => UserProfileData.empty().copyWith(
@@ -291,6 +335,29 @@ UserProfileData _validProfile() => UserProfileData.empty().copyWith(
     );
 
 class _MemoryAppDatabase implements AppDatabase {
+  String _activeSpace = 'local';
+
+  @override
+  String get activeSpace => _activeSpace;
+
+  @override
+  Future<void> switchSpace(String space) async {
+    _activeSpace = space;
+  }
+
+  @override
+  Future<bool> hasDataInSpace(String space) async =>
+      _data.values.any((rows) => rows.isNotEmpty);
+
+  @override
+  Future<void> moveSpace(String from, String to) async {}
+
+  @override
+  Future<void> bindOnline(OnlineDataApi api) async {}
+
+  @override
+  Future<void> unbindOnline() async {}
+
   static const _tables = [
     'user_profile',
     'health_indicator',

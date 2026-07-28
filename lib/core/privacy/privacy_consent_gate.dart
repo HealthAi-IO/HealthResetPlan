@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_theme.dart';
+import '../../features/privacy/privacy_policy_page.dart';
 
 const privacyPolicyUrl = 'https://jkcqplan.com/privacy';
 const termsOfServiceUrl = 'https://jkcqplan.com/terms';
@@ -74,6 +75,14 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
     await launchUrl(Uri.parse(value), mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _openPrivacyPolicy() {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const PrivacyPolicyPage(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -120,11 +129,13 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                               spacing: 2,
                               children: [
                                 TextButton(
-                                  onPressed: () => _openUrl(privacyPolicyUrl),
+                                  onPressed: _openPrivacyPolicy,
                                   style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 2),
                                     minimumSize: Size.zero,
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                   ),
                                   child: const Text('《隐私政策》'),
                                 ),
@@ -132,9 +143,11 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                                 TextButton(
                                   onPressed: () => _openUrl(termsOfServiceUrl),
                                   style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 2),
                                     minimumSize: Size.zero,
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                   ),
                                   child: const Text('《用户协议》'),
                                 ),

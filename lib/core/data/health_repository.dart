@@ -28,6 +28,7 @@ class HealthRepository extends ChangeNotifier {
   Future<void> initialize() async {
     if (_ready) return;
     await database.open();
+    await cleanupAiPlanReminders();
     _ready = true;
   }
 
@@ -745,8 +746,9 @@ class HealthRepository extends ChangeNotifier {
 
     await db.transaction((txn) async {
       await txn.delete('plan', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-      await txn.delete(
-        'reminder',
+      await _deleteSyncedRow(
+        txn,
+        table: 'reminder',
         where: 'user_id = ? AND channel = ?',
         whereArgs: [kLocalUserId, 'ai-plan'],
       );
@@ -957,14 +959,6 @@ class HealthRepository extends ChangeNotifier {
         note: '第 $dayIndex 天运动：$exerciseSummary',
       ));
     }
-    for (final reminder in reminders.take(3)) {
-      tasks.add((
-        type: _inferReminderType(reminder),
-        at: DateTime(date.year, date.month, date.day, 20, 30),
-        note: '第 $dayIndex 天提醒：$reminder',
-      ));
-    }
-
     final seen = <String>{};
     for (final task in tasks) {
       final key = '${task.type}-${task.at.millisecondsSinceEpoch}-${task.note}';
@@ -999,18 +993,6 @@ class HealthRepository extends ChangeNotifier {
     final text = _aiText(raw);
     if (text.isEmpty) return <String>[];
     return [text];
-  }
-
-  String _inferReminderType(String text) {
-    if (text.contains('血压')) return 'bp';
-    if (text.contains('血糖')) return 'glucose';
-    if (text.contains('体重') || text.contains('称重')) return 'weight';
-    if (text.contains('运动') || text.contains('快走') || text.contains('步行')) {
-      return 'exercise';
-    }
-    if (text.contains('药')) return 'medicine';
-    if (text.contains('水')) return 'water';
-    return 'meal';
   }
 
   String _aiText(Object? raw) {
@@ -1068,6 +1050,53 @@ class HealthRepository extends ChangeNotifier {
       orderBy: 'remind_at ASC',
     );
     return rows.map(ReminderData.fromRow).toList();
+  }
+
+  Future<int> cleanupAiPlanReminders() async {
+    final db = await database.open();
+    final now = DateTime.now();
+    final end = DateTime(now.year, now.month, now.day).add(
+      const Duration(days: 7),
+    );
+    var deleted = 0;
+
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'reminder',
+        where: 'user_id = ? AND channel = ?',
+        whereArgs: [kLocalUserId, 'ai-plan'],
+        orderBy: 'updated_at DESC',
+      );
+      final seen = <String>{};
+
+      for (final row in rows) {
+        final remindAt = _asInt(row['remind_at']) ?? 0;
+        final time = DateTime.fromMillisecondsSinceEpoch(remindAt);
+        final type = row['type'] as String? ?? '';
+        final supported = (type == 'meal' &&
+                time.minute == 0 &&
+                (time.hour == 8 || time.hour == 12 || time.hour == 18)) ||
+            (type == 'exercise' && time.hour == 19 && time.minute == 30);
+        final key = '$type-$remindAt';
+        if (supported &&
+            !time.isBefore(now) &&
+            time.isBefore(end) &&
+            seen.add(key)) {
+          continue;
+        }
+
+        await _queueDelete(txn, 'reminder', row);
+        await txn.delete(
+          'reminder',
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+        deleted++;
+      }
+    });
+
+    if (deleted > 0) notifyListeners();
+    return deleted;
   }
 
   Future<void> addReminder({
@@ -1197,14 +1226,9 @@ class HealthRepository extends ChangeNotifier {
     required String where,
     required List<Object?> whereArgs,
   }) async {
-    final rows = await db.query(
-      table,
-      where: where,
-      whereArgs: whereArgs,
-      limit: 1,
-    );
-    if (rows.isNotEmpty) {
-      await _queueDelete(db, table, rows.first);
+    final rows = await db.query(table, where: where, whereArgs: whereArgs);
+    for (final row in rows) {
+      await _queueDelete(db, table, row);
     }
     await db.delete(table, where: where, whereArgs: whereArgs);
   }
@@ -1245,6 +1269,9 @@ class HealthRepository extends ChangeNotifier {
       'reminder',
       'user_profile',
       'health_report',
+      'meal_record',
+      'ai_message',
+      'ai_session',
       'sync_queue',
     ]) {
       await db.delete(table);

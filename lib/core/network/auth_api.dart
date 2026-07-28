@@ -39,19 +39,50 @@ class AuthApi {
   Future<AuthResult> loginWithPhonePassword({
     required String phone,
     required String password,
+    required String captchaTicket,
   }) async {
     final resp = await _client.dio.post('/auth/login', data: {
       'phone': phone,
       'password': password,
+      'captchaTicket': captchaTicket,
     });
     return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
+  Future<CaptchaChallenge> createLoginCaptcha({
+    required String phone,
+  }) async {
+    final resp = await _client.dio.post('/auth/captcha/create', data: {
+      'scene': 'login',
+      'principal': phone,
+    });
+    return CaptchaChallenge.fromJson(_unwrapData(resp.data));
+  }
+
+  Future<String> verifyLoginCaptcha({
+    required String captchaId,
+    required String phone,
+    required double finalX,
+    required List<CaptchaTrajectoryPoint> trajectory,
+  }) async {
+    final resp = await _client.dio.post('/auth/captcha/verify', data: {
+      'captchaId': captchaId,
+      'scene': 'login',
+      'principal': phone,
+      'finalX': finalX,
+      'trajectory': trajectory.map((point) => point.toJson()).toList(),
+    });
+    final data = _unwrapData(resp.data);
+    return data['ticket'] as String? ?? '';
+  }
+
   Future<PasswordResetCodeResult> sendSmsLoginCode({
     required String phone,
+    required String captchaTicket,
   }) async {
     final resp = await _client.dio.post('/auth/sms/send-code', data: {
       'phone': phone,
+      'captchaTicket': captchaTicket,
     });
     return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
   }
@@ -314,6 +345,49 @@ class PhoneVerificationResult {
       registrationTicket: j['registrationTicket'] as String?,
     );
   }
+}
+
+class CaptchaChallenge {
+  const CaptchaChallenge({
+    required this.captchaId,
+    required this.backgroundImageBase64,
+    required this.pieceImageBase64,
+    required this.imageWidth,
+    required this.imageHeight,
+    required this.pieceWidth,
+  });
+
+  final String captchaId;
+  final String backgroundImageBase64;
+  final String pieceImageBase64;
+  final int imageWidth;
+  final int imageHeight;
+  final int pieceWidth;
+
+  factory CaptchaChallenge.fromJson(Map<String, dynamic> json) {
+    return CaptchaChallenge(
+      captchaId: json['captchaId'] as String,
+      backgroundImageBase64: json['backgroundImageBase64'] as String,
+      pieceImageBase64: json['pieceImageBase64'] as String,
+      imageWidth: (json['imageWidth'] as num).toInt(),
+      imageHeight: (json['imageHeight'] as num).toInt(),
+      pieceWidth: (json['pieceWidth'] as num).toInt(),
+    );
+  }
+}
+
+class CaptchaTrajectoryPoint {
+  const CaptchaTrajectoryPoint({
+    required this.x,
+    required this.y,
+    required this.t,
+  });
+
+  final double x;
+  final double y;
+  final int t;
+
+  Map<String, dynamic> toJson() => {'x': x, 'y': y, 't': t};
 }
 
 /// 把 DioException 转成用户友好的错误文本

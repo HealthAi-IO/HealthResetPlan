@@ -1,5 +1,5 @@
 #define AppName "健康重启计划"
-#define AppVersion "1.0.7"
+#define AppVersion "1.0.10"
 #define AppPublisher "健康重启计划"
 #define AppExeName "健康重启计划.exe"
 

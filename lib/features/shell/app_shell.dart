@@ -145,14 +145,11 @@ class _AppShellState extends State<AppShell> {
               _showThemePicker(context);
             } else if (value == 'onboarding') {
               context.push('/onboarding');
-            } else if (value == 'security') {
-              context.push('/sync');
             }
           },
           itemBuilder: (context) => const [
             PopupMenuItem(value: 'theme', child: Text('外观主题')),
             PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
-            PopupMenuItem(value: 'security', child: Text('云同步与密钥')),
           ],
         ),
         const SizedBox(width: 8),
@@ -227,9 +224,9 @@ class _DesktopNavigation extends StatelessWidget {
           ),
           const Spacer(),
           _NavigationItem(
-            label: '云同步与密钥',
-            icon: Icons.cloud_outlined,
-            onTap: () => context.push('/sync'),
+            label: '账号与数据',
+            icon: Icons.account_circle_outlined,
+            onTap: () => context.go('/profile'),
           ),
           _NavigationItem(
             label: '外观设置',
@@ -299,7 +296,7 @@ class _DesktopCommandBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = UserSession.instance;
-    final displayName = session.name.isEmpty ? '本地用户' : session.name;
+    final displayName = session.name.isEmpty ? '健康用户' : session.name;
     return Container(
       height: 64,
       color: Colors.white,
@@ -316,7 +313,7 @@ class _DesktopCommandBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            session.isAccountLogin ? '账号已登录 · 云同步可用' : '本地模式',
+            '账号已登录 · 数据自动保存',
             style: const TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
           const Spacer(),

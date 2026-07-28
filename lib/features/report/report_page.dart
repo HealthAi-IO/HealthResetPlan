@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -16,9 +15,9 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/file_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
-import '../../core/sync/sync_service.dart';
 import '../../core/widgets/ai_content_notice.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常结果、不适症状或用药调整需求，请及时咨询医生。';
@@ -175,7 +174,6 @@ class ReportPage extends StatefulWidget {
 class _ReportPageState extends State<ReportPage> {
   final HealthRepository _repo = sl<HealthRepository>();
   final ApiClient _apiClient = sl<ApiClient>();
-  final SyncService _syncService = sl<SyncService>();
   final ImagePicker _picker = ImagePicker();
 
   bool _loading = true;
@@ -410,7 +408,7 @@ class _ReportPageState extends State<ReportPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除报告'),
-        content: const Text('删除后本地报告历史中将不再显示，已开启云同步时会同步删除云端记录。'),
+        content: const Text('删除后账号中的报告记录与对应图片将不可恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -432,20 +430,9 @@ class _ReportPageState extends State<ReportPage> {
       await _repo.deleteReportRecord(record.clientId);
       await _deleteReportImage(record.imagePath);
 
-      var syncMessage = '';
-      if (await _syncService.isSyncEnabled()) {
-        final syncResult = await _syncService.sync();
-        if (syncResult.hasError) {
-          syncMessage = '，云同步失败：${syncResult.error}';
-        }
-      }
-
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(
-          content: Text('报告已删除$syncMessage'),
-          backgroundColor: syncMessage.isEmpty ? Colors.green : Colors.orange,
-        ),
+        const SnackBar(content: Text('报告已删除'), backgroundColor: Colors.green),
       );
       _load(silent: true);
     } catch (e) {
@@ -486,9 +473,6 @@ class _ReportPageState extends State<ReportPage> {
       );
       _load(silent: true);
 
-      if (await _syncService.isSyncEnabled()) {
-        unawaited(_syncAfterReportSave(messenger));
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -497,33 +481,6 @@ class _ReportPageState extends State<ReportPage> {
           content: Text('保存失败：$e'),
           backgroundColor: Colors.red,
         ),
-      );
-    }
-  }
-
-  Future<void> _syncAfterReportSave(ScaffoldMessengerState messenger) async {
-    try {
-      final syncResult = await _syncService.sync();
-      if (!mounted) return;
-      if (syncResult.hasError) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('云同步失败：${syncResult.error}'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      } else if (syncResult.pushed + syncResult.pulled > 0) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('云同步完成：${syncResult.pushed + syncResult.pulled} 条'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text('云同步失败：$e'), backgroundColor: Colors.orange),
       );
     }
   }
@@ -678,7 +635,7 @@ class _ReportPageState extends State<ReportPage> {
     if (image == null) return '';
 
     try {
-      return await persistReportImage(image, clientId);
+      return await sl<FileApi>().upload(image, clientId);
     } catch (_) {
       return '';
     }
@@ -688,7 +645,7 @@ class _ReportPageState extends State<ReportPage> {
     if (imagePath.isBlank) return;
 
     try {
-      await deleteReportImage(imagePath);
+      await sl<FileApi>().delete(imagePath);
     } catch (_) {
       // 删除图片失败不影响报告记录删除。
     }
@@ -853,7 +810,7 @@ class _PickCard extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          '上传体检或检验报告图片，AI 自动提取指标；确认后保存到本地，云同步开启时会自动加密同步。',
+          '上传体检或检验报告图片，AI 自动提取指标；确认后保存到当前账号。',
           style: TextStyle(color: AppTheme.muted, height: 1.5),
         ),
         const SizedBox(height: 16),
@@ -921,9 +878,9 @@ class _PickCard extends StatelessWidget {
 }
 
 bool get _canUseCamera =>
-    !kIsWeb &&
-    (defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS);
+    kIsWeb ||
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.iOS;
 
 class _StatusRow extends StatelessWidget {
   const _StatusRow({required this.text, required this.color});

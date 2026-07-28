@@ -16,21 +16,17 @@ import '../features/indicators/indicator_list_page.dart';
 import '../features/meals/meal_record_page.dart';
 import '../features/plan/plan_page.dart';
 import '../features/profile/profile_page.dart';
+import '../features/privacy/privacy_policy_page.dart';
 import '../features/report/report_page.dart';
 import '../features/self_check/self_check_page.dart';
 import '../features/shell/app_shell.dart';
 import '../features/stats/stats_page.dart';
-import '../features/sync/cloud_sync_page.dart';
-import '../features/sync/key_setup_page.dart';
 
 class AppRouter {
   AppRouter._();
 
-  static bool _requiresAccount(String path) =>
-      path == '/chat' ||
-      path == '/report' ||
-      path == '/self-check' ||
-      path.startsWith('/sync');
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
 
   static String _safeReturnTo(String? value) {
     if (value == null ||
@@ -68,26 +64,26 @@ class AppRouter {
   }
 
   static final GoRouter router = GoRouter(
+    navigatorKey: navigatorKey,
     initialLocation: '/home',
+    refreshListenable: UserSession.instance,
     observers: [TelemetryObserver()],
     redirect: (context, state) {
       final path = state.uri.path;
-      final hasLocalIdentity =
-          UserSession.instance.hasName || UserSession.instance.isAccountLogin;
-      if (!hasLocalIdentity && path != '/login') {
-        if (_requiresAccount(path)) {
-          return Uri(
-            path: '/login',
-            queryParameters: {'account': '1', 'returnTo': state.uri.toString()},
-          ).toString();
-        }
-        return '/login';
-      }
-      if (_requiresAccount(path) && !UserSession.instance.isAccountLogin) {
+      final authRoute =
+          path == '/login' || path == '/register' || path == '/privacy-policy';
+      if (!UserSession.instance.isAccountLogin && !authRoute) {
         return Uri(
           path: '/login',
-          queryParameters: {'account': '1', 'returnTo': state.uri.toString()},
+          queryParameters: {
+            'account': '1',
+            'accountOnly': '1',
+            'returnTo': state.uri.toString(),
+          },
         ).toString();
+      }
+      if (UserSession.instance.isAccountLogin && path == '/login') {
+        return '/home';
       }
       return null;
     },
@@ -177,10 +173,12 @@ class AppRouter {
         pageBuilder: (_, state) {
           final forceAccount = state.extra == true ||
               state.uri.queryParameters['account'] == '1';
+          final accountOnly = state.uri.queryParameters['accountOnly'] == '1';
           return _page(
             state,
             LoginPage(
               initialAccountMode: forceAccount,
+              accountOnly: accountOnly,
               returnTo: _safeReturnTo(state.uri.queryParameters['returnTo']),
             ),
           );
@@ -191,15 +189,6 @@ class AppRouter {
         pageBuilder: (_, state) => _page(state, const OnboardingPage()),
       ),
       GoRoute(
-        path: '/sync',
-        name: '/sync',
-        pageBuilder: (_, state) => _page(state, const CloudSyncPage()),
-      ),
-      GoRoute(
-        path: '/sync/key-setup',
-        pageBuilder: (_, state) => _page(state, const KeySetupPage()),
-      ),
-      GoRoute(
         path: '/report',
         pageBuilder: (_, state) => _page(state, const ReportPage()),
       ),
@@ -207,6 +196,10 @@ class AppRouter {
         path: '/self-check',
         name: '/self-check',
         pageBuilder: (_, state) => _page(state, const SelfCheckPage()),
+      ),
+      GoRoute(
+        path: '/privacy-policy',
+        pageBuilder: (_, state) => _page(state, const PrivacyPolicyPage()),
       ),
       GoRoute(
         path: '/register',

@@ -807,6 +807,9 @@ class ReminderData {
       'exercise' => '运动提醒',
       'medicine' => '用药提醒',
       'weight' => '称重提醒',
+      'water' => '饮水提醒',
+      'bp' => '血压提醒',
+      'glucose' => '血糖提醒',
       _ => '提醒',
     };
   }

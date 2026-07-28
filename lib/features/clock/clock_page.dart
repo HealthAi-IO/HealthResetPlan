@@ -367,7 +367,7 @@ class _ClockPageState extends State<ClockPage> {
           // 新增提醒
           _Panel(
             title: '新增提醒',
-            subtitle: '仅提醒今天和明天',
+            subtitle: '每天在设定时间提醒',
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -713,71 +713,161 @@ class _ReminderListState extends State<_ReminderList> {
 
   @override
   Widget build(BuildContext context) {
-    final reminders = widget.reminders;
+    final now = DateTime.now();
+    final dailyReminders = widget.reminders
+        .where((reminder) => reminder.channel == 'local')
+        .toList(growable: false);
+    final todayPlanReminders = widget.reminders.where((reminder) {
+      final time = reminder.remindTime;
+      return reminder.channel != 'local' &&
+          time.year == now.year &&
+          time.month == now.month &&
+          time.day == now.day &&
+          time.isAfter(now);
+    }).toList(growable: false);
+    final reminders = [...todayPlanReminders, ...dailyReminders];
+
     if (reminders.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Text('暂无提醒规则。', style: TextStyle(color: AppTheme.muted)),
+      return const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('今天暂无待提醒事项。', style: TextStyle(color: AppTheme.muted)),
+          ),
+          _ReminderSafetyNotice(),
+        ],
       );
     }
     final visible = _expanded
         ? reminders
         : reminders.take(_collapsedCount).toList(growable: false);
-    return Column(children: [
-      for (final r in visible)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+    final visibleToday =
+        visible.where((reminder) => reminder.channel != 'local').toList();
+    final visibleDaily =
+        visible.where((reminder) => reminder.channel == 'local').toList();
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (visibleToday.isNotEmpty) ...[
+        const Text('今日计划提醒',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+        const SizedBox(height: 8),
+        ...visibleToday.map((reminder) => _buildReminder(reminder, false)),
+      ],
+      if (visibleDaily.isNotEmpty) ...[
+        if (visibleToday.isNotEmpty) const SizedBox(height: 4),
+        const Text('每日固定提醒',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+        const SizedBox(height: 8),
+        ...visibleDaily.map((reminder) => _buildReminder(reminder, true)),
+      ],
+      if (reminders.length > _collapsedCount)
+        Center(
+          child: TextButton.icon(
+            onPressed: () => setState(() => _expanded = !_expanded),
+            icon: Icon(_expanded
+                ? Icons.keyboard_arrow_up
+                : Icons.keyboard_arrow_down),
+            label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
+          ),
+        ),
+      const _ReminderSafetyNotice(),
+    ]);
+  }
+
+  Widget _buildReminder(ReminderData reminder, bool isDaily) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        decoration: BoxDecoration(
+            color: AppTheme.pageBg, borderRadius: BorderRadius.circular(14)),
+        child: Row(children: [
+          Container(
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
-                color: AppTheme.pageBg,
-                borderRadius: BorderRadius.circular(14)),
-            child: Row(children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.notifications_active_outlined,
-                    color: AppTheme.deepBlue, size: 19),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${r.label}  ${r.timeText}',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 14)),
-                      Text(r.payload['note'] as String? ?? '本地规则',
-                          style: const TextStyle(
-                              color: AppTheme.muted, fontSize: 12)),
-                    ]),
-              ),
-              if (defaultTargetPlatform == TargetPlatform.android)
-                IconButton(
-                  icon: const Icon(Icons.alarm_add_outlined,
-                      size: 18, color: AppTheme.deepBlue),
-                  tooltip: '同步到手机闹钟',
-                  onPressed: () => widget.onSyncAlarm(r),
-                ),
-              IconButton(
-                icon: const Icon(Icons.close, size: 18, color: AppTheme.muted),
-                onPressed: r.id == null ? null : () => widget.onDelete(r.id!),
+              color: AppTheme.primaryBlue.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.notifications_active_outlined,
+                color: AppTheme.deepBlue, size: 19),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${reminder.label}  ${reminder.timeText}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 14)),
+              Text(
+                '${isDaily ? '每日' : '今日'} · ${reminder.payload['note'] as String? ?? reminder.label}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppTheme.muted, fontSize: 12),
               ),
             ]),
           ),
-        ),
-      if (reminders.length > _collapsedCount)
-        TextButton.icon(
-          onPressed: () => setState(() => _expanded = !_expanded),
-          icon: Icon(
-              _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
-          label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
-        ),
-    ]);
+          PopupMenuButton<_ReminderAction>(
+            tooltip: '更多操作',
+            onSelected: (action) {
+              switch (action) {
+                case _ReminderAction.syncAlarm:
+                  widget.onSyncAlarm(reminder);
+                case _ReminderAction.delete:
+                  if (reminder.id != null) widget.onDelete(reminder.id!);
+              }
+            },
+            itemBuilder: (context) => [
+              if (defaultTargetPlatform == TargetPlatform.android)
+                const PopupMenuItem(
+                  value: _ReminderAction.syncAlarm,
+                  child: ListTile(
+                    leading: Icon(Icons.alarm_add_outlined),
+                    title: Text('同步到系统闹钟'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              PopupMenuItem(
+                value: _ReminderAction.delete,
+                enabled: reminder.id != null,
+                child: const ListTile(
+                  leading: Icon(Icons.delete_outline),
+                  title: Text('删除提醒'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+enum _ReminderAction { syncAlarm, delete }
+
+class _ReminderSafetyNotice extends StatelessWidget {
+  const _ReminderSafetyNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: AppTheme.muted),
+          SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'APP 提醒可能受系统限制产生延迟，不用于紧急或关键医疗用途。',
+              style: TextStyle(color: AppTheme.muted, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -835,7 +925,14 @@ class _ReminderDialog extends StatefulWidget {
 class _ReminderDialogState extends State<_ReminderDialog> {
   final _noteCtrl = TextEditingController();
   TimeOfDay _time = const TimeOfDay(hour: 7, minute: 0);
-  bool _syncAlarm = false;
+  late bool _syncAlarm;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncAlarm = widget.type == 'medicine' &&
+        defaultTargetPlatform == TargetPlatform.android;
+  }
 
   @override
   void dispose() {
@@ -881,6 +978,20 @@ class _ReminderDialogState extends State<_ReminderDialog> {
               onChanged: (v) => setState(() => _syncAlarm = v),
             ),
           ],
+          if (widget.type == 'medicine')
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text(
+                '建议同步到系统闹钟，确保准时提醒。APP 提醒不用于紧急或关键医疗用途。',
+                style: TextStyle(fontSize: 12, color: AppTheme.ink),
+              ),
+            ),
         ]),
       ),
       actions: [

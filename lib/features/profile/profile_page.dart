@@ -2,16 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
+import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
-import '../../core/network/auth_api.dart';
 import '../../core/network/ai_consent_api.dart';
-import '../../core/sync/sync_service.dart';
+import '../../core/network/auth_api.dart';
+import '../../core/privacy/privacy_consent_gate.dart';
 import 'cancel_account_dialog.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -150,11 +152,10 @@ class _ProfilePageState extends State<ProfilePage> {
       if (UserSession.instance.isAccountLogin) {
         await sl<AuthApi>().updateAccountProfile(nickname: nickname);
       }
-      final syncMessage = await _syncProfileIfEnabled();
       if (!mounted) return;
       _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
       messenger.showSnackBar(
-        SnackBar(content: Text(syncMessage ?? '健康档案已保存到本地')),
+        const SnackBar(content: Text('健康档案已保存到账号')),
       );
     } catch (_) {
       if (!mounted) return;
@@ -164,14 +165,8 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  Future<String?> _syncProfileIfEnabled() async {
-    final sync = sl<SyncService>();
-    if (!await sync.isSyncEnabled()) return null;
-    final result = await sync.sync();
-    if (result.hasError) {
-      return '健康档案已保存到本地，云同步失败：${result.error}';
-    }
-    return '健康档案已保存并同步到云端';
+  Future<void> _openLegalDocument(String url) async {
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
   Future<void> _manageAiConsent() async {
@@ -188,7 +183,7 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) => AlertDialog(
         title: Text(accepted ? '管理 AI 数据处理授权' : 'AI 数据处理说明'),
         content: Text(accepted
-            ? '你已同意云端 AI 数据处理。撤回后，AI 问诊、7 天计划和报告识别将停止；本地记录与加密云同步不受影响。'
+            ? '你已同意云端 AI 数据处理。撤回后，AI 问诊、7 天计划和报告识别将停止；账号中的健康记录不受影响。'
             : '使用 AI 问诊、7 天计划或报告识别时，你主动提交的必要健康信息或报告图片会由本服务的受控服务器短暂转发给已配置的千问、豆包、智谱 GLM 或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
         actions: [
           TextButton(
@@ -260,6 +255,27 @@ class _ProfilePageState extends State<ProfilePage> {
               subtitle: const Text('管理云端 AI 问诊、计划和报告识别授权'),
               trailing: const Icon(Icons.chevron_right),
               onTap: _manageAiConsent,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.privacy_tip_outlined),
+                  title: const Text('隐私政策'),
+                  subtitle: const Text('查看完整的个人信息与数据安全说明'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/privacy-policy'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.description_outlined),
+                  title: const Text('用户协议'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openLegalDocument(termsOfServiceUrl),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -502,7 +518,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
               return Column(
                 children: [
-                  _Panel(title: '基础档案', subtitle: '完善后可用于本地计划计算', child: form),
+                  _Panel(title: '基础档案', subtitle: '完善后可用于计划计算', child: form),
                   const SizedBox(height: 16),
                   quickActions,
                   const SizedBox(height: 16),
@@ -517,7 +533,6 @@ class _ProfilePageState extends State<ProfilePage> {
             onLogin: () => context
                 .push('/login', extra: true)
                 .then((_) => setState(() {})),
-            onSecurity: () => context.push('/sync'),
             onSetPassword: () => context.push(
               '/set-password?returnTo=%2Fprofile&required=1',
             ),
@@ -525,103 +540,37 @@ class _ProfilePageState extends State<ProfilePage> {
             onCancelAccount: _cancelAccount,
           ),
           const SizedBox(height: 20),
-          _DangerZone(onClearAll: _clearAllData),
-          const SizedBox(height: 20),
         ],
       ),
     );
-  }
-
-  Future<void> _clearAllData() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清空全部数据'),
-        content: const Text(
-          '此操作将删除本地所有健康档案、指标记录、计划和打卡数据，且不可恢复。\n\n确认要继续吗？',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确认清空'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    await _repo.clearAllData();
-    await sl<SyncService>().resetLastSyncMs();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('本地健康数据已清空，账号登录状态已保留；下次同步会重新拉取云端数据')),
-    );
-    setState(() {});
   }
 
   Future<void> _signOut() async {
-    final sync = sl<SyncService>();
-    final hasPending = await sync.hasPendingChanges();
-    if (!mounted) return;
-    if (hasPending) {
-      final syncFirst = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('有尚未同步的数据'),
-          content: const Text('退出后本机健康数据和主密钥会被清除。请先同步，避免数据丢失。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('先同步再退出'),
-            ),
-          ],
-        ),
-      );
-      if (syncFirst != true) return;
-      final result = await sync.sync();
-      if (result.hasError) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('同步失败，已取消退出：${result.error}')),
-          );
-        }
-        return;
-      }
-    } else {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('退出登录'),
-          content: const Text('退出后将清除本机账号数据和主密钥。再次登录需使用助记词恢复云端数据。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('确认退出'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('退出登录'),
+        content: const Text('退出后本机不保留健康业务数据，再次登录同一账号会从服务器加载。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认退出'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     final refreshToken = UserSession.instance.refreshToken;
     if (refreshToken != null && refreshToken.isNotEmpty) {
       try {
         await sl<AuthApi>().logout(refreshToken);
       } catch (_) {}
     }
-    await sync.clearForSignOut();
+    await sl<OnlineDataService>().signOut();
     await UserSession.instance.clear();
     sl<ApiClient>().setAccessToken(null);
     if (mounted) context.go('/login');
@@ -633,7 +582,7 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) => const CancelAccountDialog(),
     );
     if (confirmed != true) return;
-    await sl<SyncService>().clearForSignOut();
+    await sl<OnlineDataService>().signOut();
     await UserSession.instance.clear();
     sl<ApiClient>().setAccessToken(null);
     if (mounted) context.go('/login');
@@ -644,13 +593,11 @@ class _AccountSecurityPanel extends StatelessWidget {
   const _AccountSecurityPanel(
       {required this.accountInfo,
       required this.onLogin,
-      required this.onSecurity,
       required this.onSetPassword,
       required this.onSignOut,
       required this.onCancelAccount});
   final AccountInfo? accountInfo;
   final VoidCallback onLogin;
-  final VoidCallback onSecurity;
   final VoidCallback onSetPassword;
   final VoidCallback onSignOut;
   final VoidCallback onCancelAccount;
@@ -660,7 +607,7 @@ class _AccountSecurityPanel extends StatelessWidget {
     final loggedIn = UserSession.instance.isAccountLogin;
     return _Panel(
       title: '账号与数据安全',
-      subtitle: loggedIn ? '云同步与助记词恢复由此管理' : '登录后可使用云同步和 AI 在线能力',
+      subtitle: loggedIn ? '健康数据已与当前账号绑定' : '登录后加载账号中的健康数据',
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (!loggedIn)
           FilledButton.icon(
@@ -702,11 +649,6 @@ class _AccountSecurityPanel extends StatelessWidget {
               const SizedBox(height: 8),
             ],
           ],
-          OutlinedButton.icon(
-              onPressed: onSecurity,
-              icon: const Icon(Icons.security_outlined),
-              label: const Text('云同步与助记词')),
-          const SizedBox(height: 8),
           TextButton.icon(
               onPressed: onSignOut,
               icon: const Icon(Icons.logout_outlined),
@@ -1092,58 +1034,6 @@ class _AccountSignOutSection extends StatelessWidget {
 }
 
 // ── 危险操作区 ───────────────────────────────────────────────────
-
-class _DangerZone extends StatelessWidget {
-  const _DangerZone({required this.onClearAll});
-  final VoidCallback onClearAll;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.red.shade100),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.warning_amber_outlined,
-                size: 18, color: Colors.red.shade400),
-            const SizedBox(width: 8),
-            Text('危险操作',
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.red.shade400)),
-          ]),
-          const SizedBox(height: 4),
-          const Text('以下操作不可撤销，请谨慎使用',
-              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onClearAll,
-              icon:
-                  const Icon(Icons.delete_forever_outlined, color: Colors.red),
-              label: const Text('清空全部本地数据',
-                  style: TextStyle(
-                      color: Colors.red, fontWeight: FontWeight.w700)),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.red),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _IndicatorDialog extends StatefulWidget {
   const _IndicatorDialog({required this.type});

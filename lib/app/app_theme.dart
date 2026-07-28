@@ -66,6 +66,7 @@ class AppTheme {
     );
     return ThemeData(
       useMaterial3: true,
+      fontFamily: 'NotoSansSC',
       fontFamilyFallback: fontFamilyFallback,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: pageBg,
@@ -174,6 +175,7 @@ class AppTheme {
 
   static ThemeData get dark => ThemeData(
         useMaterial3: true,
+        fontFamily: 'NotoSansSC',
         fontFamilyFallback: fontFamilyFallback,
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(

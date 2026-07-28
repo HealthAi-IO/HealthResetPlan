@@ -12,23 +12,23 @@ class OnboardingPage extends StatelessWidget {
       _Step(
           icon: Icons.assignment_ind_outlined,
           title: '完善健康档案',
-          desc: '身高、体重、年龄、病史和用药信息先保存到本地。'),
+          desc: '身高、体重、年龄、病史和用药信息会保存到当前账号。'),
       _Step(
           icon: Icons.document_scanner_outlined,
           title: '录入体检报告',
-          desc: '选择报告图片后，确认关键指标并同步到本地健康库。'),
+          desc: '选择报告图片后，确认关键指标并保存到账号健康库。'),
       _Step(
           icon: Icons.event_note_outlined,
-          title: '生成本地计划',
+          title: '生成健康计划',
           desc: '系统会基于 BMI 和最近指标生成 7 天饮食与运动方案。'),
       _Step(
           icon: Icons.check_circle_outline,
           title: '开始打卡与提醒',
           desc: '记录饮食、运动、用药和称重，形成完整的健康闭环。'),
       _Step(
-          icon: Icons.lock_outline,
-          title: '备份主密钥',
-          desc: '云同步前完成助记词备份，服务端只保存密文。'),
+          icon: Icons.cloud_done_outlined,
+          title: '自动保存账号数据',
+          desc: '登录后数据自动保存到服务器，可在其他设备继续使用。'),
     ];
 
     return Scaffold(
@@ -59,7 +59,7 @@ class OnboardingPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  '这套客户端优先在本地完成档案、计划、打卡、统计和密钥管理，后续可以无缝接入云同步。',
+                  '登录账号后即可使用档案、计划、打卡和统计，业务数据会自动保存到服务器。',
                   style: TextStyle(color: AppTheme.muted, height: 1.6),
                 ),
                 const SizedBox(height: 16),
@@ -67,8 +67,8 @@ class OnboardingPage extends StatelessWidget {
                   spacing: 10,
                   runSpacing: 10,
                   children: const [
-                    _Pill(text: '本地优先'),
-                    _Pill(text: '端到端加密'),
+                    _Pill(text: '账号绑定'),
+                    _Pill(text: '服务端加密'),
                     _Pill(text: '浅蓝主题'),
                   ],
                 ),

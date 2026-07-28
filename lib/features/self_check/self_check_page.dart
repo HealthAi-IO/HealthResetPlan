@@ -95,9 +95,9 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
 
   @override
   Widget build(BuildContext context) {
-    final canUseCamera = !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS);
+    final canUseCamera = kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
 
     return Scaffold(
       appBar: AppBar(title: Text(_type.appBarTitle)),

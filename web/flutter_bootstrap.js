@@ -6,4 +6,16 @@ _flutter.loader.load({
     canvasKitBaseUrl: 'canvaskit/',
     canvasKitVariant: 'full',
   },
+  onEntrypointLoaded: async (engineInitializer) => {
+    const appRunner = await engineInitializer.initializeEngine();
+    await appRunner.runApp();
+
+    const loading = document.getElementById('app-loading');
+    if (loading) {
+      loading.classList.add('is-hidden');
+      loading.addEventListener('transitionend', () => loading.remove(), {
+        once: true,
+      });
+    }
+  },
 });

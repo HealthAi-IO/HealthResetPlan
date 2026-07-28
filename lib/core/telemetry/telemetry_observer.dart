@@ -14,7 +14,6 @@ class TelemetryObserver extends NavigatorObserver {
       '/self-check' => 'image_analysis_view',
       '/clock' => 'clock_view',
       '/indicators' || '/indicators/input' => 'indicator_view',
-      '/sync' => 'sync_view',
       _ => '',
     };
     if (event.isNotEmpty) sl<TelemetryApi>().record(event);

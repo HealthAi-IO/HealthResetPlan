@@ -12,6 +12,20 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../meals/meal_record_page.dart';
 
+const _welcomeLetterParagraphs = [
+  '也许你曾经拥有更好的体力、更规律的作息，或者一个让自己更满意的身体状态。',
+  '后来，因为工作、压力、熬夜、饮食失控，或生活中接连不断的事情，你渐渐忽略了身体。等到疲惫、体重变化或健康指标开始提醒你时，你才发现，自己已经离理想的状态有些远了。',
+  '但现在开始，一点也不晚。',
+  '找回健康，不需要突然改变全部生活，也不需要依靠几天的拼命坚持。真正有效的改变，往往从一件很小、但可以持续完成的事情开始。',
+  '今天，你可以认真记录一次体重或血压，可以为自己选择一顿更合适的饭，可以完成十分钟运动，也可以比平时早一点放下手机、准备休息。',
+  '这些行动不会立刻改变一切，但它们会留下真实的记录。记录会形成趋势，趋势会帮助你看清问题，而看清之后，你才能做出更适合自己的调整。',
+  '健康重启计划存在的意义，就是陪你完成这个过程：帮你记录身体的真实变化，提醒你完成今天的小目标，让每一份坚持都能被看见，也让每一次调整都有依据。',
+  '你不需要和别人比较，也不必因为一次中断而否定之前的努力。健康从来不是一场只能向前、不能停下的比赛。',
+  '如果昨天没有做好，那就从今天重新开始；如果今天只能完成一件事，那就认真完成这一件事。',
+  '请相信，身体会记住你为它付出的每一次努力。',
+  '从现在开始，迈出今天这一步。',
+];
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -176,6 +190,43 @@ class _HomePageState extends State<HomePage> {
     if (picked != null) _selectMealDate(picked);
   }
 
+  Future<void> _openWelcomeLetter() async {
+    void startToday(BuildContext overlayContext) {
+      Navigator.pop(overlayContext);
+      context.go('/clock');
+    }
+
+    if (MediaQuery.sizeOf(context).width >= 700) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          child: SizedBox(
+            width: 620,
+            height: min(MediaQuery.sizeOf(dialogContext).height * 0.86, 760),
+            child: _WelcomeLetterContent(
+              onStart: () => startToday(dialogContext),
+              onLater: () => Navigator.pop(dialogContext),
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.9,
+        child: _WelcomeLetterContent(
+          onStart: () => startToday(sheetContext),
+          onLater: () => Navigator.pop(sheetContext),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading && _data == null) {
@@ -222,6 +273,7 @@ class _HomePageState extends State<HomePage> {
         onOpenClock: () => context.go('/clock'),
         onOpenStats: () => context.go('/stats'),
         onOpenReports: () => context.push('/report'),
+        onOpenLetter: _openWelcomeLetter,
         onAddIndicator: () {
           context.push('/indicators/input').then((_) {
             if (mounted) _load(silent: true);
@@ -245,6 +297,8 @@ class _HomePageState extends State<HomePage> {
             todayLabel: todayLabel,
             onClockTap: () => context.go('/clock'),
           ),
+          const SizedBox(height: 14),
+          _WelcomeLetterCard(onTap: _openWelcomeLetter),
           const SizedBox(height: 14),
 
           _FoodDiaryPanel(
@@ -433,6 +487,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
     required this.onOpenClock,
     required this.onOpenStats,
     required this.onOpenReports,
+    required this.onOpenLetter,
     required this.onAddIndicator,
   });
 
@@ -450,6 +505,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
   final VoidCallback onOpenClock;
   final VoidCallback onOpenStats;
   final VoidCallback onOpenReports;
+  final VoidCallback onOpenLetter;
   final VoidCallback onAddIndicator;
 
   @override
@@ -501,6 +557,10 @@ class _DesktopHomeDashboard extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 18),
+          _DesktopBrandBanner(profile: profile, todayLabel: todayLabel),
+          const SizedBox(height: 12),
+          _WelcomeLetterCard(onTap: onOpenLetter),
           const SizedBox(height: 18),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -728,14 +788,10 @@ class _DesktopHomeDashboard extends StatelessWidget {
                                   ? Colors.green.shade600
                                   : AppTheme.muted,
                             ),
-                            title: Text(UserSession.instance.isAccountLogin
-                                ? '账号数据已关联'
-                                : '当前为本地模式'),
-                            subtitle: Text(UserSession.instance.isAccountLogin
-                                ? '可前往云同步页面立即同步'
-                                : '登录账号后可跨设备同步'),
+                            title: const Text('账号数据已连接'),
+                            subtitle: const Text('修改会自动保存到服务器'),
                             trailing: const Icon(Icons.chevron_right),
-                            onTap: () => context.push('/sync'),
+                            onTap: () => context.push('/profile'),
                           ),
                         ),
                       ],
@@ -759,6 +815,204 @@ class _DesktopHomeDashboard extends StatelessWidget {
   static String _mealPlanDetail(List<PlanRecordData> plans, String meal) {
     final detail = _planDetail(plans, 'meal');
     return detail == '暂无计划' ? '点击记录$meal' : detail;
+  }
+}
+
+class _DesktopBrandBanner extends StatelessWidget {
+  const _DesktopBrandBanner({
+    required this.profile,
+    required this.todayLabel,
+  });
+
+  final UserProfileData? profile;
+  final String todayLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (profile?.nickname.isNotEmpty == true)
+        ? profile!.nickname
+        : UserSession.instance.name;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+      decoration: BoxDecoration(
+        gradient: AppTheme.accentGradient(context),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name.isEmpty ? '健康重启计划' : '你好，$name',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '现在出发，重新找回健康的自己！',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '今天不必完成所有目标，认真做好一件事就够了。',
+                  style: TextStyle(color: Colors.white70, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 24),
+          Text(
+            todayLabel,
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WelcomeLetterCard extends StatelessWidget {
+  const _WelcomeLetterCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: Color(0xFFE0F2FE),
+                foregroundColor: AppTheme.deepBlue,
+                child: Icon(Icons.mail_outline),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '写给正在重新出发的你',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '健康不是突然改变，而是在一次次行动中慢慢找回来。',
+                      style: TextStyle(
+                        color: AppTheme.muted,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 8),
+              Text(
+                '读一读',
+                style: TextStyle(
+                  color: AppTheme.deepBlue,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Icon(Icons.chevron_right, color: AppTheme.deepBlue),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WelcomeLetterContent extends StatelessWidget {
+  const _WelcomeLetterContent({
+    required this.onStart,
+    required this.onLater,
+  });
+
+  final VoidCallback onStart;
+  final VoidCallback onLater;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.mail_outline, color: AppTheme.deepBlue),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  '写给正在重新出发的你',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                ),
+              ),
+              IconButton(
+                tooltip: '关闭',
+                onPressed: onLater,
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+          const Divider(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: [
+                const Text('你好！', style: TextStyle(height: 1.75)),
+                const SizedBox(height: 14),
+                for (final paragraph in _welcomeLetterParagraphs) ...[
+                  Text(paragraph, style: const TextStyle(height: 1.75)),
+                  const SizedBox(height: 14),
+                ],
+                const Text(
+                  '一点一点改变，一步一步，重新找回健康的自己。',
+                  style: TextStyle(
+                    height: 1.75,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.deepBlue,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  '健康重启计划团队\n现在出发，重新找回健康的自己！',
+                  style: TextStyle(height: 1.7, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              TextButton(onPressed: onLater, child: const Text('稍后再看')),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: onStart,
+                  child: const Text('开始今天的第一步'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1245,10 +1499,22 @@ class _DashboardHero extends StatelessWidget {
                     style:
                         const TextStyle(color: Colors.white70, fontSize: 13)),
                 const SizedBox(height: 12),
-                Text(
-                  profile == null ? '请先完善健康档案，开始个性化计划' : '继续保持，稳定打卡是最好的健康投资',
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 13, height: 1.5),
+                const Text(
+                  '现在出发，重新找回健康的自己！',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  '今天不必完成所有目标，认真做好一件事就够了。',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
                 ),
               ])),
           const SizedBox(width: 16),
@@ -2150,21 +2416,30 @@ class _RecentClockList extends StatelessWidget {
 }
 
 // ── 提醒预览 ──────────────────────────────────────────────────
-class _ReminderPreview extends StatefulWidget {
+class _ReminderPreview extends StatelessWidget {
   const _ReminderPreview({required this.reminders});
   final List<ReminderData> reminders;
 
-  @override
-  State<_ReminderPreview> createState() => _ReminderPreviewState();
-}
-
-class _ReminderPreviewState extends State<_ReminderPreview> {
   static const _collapsedCount = 3;
-  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    final reminders = widget.reminders;
+    final now = DateTime.now();
+    final reminders = this.reminders.where((reminder) {
+      final time = reminder.remindTime;
+      final isToday = time.year == now.year &&
+          time.month == now.month &&
+          time.day == now.day;
+      final isUpcomingToday = time.hour > now.hour ||
+          (time.hour == now.hour && time.minute > now.minute);
+      return isUpcomingToday && (reminder.channel == 'local' || isToday);
+    }).toList(growable: false)
+      ..sort((a, b) {
+        final aMinutes = a.remindTime.hour * 60 + a.remindTime.minute;
+        final bMinutes = b.remindTime.hour * 60 + b.remindTime.minute;
+        return aMinutes.compareTo(bMinutes);
+      });
+
     if (reminders.isEmpty) {
       return Container(
         width: double.infinity,
@@ -2173,13 +2448,11 @@ class _ReminderPreviewState extends State<_ReminderPreview> {
           color: AppTheme.pageBg,
           borderRadius: BorderRadius.circular(14),
         ),
-        child: const Text('暂无提醒，在打卡页添加。',
+        child: const Text('今天暂无待提醒事项。',
             style: TextStyle(color: AppTheme.muted, fontSize: 13)),
       );
     }
-    final visible = _expanded
-        ? reminders
-        : reminders.take(_collapsedCount).toList(growable: false);
+    final visible = reminders.take(_collapsedCount).toList(growable: false);
     return Column(children: [
       for (final r in visible)
         Padding(
@@ -2213,13 +2486,6 @@ class _ReminderPreviewState extends State<_ReminderPreview> {
                       fontSize: 13)),
             ]),
           ),
-        ),
-      if (reminders.length > _collapsedCount)
-        TextButton.icon(
-          onPressed: () => setState(() => _expanded = !_expanded),
-          icon: Icon(
-              _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down),
-          label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
         ),
     ]);
   }

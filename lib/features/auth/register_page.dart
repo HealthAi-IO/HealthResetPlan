@@ -5,12 +5,11 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/user_session.dart';
-import '../../core/crypto/key_vault.dart';
+import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
-import '../../core/sync/sync_service.dart';
 
 class RegisterArgs {
   const RegisterArgs({
@@ -18,6 +17,7 @@ class RegisterArgs {
     required this.registrationTicket,
     this.returnTo = '/home',
   });
+
   final String phone;
   final String registrationTicket;
   final String returnTo;
@@ -25,6 +25,7 @@ class RegisterArgs {
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key, required this.args});
+
   final RegisterArgs args;
 
   @override
@@ -32,9 +33,9 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
-  final _nickname = TextEditingController();
-  final _password = TextEditingController();
-  final _confirmPassword = TextEditingController();
+  final _nicknameController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
   bool _agreed = false;
   bool _saving = false;
   String? _error;
@@ -42,35 +43,32 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   void initState() {
     super.initState();
-    _nickname.text = UserSession.instance.name.trim().isNotEmpty
-        ? UserSession.instance.name.trim()
-        : _defaultNickname();
+    _nicknameController.text = '健康用户${1000 + Random().nextInt(9000)}';
   }
 
   @override
   void dispose() {
-    _nickname.dispose();
-    _password.dispose();
-    _confirmPassword.dispose();
+    _nicknameController.dispose();
+    _passwordController.dispose();
+    _confirmController.dispose();
     super.dispose();
   }
 
-  String _defaultNickname() {
-    const prefixes = ['健康', '轻盈', '活力', '晴朗'];
-    return '${prefixes[Random().nextInt(prefixes.length)]}用户${1000 + Random().nextInt(9000)}';
-  }
-
-  Future<void> _submit({required bool skipPassword}) async {
-    final nickname = _nickname.text.trim();
-    if (nickname.isEmpty || !_agreed) {
-      setState(() => _error = '请填写昵称并同意用户协议、隐私政策');
+  Future<void> _submit() async {
+    final nickname = _nicknameController.text.trim();
+    final password = _passwordController.text;
+    if (nickname.isEmpty) {
+      setState(() => _error = '请输入昵称');
       return;
     }
-    if (!skipPassword &&
-        (_password.text.length < 8 ||
-            _password.text.length > 64 ||
-            _password.text != _confirmPassword.text)) {
-      setState(() => _error = '请输入两次一致的 8-64 位密码');
+    if (password.length < 8 ||
+        password.length > 64 ||
+        password != _confirmController.text) {
+      setState(() => _error = '请输入两次一致的 8—64 位密码');
+      return;
+    }
+    if (!_agreed) {
+      setState(() => _error = '请先同意用户协议和隐私政策');
       return;
     }
     setState(() {
@@ -82,75 +80,92 @@ class _RegisterPageState extends State<RegisterPage> {
         phone: widget.args.phone,
         registrationTicket: widget.args.registrationTicket,
         nickname: nickname,
-        password: skipPassword ? null : _password.text,
-        agreementVersion: '2026-07-17',
+        password: password,
+        agreementVersion: '2026-07-28',
       );
       await UserSession.instance.setAccountSession(
-          userId: result.userId,
-          accessToken: result.accessToken,
-          refreshToken: result.refreshToken,
-          nickname: nickname,
-          passwordPromptRequired: false);
+        userId: result.userId,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        nickname: nickname,
+        passwordPromptRequired: false,
+      );
       sl<ApiClient>().setAccessToken(result.accessToken);
-      await sl<KeyVault>().bindToAccount(result.userId);
-      await sl<SyncService>().bindToAccount(result.userId);
+      await sl<OnlineDataService>().bindToAccount(result.userId);
       if (mounted) context.go(widget.args.returnTo);
-    } catch (e) {
-      if (mounted) setState(() => _error = friendlyAuthError(e));
+    } catch (error) {
+      if (mounted) setState(() => _error = friendlyAuthError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('注册账号')),
-        body: ListView(padding: const EdgeInsets.all(24), children: [
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('注册账号')),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
           Text(
-              '手机号 ${widget.args.phone.substring(0, 3)}****${widget.args.phone.substring(7)} 已验证'),
+            '手机号 ${widget.args.phone.substring(0, 3)}****'
+            '${widget.args.phone.substring(7)} 已验证',
+          ),
           const SizedBox(height: 16),
           TextField(
-              controller: _nickname,
-              decoration: const InputDecoration(labelText: '昵称')),
+            controller: _nicknameController,
+            decoration: const InputDecoration(labelText: '昵称'),
+          ),
           const SizedBox(height: 12),
           TextField(
-              controller: _password,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: '设置密码（8-64 位）')),
+            controller: _passwordController,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: '设置密码'),
+          ),
           const SizedBox(height: 12),
           TextField(
-              controller: _confirmPassword,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: '确认密码')),
+            controller: _confirmController,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: '确认密码'),
+          ),
           CheckboxListTile(
-              value: _agreed,
-              onChanged: (value) => setState(() => _agreed = value ?? false),
-              controlAffinity: ListTileControlAffinity.leading,
-              title: Wrap(
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  const Text('已阅读并同意'),
-                  TextButton(
-                    onPressed: () => launchUrl(Uri.parse(termsOfServiceUrl)),
-                    child: const Text('《用户协议》'),
-                  ),
-                  const Text('和'),
-                  TextButton(
-                    onPressed: () => launchUrl(Uri.parse(privacyPolicyUrl)),
-                    child: const Text('《隐私政策》'),
-                  ),
-                ],
-              )),
+            value: _agreed,
+            contentPadding: EdgeInsets.zero,
+            onChanged: (value) => setState(() => _agreed = value ?? false),
+            title: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const Text('我已阅读并同意'),
+                TextButton(
+                  onPressed: () => launchUrl(Uri.parse(termsOfServiceUrl)),
+                  child: const Text('用户协议'),
+                ),
+                const Text('和'),
+                TextButton(
+                  onPressed: () => context.push('/privacy-policy'),
+                  child: const Text('隐私政策'),
+                ),
+              ],
+            ),
+          ),
           if (_error != null)
-            Text(_error!, style: TextStyle(color: Colors.red.shade700)),
-          const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          const SizedBox(height: 16),
           FilledButton(
-              onPressed: _saving ? null : () => _submit(skipPassword: false),
-              child: Text(_saving ? '处理中...' : '设置密码并进入')),
-          const SizedBox(height: 8),
-          OutlinedButton(
-              onPressed: _saving ? null : () => _submit(skipPassword: true),
-              child: const Text('暂时不设密码')),
-        ]),
-      );
+            onPressed: _saving ? null : _submit,
+            child: _saving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('完成注册'),
+          ),
+        ],
+      ),
+    );
+  }
 }

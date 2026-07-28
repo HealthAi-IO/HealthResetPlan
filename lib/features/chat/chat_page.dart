@@ -197,22 +197,22 @@ class _ChatPageState extends State<ChatPage> {
                       itemBuilder: (_, i) {
                         final s = sessions[i];
                         final active = s.id == _currentSession?.id;
+                        final primary = Theme.of(context).colorScheme.primary;
                         final time = DateFormat('MM-dd HH:mm').format(
                             DateTime.fromMillisecondsSinceEpoch(s.updatedAt));
                         return ListTile(
                           dense: false,
-                          tileColor: active
-                              ? AppTheme.deepBlue.withValues(alpha: 0.06)
-                              : null,
+                          tileColor:
+                              active ? primary.withValues(alpha: 0.06) : null,
                           leading: Container(
                             width: 36,
                             height: 36,
                             decoration: BoxDecoration(
-                              color: AppTheme.deepBlue.withValues(alpha: 0.12),
+                              color: primary.withValues(alpha: 0.12),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(Icons.chat_bubble_outline,
-                                size: 18, color: AppTheme.deepBlue),
+                            child: Icon(Icons.chat_bubble_outline,
+                                size: 18, color: primary),
                           ),
                           title: Text(
                             s.title,
@@ -462,8 +462,9 @@ class _ChatPageState extends State<ChatPage> {
                     Text(p.name),
                     if (p.id == _selectedProvider) ...[
                       const Spacer(),
-                      const Icon(Icons.check,
-                          size: 16, color: AppTheme.deepBlue),
+                      Icon(Icons.check,
+                          size: 16,
+                          color: Theme.of(context).colorScheme.primary),
                     ],
                   ]),
                 ),
@@ -517,6 +518,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildEmptyState() {
+    final primary = Theme.of(context).colorScheme.primary;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -525,11 +527,10 @@ class _ChatPageState extends State<ChatPage> {
             width: 72,
             height: 72,
             decoration: BoxDecoration(
-              color: const Color(0xFF0277BD).withValues(alpha: 0.1),
+              color: primary.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.psychology_outlined,
-                size: 38, color: Color(0xFF0277BD)),
+            child: Icon(Icons.psychology_outlined, size: 38, color: primary),
           ),
           const SizedBox(height: 16),
           const Text('AI 健康顾问',
@@ -575,6 +576,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildInputBar() {
+    final colors = Theme.of(context).colorScheme;
     // 键盘弹出时输入栏紧贴键盘上沿；无键盘时贴底部安全区
     return SafeArea(
       top: false,
@@ -622,8 +624,8 @@ class _ChatPageState extends State<ChatPage> {
               : IconButton.filled(
                   onPressed: () => _sendMessage(_inputCtrl.text),
                   style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFF0277BD),
-                    foregroundColor: Colors.white,
+                    backgroundColor: colors.primary,
+                    foregroundColor: colors.onPrimary,
                   ),
                   icon: const Icon(Icons.send_rounded, size: 20),
                 ),
@@ -696,6 +698,7 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
@@ -710,13 +713,13 @@ class _MessageBubble extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isError
                     ? Colors.red.shade100
-                    : const Color(0xFF0277BD).withValues(alpha: 0.12),
+                    : colors.primary.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 isError ? Icons.error_outline : Icons.psychology_outlined,
                 size: 18,
-                color: isError ? Colors.red.shade700 : const Color(0xFF0277BD),
+                color: isError ? Colors.red.shade700 : colors.primary,
               ),
             ),
             const SizedBox(width: 8),
@@ -734,7 +737,7 @@ class _MessageBubble extends StatelessWidget {
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
                   color: isUser
-                      ? const Color(0xFF0277BD)
+                      ? colors.primary
                       : isError
                           ? Colors.red.shade50
                           : Colors.white,
@@ -764,7 +767,7 @@ class _MessageBubble extends StatelessWidget {
                         fontSize: 14,
                         height: 1.55,
                         color: isUser
-                            ? Colors.white
+                            ? colors.onPrimary
                             : isError
                                 ? Colors.red.shade700
                                 : AppTheme.ink,

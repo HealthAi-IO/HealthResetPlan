@@ -11,8 +11,8 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
+import '../../core/network/file_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
-import '../../core/storage/report_image_storage.dart';
 import '../../core/widgets/ai_content_notice.dart';
 
 const _proteinColor = Color(0xFF19B43B);
@@ -356,7 +356,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
     final clientId = widget.record?.clientId ?? HealthRepository.newClientId();
     final imagePath = _image == null
         ? widget.record?.imagePath ?? ''
-        : await persistReportImage(_image!, clientId);
+        : await sl<FileApi>().upload(_image!, clientId);
     final record = MealRecordData(
       id: widget.record?.id,
       clientId: clientId,
@@ -382,9 +382,9 @@ class _MealRecordPageState extends State<MealRecordPage> {
 
   @override
   Widget build(BuildContext context) {
-    final canUseCamera = !kIsWeb &&
-        (defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS);
+    final canUseCamera = kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
     return Scaffold(
       appBar: AppBar(title: const Text('记录餐食')),
       body: ListView(

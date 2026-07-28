@@ -6,7 +6,7 @@ const _skipAuthRefreshKey = 'skipAuthRefresh';
 
 /// 后端 API Dio 客户端骨架。
 ///
-/// 注意：上传到服务端的健康敏感数据必须先经过 [CryptoService] 加密。
+/// 健康敏感数据由服务端统一加密后存储。
 /// 本类只负责 HTTP 通信，不处理加密 / 解密。
 class ApiClient {
   ApiClient({
@@ -14,6 +14,7 @@ class ApiClient {
       'API_BASE_URL',
       defaultValue: 'https://api.jkcqplan.com/api/v1',
     ),
+    HttpClientAdapter? adapter,
   })  : _refreshDio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
@@ -39,6 +40,10 @@ class ApiClient {
             },
           ),
         ) {
+    if (adapter != null) {
+      _dio.httpClientAdapter = adapter;
+      _refreshDio.httpClientAdapter = adapter;
+    }
     _dio.interceptors.add(
       InterceptorsWrapper(
         onError: _handleAuthError,
@@ -49,8 +54,14 @@ class ApiClient {
   final Dio _dio;
   final Dio _refreshDio;
   Future<_RefreshedSession?>? _refreshing;
+  Future<void>? _expiringSession;
+  Future<void> Function()? _sessionExpiredHandler;
 
   Dio get dio => _dio;
+
+  void setSessionExpiredHandler(Future<void> Function() handler) {
+    _sessionExpiredHandler = handler;
+  }
 
   void setAccessToken(String? token) {
     if (token == null || token.isEmpty) {
@@ -118,7 +129,25 @@ class ApiClient {
   }
 
   Future<void> _clearSessionAfterRefreshFailure() async {
-    await UserSession.instance.signOut();
+    final existing = _expiringSession;
+    if (existing != null) return existing;
+
+    final task = _expireSession();
+    _expiringSession = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_expiringSession, task)) _expiringSession = null;
+    }
+  }
+
+  Future<void> _expireSession() async {
+    final handler = _sessionExpiredHandler;
+    if (handler != null) {
+      await handler();
+    } else {
+      await UserSession.instance.signOut(sessionExpired: true);
+    }
     setAccessToken(null);
   }
 

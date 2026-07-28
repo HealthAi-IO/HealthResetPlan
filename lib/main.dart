@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'app/app_router.dart';
 import 'app/app_theme.dart';
@@ -13,6 +15,7 @@ import 'core/di/service_locator.dart';
 import 'core/notification/reminder_scheduler.dart';
 import 'core/network/telemetry_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
+import 'core/update/app_update_service.dart';
 
 ThemeMode get _themeMode => ThemeMode.light;
 final GlobalKey<ScaffoldMessengerState> _messengerKey =
@@ -20,7 +23,14 @@ final GlobalKey<ScaffoldMessengerState> _messengerKey =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _loadAppFont();
   runApp(const PrivacyConsentGate(child: _AppLoader()));
+}
+
+Future<void> _loadAppFont() async {
+  final fontLoader = FontLoader('NotoSansSC')
+    ..addFont(rootBundle.load('assets/fonts/NotoSansSC-Variable.ttf'));
+  await fontLoader.load();
 }
 
 class _AppLoader extends StatefulWidget {
@@ -182,12 +192,14 @@ class HealthResetPlanApp extends StatefulWidget {
 
 class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
   StreamSubscription<ReminderData>? _reminderSubscription;
+  bool _updateChecked = false;
 
   @override
   void initState() {
     super.initState();
     _reminderSubscription =
         sl<ReminderScheduler>().reminderEvents.listen(_showReminder);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
   }
 
   @override
@@ -206,6 +218,64 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
         action: SnackBarAction(label: 'OK', onPressed: () {}),
       ),
     );
+  }
+
+  Future<void> _checkForUpdate() async {
+    if (_updateChecked) return;
+    _updateChecked = true;
+
+    final update = await AppUpdateService(client: sl()).check();
+    if (!mounted || update == null) return;
+
+    final context = AppRouter.navigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !update.forceUpdate,
+      builder: (dialogContext) => PopScope(
+        canPop: !update.forceUpdate,
+        child: AlertDialog(
+          title: Text('发现新版本 v${update.latestVersion}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (update.releaseNotes.isNotEmpty) Text(update.releaseNotes),
+              if (update.packageSizeMb != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  '安装包大小：${update.packageSizeMb} MB',
+                  style: Theme.of(dialogContext).textTheme.bodySmall,
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            if (!update.forceUpdate)
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('稍后提醒'),
+              ),
+            FilledButton(
+              onPressed: () => _openUpdate(update.packageUrl),
+              child: const Text('立即更新'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openUpdate(String packageUrl) async {
+    final opened = await launchUrl(
+      Uri.parse(packageUrl),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      _messengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text('无法打开下载地址，请稍后重试')),
+      );
+    }
   }
 
   @override

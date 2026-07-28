@@ -14,6 +14,19 @@ import '../../core/membership/membership_service.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 
+ImageProvider<Object>? _authenticatedAvatarProvider(AccountInfo? info) {
+  if (info == null || info.avatarUrl.isEmpty) return null;
+  final objectKey = Uri.tryParse(info.avatarUrl)?.queryParameters['objectKey'];
+  final token = UserSession.instance.accessToken;
+  if (objectKey == null || objectKey.isEmpty || token == null) return null;
+  final baseUrl = sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
+  return NetworkImage(
+    '$baseUrl/files/content?objectKey=${Uri.encodeQueryComponent(objectKey)}'
+    '&contentType=image%2Fjpeg',
+    headers: {'Authorization': 'Bearer $token'},
+  );
+}
+
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
 
@@ -405,7 +418,7 @@ class _CombinedProfileCard extends StatelessWidget {
     final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
     final bmi = profile?.bmi ?? 0;
     final bmiText = bmi == 0 ? 'BMI --' : 'BMI ${bmi.toStringAsFixed(1)}';
-    final cloudText = accountInfo?.hasCloudSync == true ? '已开启' : '未开启';
+    const cloudText = '自动保存';
     final initials = safeName.characters.first;
     final phoneTail = accountInfo?.phoneTail.trim() ?? '';
     // ignore: unused_local_variable
@@ -434,8 +447,7 @@ class _CombinedProfileCard extends StatelessWidget {
                 child: CircleAvatar(
                   radius: 26,
                   backgroundColor: Colors.white24,
-                  foregroundImage:
-                      imageUrl == null ? null : NetworkImage(imageUrl),
+                  foregroundImage: imageUrl,
                   child: imageUrl == null
                       ? Text(
                           initials,
@@ -541,9 +553,9 @@ class _CombinedProfileCard extends StatelessWidget {
               Expanded(
                 child: _CardInfoPill(
                   icon: Icons.cloud_outlined,
-                  label: '云同步',
+                  label: '账号数据',
                   value: cloudText,
-                  highlight: accountInfo?.hasCloudSync == true,
+                  highlight: true,
                 ),
               ),
               const SizedBox(width: 10),
@@ -601,17 +613,8 @@ class _CombinedProfileCard extends StatelessWidget {
     );
   }
 
-  String? _avatarImageUrl(AccountInfo? info) {
-    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
-      return null;
-    }
-    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
-    final apiRoot = baseUrl.endsWith('/api/v1')
-        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
-        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
-    final stamp = Uri.encodeComponent(info.avatarUrl);
-    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
-  }
+  ImageProvider<Object>? _avatarImageUrl(AccountInfo? info) =>
+      _authenticatedAvatarProvider(info);
 }
 
 class _CardBadge extends StatelessWidget {
@@ -765,8 +768,7 @@ class _AccountStatusCard extends StatelessWidget {
               child: CircleAvatar(
                 radius: 24,
                 backgroundColor: Colors.white24,
-                foregroundImage:
-                    imageUrl == null ? null : NetworkImage(imageUrl),
+                foregroundImage: imageUrl,
                 child: imageUrl == null
                     ? Text(
                         displayName.isNotEmpty
@@ -875,7 +877,7 @@ class _AccountStatusCard extends StatelessWidget {
           const SizedBox(height: 12),
           if (!isLoggedIn) ...[
             const Text(
-              '绑定账号后可使用云同步、AI 等在线能力；退出账号后已有本地数据继续保留。',
+              '登录账号后可使用健康记录与 AI 等在线能力。',
               style:
                   TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
             ),
@@ -896,11 +898,9 @@ class _AccountStatusCard extends StatelessWidget {
           ] else ...[
             _AccountDetailRow(
               icon: Icons.cloud_outlined,
-              label: '云同步',
-              value: (accountInfo?.hasCloudSync == true) ? '已开启' : '未开启',
-              valueColor: (accountInfo?.hasCloudSync == true)
-                  ? Colors.lightGreenAccent
-                  : Colors.white54,
+              label: '账号数据',
+              value: '自动保存',
+              valueColor: Colors.lightGreenAccent,
             ),
             const SizedBox(height: 6),
             _AccountDetailRow(
@@ -942,17 +942,8 @@ class _AccountStatusCard extends StatelessWidget {
     );
   }
 
-  String? _avatarImageUrl(AccountInfo? info) {
-    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
-      return null;
-    }
-    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
-    final apiRoot = baseUrl.endsWith('/api/v1')
-        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
-        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
-    final stamp = Uri.encodeComponent(info.avatarUrl);
-    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
-  }
+  ImageProvider<Object>? _avatarImageUrl(AccountInfo? info) =>
+      _authenticatedAvatarProvider(info);
 }
 
 // ignore: unused_element
@@ -1017,8 +1008,7 @@ class _AccountCard extends StatelessWidget {
                   CircleAvatar(
                     radius: 24,
                     backgroundColor: Colors.white24,
-                    foregroundImage:
-                        imageUrl == null ? null : NetworkImage(imageUrl),
+                    foregroundImage: imageUrl,
                     child: imageUrl == null
                         ? Text(
                             displayName.isNotEmpty
@@ -1110,7 +1100,7 @@ class _AccountCard extends StatelessWidget {
           const SizedBox(height: 10),
           if (!isLoggedIn) ...[
             const Text(
-              '注册/登录账号后即可使用云同步、AI 等在线能力。',
+              '注册或登录账号后即可使用健康记录与 AI 等在线能力。',
               style:
                   TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
             ),
@@ -1138,11 +1128,9 @@ class _AccountCard extends StatelessWidget {
             const SizedBox(height: 6),
             _AccountDetailRow(
               icon: Icons.cloud_outlined,
-              label: '云同步',
-              value: (accountInfo?.hasCloudSync == true) ? '已开启' : '未开启',
-              valueColor: (accountInfo?.hasCloudSync == true)
-                  ? Colors.lightGreenAccent
-                  : Colors.white54,
+              label: '账号数据',
+              value: '自动保存',
+              valueColor: Colors.lightGreenAccent,
             ),
             const SizedBox(height: 6),
             _AccountDetailRow(
@@ -1171,17 +1159,8 @@ class _AccountCard extends StatelessWidget {
     );
   }
 
-  String? _avatarImageUrl(AccountInfo? info) {
-    if (info == null || info.avatarUrl.isEmpty || info.userId.isEmpty) {
-      return null;
-    }
-    final baseUrl = sl<ApiClient>().dio.options.baseUrl;
-    final apiRoot = baseUrl.endsWith('/api/v1')
-        ? baseUrl.substring(0, baseUrl.length - '/api/v1'.length)
-        : baseUrl.replaceFirst(RegExp(r'/api/v1/?$'), '');
-    final stamp = Uri.encodeComponent(info.avatarUrl);
-    return '$apiRoot/api/v1/files/avatar/${info.userId}?v=$stamp';
-  }
+  ImageProvider<Object>? _avatarImageUrl(AccountInfo? info) =>
+      _authenticatedAvatarProvider(info);
 }
 
 class _AccountDetailRow extends StatelessWidget {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppColorTheme {
+  standard('default', '默认主题', Color(0xFF0EA5E9)),
   ocean('ocean', '海洋蓝', Color(0xFF0B67D1)),
   emerald('emerald', '健康绿', Color(0xFF16866A)),
   violet('violet', '沉稳紫', Color(0xFF6D55C5)),
@@ -17,7 +18,7 @@ enum AppColorTheme {
 class ThemeController extends ChangeNotifier {
   static const _preferenceKey = 'app_color_theme_v1';
 
-  AppColorTheme _colorTheme = AppColorTheme.ocean;
+  AppColorTheme _colorTheme = AppColorTheme.standard;
 
   AppColorTheme get colorTheme => _colorTheme;
 
@@ -26,7 +27,7 @@ class ThemeController extends ChangeNotifier {
     final saved = preferences.getString(_preferenceKey);
     _colorTheme = AppColorTheme.values.firstWhere(
       (item) => item.key == saved,
-      orElse: () => AppColorTheme.ocean,
+      orElse: () => AppColorTheme.standard,
     );
   }
 

@@ -9,7 +9,7 @@ import 'package:timezone/timezone.dart' as tz;
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 
-/// 将 [HealthRepository] 中的提醒规则同步为今天和明天的系统本地通知。
+/// 将 [HealthRepository] 中的提醒规则同步为系统本地通知。
 ///
 /// 调用顺序：initialize() → requestPermission() → syncAll()
 /// 每次新增或删除提醒后再调用一次 syncAll() 保持同步。
@@ -21,19 +21,19 @@ class ReminderScheduler {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
-  Timer? _windowsReminderTimer;
-  final Set<String> _windowsReminderKeys = <String>{};
-  final StreamController<ReminderData> _windowsReminderController =
+  Timer? _inAppReminderTimer;
+  final Set<String> _inAppReminderKeys = <String>{};
+  final StreamController<ReminderData> _inAppReminderController =
       StreamController<ReminderData>.broadcast();
 
   static const _channelId = 'hrp_reminders';
   static const _channelName = '健康提醒';
   static const _channelDesc = '饮食、运动、用药、称重、饮水定时提醒';
 
-  Stream<ReminderData> get reminderEvents => _windowsReminderController.stream;
+  Stream<ReminderData> get reminderEvents => _inAppReminderController.stream;
 
-  bool get _usesWindowsInAppReminders =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  bool get _usesInAppReminders =>
+      kIsWeb || defaultTargetPlatform == TargetPlatform.windows;
 
   bool get _supported =>
       !kIsWeb &&
@@ -46,9 +46,9 @@ class ReminderScheduler {
 
   Future<void> initialize() async {
     if (_initialized) return;
-    if (_usesWindowsInAppReminders) {
+    if (_usesInAppReminders) {
       _initialized = true;
-      _startWindowsReminderLoop();
+      _startInAppReminderLoop();
       return;
     }
     if (!_supported) return;
@@ -104,9 +104,9 @@ class ReminderScheduler {
   /// 取消所有已调度通知，再根据数据库中的提醒规则重新调度。
   Future<void> syncAll() async {
     if (!_initialized) return;
-    if (_usesWindowsInAppReminders) {
-      _startWindowsReminderLoop();
-      await _checkWindowsReminders();
+    if (_usesInAppReminders) {
+      _startInAppReminderLoop();
+      await _checkInAppReminders();
       return;
     }
     if (!_supported) return;
@@ -128,12 +128,10 @@ class ReminderScheduler {
     tz.TZDateTime now,
   ) async {
     final reminderDate = reminder.remindTime;
-    final today = tz.TZDateTime(now.location, now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
     final isLocalRule = reminder.channel == 'local';
 
     if (isLocalRule) {
-      final todayAt = tz.TZDateTime(
+      var next = tz.TZDateTime(
         now.location,
         now.year,
         now.month,
@@ -141,38 +139,32 @@ class ReminderScheduler {
         reminderDate.hour,
         reminderDate.minute,
       );
-      if (todayAt.isAfter(now)) {
-        await _scheduleOnce(reminder, todayAt, 0);
+      if (!next.isAfter(now)) {
+        next = next.add(const Duration(days: 1));
       }
       await _scheduleOnce(
         reminder,
-        tz.TZDateTime(
-          now.location,
-          tomorrow.year,
-          tomorrow.month,
-          tomorrow.day,
-          reminderDate.hour,
-          reminderDate.minute,
-        ),
-        1,
+        next,
+        0,
+        matchDateTimeComponents: DateTimeComponents.time,
       );
       return;
     }
 
     final scheduled = tz.TZDateTime.from(reminderDate, now.location);
     if (scheduled.isBefore(now) ||
-        scheduled.isAfter(tomorrow.add(const Duration(days: 1)))) {
+        scheduled.isAfter(now.add(const Duration(days: 7)))) {
       return;
     }
-    await _scheduleOnce(
-        reminder, scheduled, scheduled.day == today.day ? 0 : 1);
+    await _scheduleOnce(reminder, scheduled, 0);
   }
 
   Future<void> _scheduleOnce(
     ReminderData reminder,
     tz.TZDateTime scheduled,
-    int dayOffset,
-  ) async {
+    int dayOffset, {
+    DateTimeComponents? matchDateTimeComponents,
+  }) async {
     final note = reminder.payload['note'] as String? ?? '';
     final body = note.isNotEmpty ? note : reminder.label;
 
@@ -185,6 +177,7 @@ class ReminderScheduler {
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
+      matchDateTimeComponents: matchDateTimeComponents,
     );
   }
 
@@ -211,26 +204,32 @@ class ReminderScheduler {
     );
   }
 
-  void _startWindowsReminderLoop() {
-    _windowsReminderTimer ??= Timer.periodic(
+  void _startInAppReminderLoop() {
+    _inAppReminderTimer ??= Timer.periodic(
       const Duration(minutes: 1),
-      (_) => _checkWindowsReminders(),
+      (_) => _checkInAppReminders(),
     );
   }
 
-  Future<void> _checkWindowsReminders() async {
+  Future<void> _checkInAppReminders() async {
     final now = DateTime.now();
     final reminders = await repository.loadReminders();
     for (final reminder in reminders) {
       final time = reminder.remindTime;
       if (time.hour != now.hour || time.minute != now.minute) continue;
+      if (reminder.channel != 'local' &&
+          (time.year != now.year ||
+              time.month != now.month ||
+              time.day != now.day)) {
+        continue;
+      }
 
       final id = reminder.id?.toString() ??
           '${reminder.type}-${time.hour}-${time.minute}';
       final key = '${now.year}-${now.month}-${now.day}-$id';
-      if (!_windowsReminderKeys.add(key)) continue;
+      if (!_inAppReminderKeys.add(key)) continue;
 
-      _windowsReminderController.add(reminder);
+      _inAppReminderController.add(reminder);
     }
   }
 }

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../app/app_theme.dart';
-
 const aiContentLabel = 'AI生成内容';
 
 class AiContentNotice extends StatelessWidget {
@@ -31,21 +29,22 @@ class AiContentNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: AppTheme.primaryBlue.withValues(alpha: 0.08),
-        border: Border.all(color: AppTheme.primaryBlue.withValues(alpha: 0.24)),
+        color: colors.primary.withValues(alpha: 0.08),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.24)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(children: [
-        const Icon(Icons.auto_awesome, size: 14, color: AppTheme.deepBlue),
+        Icon(Icons.auto_awesome, size: 14, color: colors.primary),
         const SizedBox(width: 5),
-        const Expanded(
+        Expanded(
           child: Text(aiContentLabel,
               style: TextStyle(
-                  color: AppTheme.deepBlue,
+                  color: colors.primary,
                   fontSize: 11,
                   fontWeight: FontWeight.w700)),
         ),

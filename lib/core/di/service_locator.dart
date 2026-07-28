@@ -1,31 +1,31 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../auth/user_session.dart';
-import '../crypto/crypto_service.dart';
-import '../crypto/key_vault.dart';
 import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
+import '../data/online_data_service.dart';
 import '../membership/membership_service.dart';
 import '../network/ai_api.dart';
 import '../network/ai_consent_api.dart';
 import '../network/api_client.dart';
 import '../network/auth_api.dart';
+import '../network/file_api.dart';
+import '../network/online_data_api.dart';
 import '../network/telemetry_api.dart';
 import '../notification/reminder_scheduler.dart';
 import '../storage/app_database.dart';
-import '../sync/sync_service.dart';
 
 final GetIt sl = GetIt.instance;
 
 /// 服务定位器初始化。
 ///
 /// 启动加速策略：
-/// 1. 同步注册不依赖 IO 的轻量级单例（Logger / SecureStorage / KeyVault 等）
+/// 1. 同步注册不依赖 IO 的轻量级单例
 /// 2. **并行执行**两个最耗时的步骤：
 ///    - SharedPreferences 初始化（UserSession.load）
 ///    - 数据库打开/迁移（HealthRepository.initialize）
@@ -34,35 +34,18 @@ Future<void> setupServiceLocator() async {
   // ── 同步注册（瞬时） ─────────────────────────────────────────
   sl.registerLazySingleton<Logger>(() => Logger());
 
-  const secureStorage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(
-      accessibility: KeychainAccessibility.unlocked_this_device,
-    ),
-    mOptions: MacOsOptions(
-      accessibility: KeychainAccessibility.unlocked_this_device,
-    ),
-  );
-  sl.registerSingleton<FlutterSecureStorage>(secureStorage);
-
-  final keyVault = KeyVault(storage: secureStorage);
-  sl.registerSingleton<KeyVault>(keyVault);
-
-  sl.registerLazySingleton<CryptoService>(
-    () => AesGcmCryptoService(keyVault: keyVault),
-  );
-
   final appDatabase = AppDatabase.instance;
   sl.registerSingleton<AppDatabase>(appDatabase);
 
-  // ── 并行执行 IO 密集的初始化 ────────────────────────────────
-  // 1. UserSession 从 SharedPreferences/SecureStorage 加载
-  // 2. HealthRepository 打开数据库
+  // 先恢复账号，再加载对应的在线数据。
   final healthRepository = HealthRepository(database: appDatabase);
-  await Future.wait([
-    UserSession.instance.load(),
-    healthRepository.initialize(),
-  ]);
+  await UserSession.instance.load();
+  await appDatabase.open();
+  final startupUserId = UserSession.instance.userId;
+  final prefs = await SharedPreferences.getInstance();
+  final startupSpace = startupUserId ?? 'signed-out';
+  await appDatabase.switchSpace(startupSpace);
+  await healthRepository.initialize();
   sl.registerSingleton<HealthRepository>(healthRepository);
 
   // 仓库类 - 仅持有数据库引用，构造瞬时
@@ -70,7 +53,7 @@ Future<void> setupServiceLocator() async {
 
   // ── 网络相关 ─────────────────────────────────────────────────
   final apiClient = ApiClient();
-  final prefs = await SharedPreferences.getInstance();
+  final packageInfo = await PackageInfo.fromPlatform();
   var deviceId = prefs.getString('client_device_id');
   if (deviceId == null || deviceId.isEmpty) {
     deviceId = const Uuid().v4();
@@ -79,7 +62,7 @@ Future<void> setupServiceLocator() async {
   apiClient.setDeviceHeaders(
     deviceId: deviceId,
     platform: _platformName(),
-    appVersion: '1.0.7',
+    appVersion: packageInfo.version,
   );
   sl.registerSingleton<ApiClient>(apiClient);
 
@@ -89,16 +72,25 @@ Future<void> setupServiceLocator() async {
   }
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
-  sl.registerSingleton<TelemetryApi>(TelemetryApi(client: apiClient, platform: _platformName()));
+  sl.registerSingleton<FileApi>(FileApi(client: apiClient));
+  sl.registerSingleton<TelemetryApi>(
+      TelemetryApi(client: apiClient, platform: _platformName()));
 
-  sl.registerSingleton<SyncService>(SyncService(
-    apiClient: apiClient,
-    cryptoService: sl<CryptoService>(),
-    keyVault: keyVault,
+  final onlineDataApi = OnlineDataApi(client: apiClient);
+  sl.registerSingleton<OnlineDataApi>(onlineDataApi);
+  final onlineDataService = OnlineDataService(
     database: appDatabase,
+    api: onlineDataApi,
     repository: healthRepository,
-    chatRepository: sl<ChatRepository>(),
-  ));
+  );
+  if (startupUserId != null) {
+    await onlineDataService.bindToAccount(startupUserId);
+  }
+  apiClient.setSessionExpiredHandler(() async {
+    await onlineDataService.signOut();
+    await UserSession.instance.signOut(sessionExpired: true);
+  });
+  sl.registerSingleton<OnlineDataService>(onlineDataService);
 
   // 延迟创建：在线能力与通知调度首次访问时才实例化
   sl.registerLazySingleton<MembershipService>(
