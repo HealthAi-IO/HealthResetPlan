@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart';
 import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../ai/ai_plan_generation_controller.dart';
 import '../auth/user_session.dart';
 import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
@@ -26,10 +30,8 @@ final GetIt sl = GetIt.instance;
 ///
 /// 启动加速策略：
 /// 1. 同步注册不依赖 IO 的轻量级单例
-/// 2. **并行执行**两个最耗时的步骤：
-///    - SharedPreferences 初始化（UserSession.load）
-///    - 数据库打开/迁移（HealthRepository.initialize）
-/// 3. 其余 API/Service 立即注册（构造函数都不阻塞）
+/// 2. 恢复登录会话并初始化在线数据内存缓存。
+/// 3. 其余 API/Service 立即注册（构造函数都不阻塞）。
 Future<void> setupServiceLocator() async {
   // ── 同步注册（瞬时） ─────────────────────────────────────────
   sl.registerLazySingleton<Logger>(() => Logger());
@@ -74,7 +76,12 @@ Future<void> setupServiceLocator() async {
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
   sl.registerSingleton<FileApi>(FileApi(client: apiClient));
   sl.registerSingleton<TelemetryApi>(
-      TelemetryApi(client: apiClient, platform: _platformName()));
+    TelemetryApi(
+      client: apiClient,
+      platform: _platformName(),
+      appVersion: packageInfo.version,
+    ),
+  );
 
   final onlineDataApi = OnlineDataApi(client: apiClient);
   sl.registerSingleton<OnlineDataApi>(onlineDataApi);
@@ -83,26 +90,49 @@ Future<void> setupServiceLocator() async {
     api: onlineDataApi,
     repository: healthRepository,
   );
-  if (startupUserId != null) {
-    await onlineDataService.bindToAccount(startupUserId);
-  }
   apiClient.setSessionExpiredHandler(() async {
     await onlineDataService.signOut();
     await UserSession.instance.signOut(sessionExpired: true);
   });
   sl.registerSingleton<OnlineDataService>(onlineDataService);
+  if (startupUserId != null) {
+    unawaited(_bindStartupData(onlineDataService, startupUserId));
+  }
 
   // 延迟创建：在线能力与通知调度首次访问时才实例化
   sl.registerLazySingleton<MembershipService>(
     () => MembershipService(client: apiClient),
   );
   sl.registerLazySingleton<AiApi>(() => AiApi(client: apiClient));
+  sl.registerLazySingleton<AiPlanGenerationController>(
+    () => AiPlanGenerationController(
+      repository: healthRepository,
+      aiApi: sl<AiApi>(),
+    ),
+  );
   sl.registerLazySingleton<AiConsentApi>(() => AiConsentApi(client: apiClient));
 
   // 通知调度也改为延迟（main.dart 后台再触发 initialize）
   sl.registerLazySingleton<ReminderScheduler>(
     () => ReminderScheduler(repository: healthRepository),
   );
+}
+
+Future<void> _bindStartupData(
+  OnlineDataService onlineDataService,
+  String userId,
+) async {
+  try {
+    await onlineDataService.bindToAccount(userId);
+  } on DioException catch (error, stackTrace) {
+    if (error.response?.statusCode == 401 &&
+        !UserSession.instance.isAccountLogin) {
+      return;
+    }
+    sl<Logger>().e('加载线上数据失败', error: error, stackTrace: stackTrace);
+  } catch (error, stackTrace) {
+    sl<Logger>().e('加载线上数据失败', error: error, stackTrace: stackTrace);
+  }
 }
 
 String _platformName() {

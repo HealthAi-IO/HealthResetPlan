@@ -133,17 +133,14 @@ class AuthApi {
     return PasswordResetCodeResult.fromJson(_unwrapData(resp.data));
   }
 
-  /// The mnemonic stays on-device. Only its public fingerprint is submitted.
   Future<AuthResult> reactivateAccount({
     required String phone,
     required String code,
-    required String keyFingerprint,
   }) async {
     final resp =
         await _client.dio.post('/auth/account-recovery/reactivate', data: {
       'phone': phone,
       'code': code,
-      'keyFingerprint': keyFingerprint,
     });
     return AuthResult.fromJson(_unwrapData(resp.data));
   }
@@ -243,7 +240,8 @@ class AuthApi {
     }
     final code = (body['code'] as num?)?.toInt() ?? 0;
     if (code != 0) {
-      throw StateError(
+      throw AuthApiException(
+        code,
         (body['message'] ?? body['msg'])?.toString() ?? '请求失败',
       );
     }
@@ -392,6 +390,7 @@ class CaptchaTrajectoryPoint {
 
 /// 把 DioException 转成用户友好的错误文本
 String friendlyAuthError(Object e) {
+  if (e is AuthApiException) return e.message;
   if (e is DioException) {
     final data = e.response?.data;
     if (data is Map && data['message'] != null) {
@@ -408,4 +407,22 @@ String friendlyAuthError(Object e) {
   }
   if (e is StateError) return e.message;
   return e.toString();
+}
+
+int? authErrorCode(Object error) {
+  if (error is AuthApiException) return error.code;
+  if (error is! DioException) return null;
+  final data = error.response?.data;
+  if (data is! Map) return null;
+  return int.tryParse('${data['code'] ?? ''}');
+}
+
+class AuthApiException implements Exception {
+  const AuthApiException(this.code, this.message);
+
+  final int code;
+  final String message;
+
+  @override
+  String toString() => message;
 }

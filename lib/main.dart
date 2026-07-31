@@ -1,13 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'app/app_router.dart';
 import 'app/app_theme.dart';
 import 'app/theme_controller.dart';
+import 'core/ai/ai_plan_generation_controller.dart';
 import 'core/auth/user_session.dart';
 import 'core/data/health_models.dart';
 import 'core/data/health_repository.dart';
@@ -23,14 +23,8 @@ final GlobalKey<ScaffoldMessengerState> _messengerKey =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await _loadAppFont();
+  await themeController.load();
   runApp(const PrivacyConsentGate(child: _AppLoader()));
-}
-
-Future<void> _loadAppFont() async {
-  final fontLoader = FontLoader('NotoSansSC')
-    ..addFont(rootBundle.load('assets/fonts/NotoSansSC-Variable.ttf'));
-  await fontLoader.load();
 }
 
 class _AppLoader extends StatefulWidget {
@@ -51,13 +45,15 @@ class _AppLoaderState extends State<_AppLoader> {
   }
 
   Future<void> _init() async {
+    final startedAt = DateTime.now();
     if (mounted) setState(() => _initError = null);
     try {
-      // setupServiceLocator 内部已并行执行 UserSession.load + DB 初始化
-      await Future.wait([
-        setupServiceLocator(),
-        themeController.load(),
-      ]);
+      await setupServiceLocator();
+      final elapsed = DateTime.now().difference(startedAt);
+      const minimumSplashDuration = Duration(milliseconds: 1400);
+      if (elapsed < minimumSplashDuration) {
+        await Future<void>.delayed(minimumSplashDuration - elapsed);
+      }
 
       // 兼容：若无昵称但 profile 有，补一下；不阻塞首屏，后台执行
       if (mounted) setState(() => _ready = true);
@@ -65,8 +61,10 @@ class _AppLoaderState extends State<_AppLoader> {
       _hydrateUserNameInBackground();
       _initNotificationsInBackground();
       sl<TelemetryApi>().record('app_open');
-    } catch (e) {
-      if (mounted) setState(() => _initError = e.toString());
+    } catch (e, stackTrace) {
+      debugPrint('App initialization failed: $e');
+      debugPrintStack(stackTrace: stackTrace);
+      if (mounted) setState(() => _initError = '暂时无法连接服务器，请检查网络后重试。');
     }
   }
 
@@ -90,6 +88,7 @@ class _AppLoaderState extends State<_AppLoader> {
     if (_initError != null) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
+        title: '健康重启计划',
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: _themeMode,
@@ -123,63 +122,127 @@ class _AppLoaderState extends State<_AppLoader> {
     }
 
     if (!_ready) {
-      // 启动闪屏：品牌色背景 + Logo + Loading
+      final seed = themeController.colorTheme.seed;
       return MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
+        title: '健康重启计划',
+        theme: AppTheme.lightFor(seed),
         darkTheme: AppTheme.dark,
         themeMode: _themeMode,
         home: Scaffold(
-          backgroundColor: const Color(0xFFF5F8FF),
-          body: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 88,
-                  height: 88,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF03A9F4), Color(0xFF0288D1)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF03A9F4).withValues(alpha: 0.3),
-                        blurRadius: 18,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(Icons.favorite_rounded,
-                      color: Colors.white, size: 46),
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  '健康重启计划',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF1A1A2E),
-                    letterSpacing: 1,
-                  ),
-                ),
-                const SizedBox(height: 32),
-                const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2.5),
-                ),
-              ],
-            ),
-          ),
+          backgroundColor: AppTheme.pageBg,
+          body: _SplashContent(accent: seed),
         ),
       );
     }
 
     return const HealthResetPlanApp();
+  }
+}
+
+class _SplashContent extends StatelessWidget {
+  const _SplashContent({required this.accent});
+
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        ColorFiltered(
+          colorFilter: ColorFilter.mode(
+            accent.withValues(alpha: 0.82),
+            BlendMode.color,
+          ),
+          child: Image.asset(
+            'assets/images/splash_trajectory_background.png',
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.high,
+          ),
+        ),
+        SafeArea(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: 1),
+            duration: const Duration(milliseconds: 620),
+            curve: Curves.easeOutCubic,
+            builder: (context, value, child) => Opacity(
+              opacity: value,
+              child: Transform.translate(
+                offset: Offset(0, 14 * (1 - value)),
+                child: child,
+              ),
+            ),
+            child: Column(
+              children: [
+                const Spacer(flex: 7),
+                Image.asset(
+                  'assets/images/health_reset_logo.png',
+                  width: 108,
+                  height: 108,
+                  filterQuality: FilterQuality.high,
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  '健康重启计划',
+                  style: TextStyle(
+                    fontSize: 27,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.ink,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  '记录每一步，看见每一点改变！',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.muted,
+                    letterSpacing: 0.35,
+                  ),
+                ),
+                const Spacer(flex: 5),
+                const Text(
+                  '正在开启你的健康记录',
+                  style: TextStyle(
+                    color: AppTheme.muted,
+                    fontSize: 12,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _SplashDot(color: accent.withValues(alpha: 0.45)),
+                    const SizedBox(width: 12),
+                    _SplashDot(color: accent),
+                    const SizedBox(width: 12),
+                    _SplashDot(color: accent.withValues(alpha: 0.68)),
+                  ],
+                ),
+                const Spacer(flex: 2),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SplashDot extends StatelessWidget {
+  const _SplashDot({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      child: const SizedBox.square(dimension: 7),
+    );
   }
 }
 
@@ -192,11 +255,15 @@ class HealthResetPlanApp extends StatefulWidget {
 
 class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
   StreamSubscription<ReminderData>? _reminderSubscription;
+  late final AiPlanGenerationController _aiPlanController;
   bool _updateChecked = false;
+  int _handledAiPlanEventId = 0;
 
   @override
   void initState() {
     super.initState();
+    _aiPlanController = sl<AiPlanGenerationController>();
+    _aiPlanController.addListener(_onAiPlanGenerationChanged);
     _reminderSubscription =
         sl<ReminderScheduler>().reminderEvents.listen(_showReminder);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
@@ -204,8 +271,39 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
 
   @override
   void dispose() {
+    _aiPlanController.removeListener(_onAiPlanGenerationChanged);
     _reminderSubscription?.cancel();
     super.dispose();
+  }
+
+  void _onAiPlanGenerationChanged() {
+    if (_aiPlanController.eventId == _handledAiPlanEventId) return;
+    _handledAiPlanEventId = _aiPlanController.eventId;
+    final currentPath =
+        AppRouter.router.routeInformationProvider.value.uri.path;
+    if (currentPath == '/plan') return;
+
+    if (_aiPlanController.status == AiPlanGenerationStatus.completed) {
+      _messengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: const Text('AI 健康计划已生成'),
+          action: SnackBarAction(
+            label: '查看',
+            onPressed: () => AppRouter.router.go('/plan'),
+          ),
+        ),
+      );
+    } else if (_aiPlanController.status == AiPlanGenerationStatus.failed) {
+      _messengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: const Text('AI 健康计划生成失败'),
+          action: SnackBarAction(
+            label: '返回计划',
+            onPressed: () => AppRouter.router.go('/plan'),
+          ),
+        ),
+      );
+    }
   }
 
   void _showReminder(ReminderData reminder) {

@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -6,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../app/app_router.dart';
 import '../../app/app_theme.dart';
+import '../../core/ai/ai_plan_generation_controller.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
@@ -28,22 +29,28 @@ class PlanPage extends StatefulWidget {
 class _PlanPageState extends State<PlanPage> {
   final HealthRepository _repo = sl<HealthRepository>();
   final AiApi _aiApi = sl<AiApi>();
+  final AiPlanGenerationController _aiPlanController =
+      sl<AiPlanGenerationController>();
 
   bool _loading = true;
-  bool _aiGenerating = false;
+  bool _presentingAiResult = false;
   String _selectedProvider = 'qwen';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
   PlanRecordData? _riskPlan;
   String _filter = 'all';
   int? _aiRemaining;
+  int _handledAiEventId = 0;
 
   @override
   void initState() {
     super.initState();
     _repo.addListener(_onRepoChanged);
+    _aiPlanController.addListener(_onAiPlanGenerationChanged);
     _load();
     _loadAiUsage();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _onAiPlanGenerationChanged());
   }
 
   Future<void> _loadAiUsage() async {
@@ -56,7 +63,23 @@ class _PlanPageState extends State<PlanPage> {
   @override
   void dispose() {
     _repo.removeListener(_onRepoChanged);
+    _aiPlanController.removeListener(_onAiPlanGenerationChanged);
     super.dispose();
+  }
+
+  void _onAiPlanGenerationChanged() {
+    if (!mounted) return;
+    setState(() {});
+    if (AppRouter.router.routeInformationProvider.value.uri.path != '/plan') {
+      return;
+    }
+    if (_aiPlanController.eventId == _handledAiEventId) return;
+    _handledAiEventId = _aiPlanController.eventId;
+    if (_aiPlanController.status == AiPlanGenerationStatus.completed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _presentAiResult());
+    } else if (_aiPlanController.status == AiPlanGenerationStatus.failed) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _handleAiFailure());
+    }
   }
 
   void _onRepoChanged() {
@@ -145,55 +168,41 @@ class _PlanPageState extends State<PlanPage> {
     // 2. 弹出模型选择对话框
     final provider = await _showProviderPicker();
     if (provider == null || !mounted) return;
-    setState(() {
-      _aiGenerating = true;
-      _selectedProvider = provider;
-    });
+    setState(() => _selectedProvider = provider);
+    _aiPlanController.start(profile: _profile!, provider: provider);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('AI 已开始生成计划，你可以继续使用其他功能')),
+    );
+  }
 
-    Timer? slowNotice;
+  Future<void> _presentAiResult() async {
+    if (!mounted || _presentingAiResult) return;
+    final result = _aiPlanController.result;
+    if (result == null) return;
+    _presentingAiResult = true;
+    final hasExecutablePlan =
+        _mapList(_parseAiPlanJson(result.rawJson)['days']).length == 7;
     try {
-      final messenger = ScaffoldMessenger.of(context);
-      slowNotice = Timer(const Duration(seconds: 20), () {
-        if (!mounted) return;
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('AI 正在生成中，请稍候；如生成失败会自动保留本地规则计划。'),
-          ),
-        );
-      });
-      // 3. 拉取最近指标
-      final indicators = await _repo.loadIndicators(limit: 20);
-
-      // 4. 调用 AI
-      final result = await _aiApi
-          .generatePlan(
-            profile: _profile ?? UserProfileData.empty(),
-            recentIndicators: indicators,
-            provider: provider,
-            goal: _profile?.goal ?? 'general',
-          )
-          .timeout(const Duration(seconds: 130));
-
-      if (!mounted) return;
-
-      // 5. 展示 AI 方案（底部弹窗）
       await _showAiPlanSheet(result);
       sl<TelemetryApi>().record('plan_generated');
       _loadAiUsage();
-    } catch (e) {
-      if (!mounted) return;
-      await _ensureLocalPlanAfterAiFailure();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_friendlyError(e)),
-          backgroundColor: Colors.orange.shade700,
-        ),
-      );
     } finally {
-      slowNotice?.cancel();
-      if (mounted) setState(() => _aiGenerating = false);
+      _presentingAiResult = false;
+      if (!hasExecutablePlan) _aiPlanController.clear();
     }
+  }
+
+  Future<void> _handleAiFailure() async {
+    final error = _aiPlanController.error;
+    await _ensureLocalPlanAfterAiFailure();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_friendlyError(error ?? 'AI 生成失败')),
+        backgroundColor: Colors.orange.shade700,
+      ),
+    );
+    _aiPlanController.clear();
   }
 
   Future<void> _ensureLocalPlanAfterAiFailure() async {
@@ -414,6 +423,7 @@ class _PlanPageState extends State<PlanPage> {
                                   provider: result.provider,
                                 );
                                 if (mounted) {
+                                  _aiPlanController.clear();
                                   await _load(silent: true);
                                   messenger.showSnackBar(
                                     SnackBar(
@@ -585,8 +595,13 @@ class _PlanPageState extends State<PlanPage> {
             riskPlan: _riskPlan,
             targetKcal: targetKcal,
             onGenerate: _generate,
-            onAiGenerate: _generateWithAi,
-            aiGenerating: _aiGenerating,
+            onAiGenerate:
+                _aiPlanController.status == AiPlanGenerationStatus.completed
+                    ? _presentAiResult
+                    : _generateWithAi,
+            aiGenerating: _aiPlanController.isGenerating,
+            aiResultReady:
+                _aiPlanController.status == AiPlanGenerationStatus.completed,
           ),
           if (_aiRemaining != null)
             Padding(
@@ -979,6 +994,7 @@ class _PlanHero extends StatelessWidget {
     required this.onGenerate,
     this.onAiGenerate,
     this.aiGenerating = false,
+    this.aiResultReady = false,
   });
 
   final UserProfileData? profile;
@@ -987,6 +1003,7 @@ class _PlanHero extends StatelessWidget {
   final VoidCallback onGenerate;
   final VoidCallback? onAiGenerate;
   final bool aiGenerating;
+  final bool aiResultReady;
 
   @override
   Widget build(BuildContext context) {
@@ -1075,8 +1092,19 @@ class _PlanHero extends StatelessWidget {
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white),
                           )
-                        : const Icon(Icons.psychology_outlined, size: 16),
-                    label: Text(aiGenerating ? 'AI 生成中…' : 'AI 智能生成'),
+                        : Icon(
+                            aiResultReady
+                                ? Icons.visibility_outlined
+                                : Icons.psychology_outlined,
+                            size: 16,
+                          ),
+                    label: Text(
+                      aiGenerating
+                          ? 'AI 生成中…'
+                          : aiResultReady
+                              ? '查看 AI 方案'
+                              : 'AI 智能生成',
+                    ),
                     style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF0277BD),
                     ),

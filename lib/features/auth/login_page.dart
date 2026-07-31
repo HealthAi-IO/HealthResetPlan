@@ -9,6 +9,7 @@ import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
+import 'account_recovery_dialog.dart';
 import 'register_page.dart';
 import 'widgets/captcha_dialog.dart';
 import 'widgets/secure_password_field.dart';
@@ -107,7 +108,9 @@ class _LoginPageState extends State<LoginPage> {
         await _completeLogin(result);
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && authErrorCode(error) == 40302) {
+        await _openAccountRecovery();
+      } else if (mounted) {
         setState(() => _credentialError = friendlyAuthError(error));
       }
     } finally {
@@ -123,7 +126,13 @@ class _LoginPageState extends State<LoginPage> {
       passwordPromptRequired: false,
     );
     sl<ApiClient>().setAccessToken(result.accessToken);
-    await sl<OnlineDataService>().bindToAccount(result.userId);
+    try {
+      await sl<OnlineDataService>().bindToAccount(result.userId);
+    } catch (_) {
+      await UserSession.instance.signOut();
+      sl<ApiClient>().setAccessToken(null);
+      rethrow;
+    }
     final account = await sl<AuthApi>().fetchAccountInfo();
     if (account != null && account.nickname.isNotEmpty) {
       await UserSession.instance.setAccountSession(
@@ -134,6 +143,16 @@ class _LoginPageState extends State<LoginPage> {
       );
     }
     if (mounted) context.go(widget.returnTo);
+  }
+
+  Future<void> _openAccountRecovery() async {
+    final result = await showDialog<AuthResult>(
+      context: context,
+      builder: (context) => AccountRecoveryDialog(
+        initialPhone: _normalizedPhone,
+      ),
+    );
+    if (result != null) await _completeLogin(result);
   }
 
   Future<void> _sendCode() async {
@@ -310,6 +329,10 @@ class _LoginPageState extends State<LoginPage> {
                           : const Text('登录 / 注册'),
                     ),
                     const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: _submitting ? null : _openAccountRecovery,
+                      child: const Text('恢复已注销账号'),
+                    ),
                     TextButton(
                       onPressed: () => context.push('/privacy-policy'),
                       child: const Text('查看《隐私政策》'),

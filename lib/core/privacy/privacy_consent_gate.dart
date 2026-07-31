@@ -49,10 +49,12 @@ class _PrivacyConsentGateState extends State<PrivacyConsentGate> {
     if (_accepted == true) return widget.child;
     if (_accepted == null) {
       return const MaterialApp(
+          title: '健康重启计划',
           home: Scaffold(body: Center(child: CircularProgressIndicator())));
     }
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: '健康重启计划',
       theme: AppTheme.light,
       home: _PrivacyConsentPage(onAccepted: _accept),
     );
@@ -106,7 +108,7 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                           TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
                   const Text(
-                    '健康重启计划将在你同意后处理必要信息以提供本地健康记录、账号同步和提醒服务。未注册账号时，健康数据仅保存在本机；注册并开启服务后，数据会加密上传用于同步。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
+                    '健康重启计划将在你同意并登录后处理必要信息，提供在线健康记录、多端同步和提醒服务。敏感健康数据由服务器加密后存储。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
                     style: TextStyle(height: 1.55, color: AppTheme.muted),
                   ),
                   const SizedBox(height: 16),

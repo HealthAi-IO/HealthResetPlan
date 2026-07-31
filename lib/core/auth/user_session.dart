@@ -15,6 +15,8 @@ class UserSession extends ChangeNotifier {
   static const _kLegacyAccountIdentifier = 'user_account_identifier';
   static const _kAccountLoginRequired = 'account_login_required';
   static const _kSessionExpired = 'session_expired';
+  static const welcomeLetterPendingUserKey =
+      'welcome_letter_pending_user_id_v1';
 
   // 安全存储（Token）
   static const _kAccess = 'hrp_access_token';

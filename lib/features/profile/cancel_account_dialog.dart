@@ -77,7 +77,7 @@ class _CancelAccountDialogState extends State<CancelAccountDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                '注销后有 30 天恢复期，到期后云端数据将彻底删除。请输入绑定手机号并完成短信验证。',
+                '注销后，账号会进入 30 天恢复期。30 天内重新登录可以恢复；超过 30 天，账号和健康记录将永久删除，无法找回。为确认是你本人操作，请输入绑定手机号并完成短信验证。',
               ),
               const SizedBox(height: 12),
               TextField(

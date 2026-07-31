@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -15,9 +16,17 @@ import '../../core/network/ai_consent_api.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
 import 'cancel_account_dialog.dart';
+import 'gender_selector.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  const ProfilePage({
+    super.key,
+    this.manageAiOnOpen = false,
+    this.guideProfileOnOpen = false,
+  });
+
+  final bool manageAiOnOpen;
+  final bool guideProfileOnOpen;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -32,6 +41,13 @@ class _ProfilePageState extends State<ProfilePage> {
   final _weightController = TextEditingController();
   final _medicalHistoryController = TextEditingController();
   final _medicationsController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _profileFormSectionKey = GlobalKey();
+  final _nicknameFocusNode = FocusNode();
+  final _genderFocusNode = FocusNode();
+  final _birthYearFocusNode = FocusNode();
+  final _heightFocusNode = FocusNode();
+  final _weightFocusNode = FocusNode();
 
   String _gender = 'female';
   String _goal = 'maintain';
@@ -43,6 +59,9 @@ class _ProfilePageState extends State<ProfilePage> {
   UserProfileData? _profile;
   List<HealthIndicatorEntry> _indicators = const [];
   AccountInfo? _accountInfo;
+  bool _aiConsentOpened = false;
+  bool _profileGuideOpened = false;
+  late bool _profileGuideVisible;
 
   void _markDirty() {
     if (!_dirty && mounted) setState(() => _dirty = true);
@@ -51,6 +70,7 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
+    _profileGuideVisible = widget.guideProfileOnOpen;
     _repo.addListener(_onRepoChanged);
     _load();
     // 任意字段变化则标记为“有未保存改动”，防止后续 repo 变更覆盖用户编辑
@@ -75,6 +95,12 @@ class _ProfilePageState extends State<ProfilePage> {
     _weightController.dispose();
     _medicalHistoryController.dispose();
     _medicationsController.dispose();
+    _scrollController.dispose();
+    _nicknameFocusNode.dispose();
+    _genderFocusNode.dispose();
+    _birthYearFocusNode.dispose();
+    _heightFocusNode.dispose();
+    _weightFocusNode.dispose();
     super.dispose();
   }
 
@@ -98,7 +124,60 @@ class _ProfilePageState extends State<ProfilePage> {
     _indicators = indicators;
     _accountInfo = accountInfo;
     if (syncForm) _syncControllers(profile);
+    _profileGuideVisible =
+        widget.guideProfileOnOpen && !_isBasicProfileComplete(profile);
     setState(() => _loading = false);
+    if (widget.manageAiOnOpen && !_aiConsentOpened) {
+      _aiConsentOpened = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _manageAiConsent();
+      });
+    }
+    if (_profileGuideVisible && !_profileGuideOpened) {
+      _profileGuideOpened = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openProfileGuide());
+    }
+  }
+
+  bool _isBasicProfileComplete(UserProfileData? profile) {
+    return profile != null &&
+        profile.nickname.trim().isNotEmpty &&
+        profile.gender != 'unknown' &&
+        profile.gender.isNotEmpty &&
+        profile.birthYear > 0 &&
+        profile.heightCm > 0 &&
+        profile.weightKg > 0;
+  }
+
+  bool _isCurrentBasicProfileComplete() {
+    return _nicknameController.text.trim().isNotEmpty &&
+        _gender != 'unknown' &&
+        _birthYearController.text.trim().isNotEmpty &&
+        _heightController.text.trim().isNotEmpty &&
+        _weightController.text.trim().isNotEmpty;
+  }
+
+  Future<void> _openProfileGuide() async {
+    final sectionContext = _profileFormSectionKey.currentContext;
+    if (!mounted || sectionContext == null) return;
+    await Scrollable.ensureVisible(
+      sectionContext,
+      alignment: 0.04,
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOutCubic,
+    );
+    if (!mounted) return;
+    if (_nicknameController.text.trim().isEmpty) {
+      _nicknameFocusNode.requestFocus();
+    } else if (_gender == 'unknown') {
+      _genderFocusNode.requestFocus();
+    } else if (_birthYearController.text.isEmpty) {
+      _birthYearFocusNode.requestFocus();
+    } else if (_heightController.text.isEmpty) {
+      _heightFocusNode.requestFocus();
+    } else if (_weightController.text.isEmpty) {
+      _weightFocusNode.requestFocus();
+    }
   }
 
   void _syncControllers(UserProfileData? profile) {
@@ -123,6 +202,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _saveProfile() async {
     if (!_formKey.currentState!.validate()) return;
+    final wasGuided = _profileGuideVisible;
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -154,14 +234,161 @@ class _ProfilePageState extends State<ProfilePage> {
       }
       if (!mounted) return;
       _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
+      final profileCompleted = _isCurrentBasicProfileComplete();
+      setState(() => _profileGuideVisible = wasGuided && !profileCompleted);
       messenger.showSnackBar(
-        const SnackBar(content: Text('健康档案已保存到账号')),
+        SnackBar(
+          content: Text(
+            wasGuided && profileCompleted ? '健康档案已完善，可以开始生成计划了' : '健康档案已保存',
+          ),
+        ),
       );
     } catch (_) {
       if (!mounted) return;
       messenger.showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _pickBirthYear() async {
+    final currentYear = DateTime.now().year;
+    final firstYear = currentYear - HealthRanges.maxAge;
+    final lastYear = currentYear - HealthRanges.minAge;
+    final currentValue = int.tryParse(_birthYearController.text);
+    final initialYear =
+        (currentValue ?? currentYear - 30).clamp(firstYear, lastYear).toInt();
+    final index = await _showWheelPicker(
+      title: '选择出生年份',
+      itemCount: lastYear - firstYear + 1,
+      initialIndex: initialYear - firstYear,
+      itemLabel: (index) => '${firstYear + index} 年',
+      helperText: (index) => '${currentYear - firstYear - index} 岁',
+    );
+    if (index != null) {
+      _birthYearController.text = '${firstYear + index}';
+    }
+  }
+
+  Future<void> _pickHeight() async {
+    final minimum = HealthRanges.minHeightCm.round();
+    final maximum = HealthRanges.maxHeightCm.round();
+    final currentValue = double.tryParse(_heightController.text)?.round();
+    final initialValue = (currentValue ?? 170).clamp(minimum, maximum).toInt();
+    final index = await _showWheelPicker(
+      title: '选择身高',
+      itemCount: maximum - minimum + 1,
+      initialIndex: initialValue - minimum,
+      itemLabel: (index) => '${minimum + index} cm',
+      helperText: (index) {
+        final weight = double.tryParse(_weightController.text);
+        if (weight == null) return '滑动选择身高';
+        final meters = (minimum + index) / 100;
+        return '当前 BMI ${(weight / (meters * meters)).toStringAsFixed(1)}';
+      },
+    );
+    if (index != null) {
+      _heightController.text = (minimum + index).toStringAsFixed(1);
+    }
+  }
+
+  Future<void> _pickWeight() async {
+    final minimum = HealthRanges.minWeightKg;
+    final maximum = HealthRanges.maxWeightKg;
+    final itemCount = ((maximum - minimum) * 10).round() + 1;
+    final currentValue = double.tryParse(_weightController.text);
+    final initialValue =
+        (currentValue ?? 65).clamp(minimum, maximum).toDouble();
+    final index = await _showWheelPicker(
+      title: '选择体重',
+      itemCount: itemCount,
+      initialIndex: ((initialValue - minimum) * 10).round(),
+      itemLabel: (index) => '${(minimum + index / 10).toStringAsFixed(1)} kg',
+      helperText: (index) {
+        final height = double.tryParse(_heightController.text);
+        if (height == null) return '滑动选择体重';
+        final meters = height / 100;
+        final weight = minimum + index / 10;
+        return '当前 BMI ${(weight / (meters * meters)).toStringAsFixed(1)}';
+      },
+    );
+    if (index != null) {
+      _weightController.text = (minimum + index / 10).toStringAsFixed(1);
+    }
+  }
+
+  Future<int?> _showWheelPicker({
+    required String title,
+    required int itemCount,
+    required int initialIndex,
+    required String Function(int index) itemLabel,
+    required String Function(int index) helperText,
+  }) async {
+    var selectedIndex = initialIndex;
+    final scrollController =
+        FixedExtentScrollController(initialItem: initialIndex);
+    try {
+      return await showModalBottomSheet<int>(
+        context: context,
+        useSafeArea: true,
+        builder: (sheetContext) => StatefulBuilder(
+          builder: (context, setSheetState) => SizedBox(
+            height: 340,
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      child: const Text('取消'),
+                    ),
+                    Expanded(
+                      child: Text(
+                        title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () =>
+                          Navigator.pop(sheetContext, selectedIndex),
+                      child: const Text('完成'),
+                    ),
+                  ],
+                ),
+                Text(
+                  helperText(selectedIndex),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: CupertinoPicker.builder(
+                    scrollController: scrollController,
+                    itemExtent: 44,
+                    childCount: itemCount,
+                    onSelectedItemChanged: (index) =>
+                        setSheetState(() => selectedIndex = index),
+                    itemBuilder: (context, index) => Center(
+                      child: Text(
+                        itemLabel(index),
+                        style: const TextStyle(fontSize: 20),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } finally {
+      scrollController.dispose();
     }
   }
 
@@ -183,8 +410,8 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) => AlertDialog(
         title: Text(accepted ? '管理 AI 数据处理授权' : 'AI 数据处理说明'),
         content: Text(accepted
-            ? '你已同意云端 AI 数据处理。撤回后，AI 问诊、7 天计划和报告识别将停止；账号中的健康记录不受影响。'
-            : '使用 AI 问诊、7 天计划或报告识别时，你主动提交的必要健康信息或报告图片会由本服务的受控服务器短暂转发给已配置的千问、豆包、智谱 GLM 或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
+            ? '你已同意云端 AI 数据处理。撤回后，AI 健康顾问、智能计划、报告识别、餐食识别和图像分析将停止；账号中的健康记录不受影响。'
+            : '使用 AI 健康顾问、智能计划、报告识别、餐食识别或图像分析时，你主动提交的必要健康信息或图片会由本服务的受控服务器短暂转发给已配置的千问、豆包、智谱 GLM 或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context), child: const Text('取消')),
@@ -244,6 +471,7 @@ class _ProfilePageState extends State<ProfilePage> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        controller: _scrollController,
         padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
         children: [
           _OverviewCard(profile: profile, indicators: _indicators),
@@ -252,7 +480,7 @@ class _ProfilePageState extends State<ProfilePage> {
             child: ListTile(
               leading: const Icon(Icons.psychology_outlined),
               title: const Text('AI 数据处理授权'),
-              subtitle: const Text('管理云端 AI 问诊、计划和报告识别授权'),
+              subtitle: const Text('管理 AI 顾问、计划、报告、餐食和图像分析授权'),
               trailing: const Icon(Icons.chevron_right),
               onTap: _manageAiConsent,
             ),
@@ -280,6 +508,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           const SizedBox(height: 16),
           LayoutBuilder(
+            key: _profileFormSectionKey,
             builder: (context, constraints) {
               final wide = constraints.maxWidth >= 960;
               final form = Form(
@@ -287,8 +516,41 @@ class _ProfilePageState extends State<ProfilePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (_profileGuideVisible) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                            ),
+                            const SizedBox(width: 10),
+                            const Expanded(
+                              child: Text(
+                                '先完善性别、出生年份、身高和体重，保存后即可生成健康计划。',
+                                style: TextStyle(
+                                  height: 1.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     TextFormField(
                       controller: _nicknameController,
+                      focusNode: _nicknameFocusNode,
                       decoration: const InputDecoration(labelText: '昵称'),
                       validator: (value) =>
                           value == null || value.trim().isEmpty
@@ -296,27 +558,26 @@ class _ProfilePageState extends State<ProfilePage> {
                               : null,
                     ),
                     const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      // ignore: deprecated_member_use
+                    GenderSelector(
                       value: _gender,
-                      decoration: const InputDecoration(labelText: '性别'),
-                      items: const [
-                        DropdownMenuItem(value: 'female', child: Text('女')),
-                        DropdownMenuItem(value: 'male', child: Text('男')),
-                        DropdownMenuItem(value: 'unknown', child: Text('未填写')),
-                      ],
-                      onChanged: (value) =>
-                          setState(() => _gender = value ?? 'unknown'),
+                      focusNode: _genderFocusNode,
+                      onChanged: (value) {
+                        setState(() {
+                          _gender = value;
+                          _dirty = true;
+                        });
+                      },
                     ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
-                          child: TextFormField(
+                          child: _ProfileNumberField(
                             controller: _birthYearController,
+                            focusNode: _birthYearFocusNode,
+                            label: '出生年份',
                             keyboardType: TextInputType.number,
-                            decoration:
-                                const InputDecoration(labelText: '出生年份'),
+                            onTap: wide ? null : _pickBirthYear,
                             validator: (value) {
                               final year = int.tryParse(value?.trim() ?? '');
                               final currentYear = DateTime.now().year;
@@ -331,12 +592,13 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: TextFormField(
+                          child: _ProfileNumberField(
                             controller: _heightController,
+                            focusNode: _heightFocusNode,
                             keyboardType: const TextInputType.numberWithOptions(
                                 decimal: true),
-                            decoration:
-                                const InputDecoration(labelText: '身高（cm）'),
+                            label: '身高（cm）',
+                            onTap: wide ? null : _pickHeight,
                             validator: (value) {
                               final height =
                                   double.tryParse(value?.trim() ?? '');
@@ -352,11 +614,13 @@ class _ProfilePageState extends State<ProfilePage> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    TextFormField(
+                    _ProfileNumberField(
                       controller: _weightController,
+                      focusNode: _weightFocusNode,
                       keyboardType:
                           const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: '体重（kg）'),
+                      label: '体重（kg）',
+                      onTap: wide ? null : _pickWeight,
                       validator: (value) {
                         final weight = double.tryParse(value?.trim() ?? '');
                         if (weight == null ||
@@ -550,7 +814,7 @@ class _ProfilePageState extends State<ProfilePage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('退出登录'),
-        content: const Text('退出后本机不保留健康业务数据，再次登录同一账号会从服务器加载。'),
+        content: const Text('退出后，这台设备上的健康记录会被清除。再次登录同一账号后，记录会自动恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -586,6 +850,41 @@ class _ProfilePageState extends State<ProfilePage> {
     await UserSession.instance.clear();
     sl<ApiClient>().setAccessToken(null);
     if (mounted) context.go('/login');
+  }
+}
+
+class _ProfileNumberField extends StatelessWidget {
+  const _ProfileNumberField({
+    required this.controller,
+    required this.label,
+    required this.keyboardType,
+    required this.validator,
+    this.onTap,
+    this.focusNode,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final TextInputType keyboardType;
+  final FormFieldValidator<String> validator;
+  final VoidCallback? onTap;
+  final FocusNode? focusNode;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      focusNode: focusNode,
+      keyboardType: keyboardType,
+      readOnly: onTap != null,
+      showCursor: onTap == null,
+      onTap: onTap,
+      decoration: InputDecoration(
+        labelText: label,
+        suffixIcon: onTap == null ? null : const Icon(Icons.unfold_more),
+      ),
+      validator: validator,
+    );
   }
 }
 
@@ -706,7 +1005,7 @@ class _OverviewCard extends StatelessWidget {
 
     return _Panel(
       title: '档案概览',
-      subtitle: '本地资料与最近记录',
+      subtitle: '账号档案与最近记录',
       child: LayoutBuilder(
         builder: (context, constraints) {
           final columns = constraints.maxWidth >= 900 ? 4 : 2;

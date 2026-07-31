@@ -128,34 +128,72 @@ class _AppShellState extends State<AppShell> {
     return AppBar(
       title: const Text('健康重启计划'),
       actions: [
-        IconButton(
-          tooltip: '报告识别',
-          icon: const Icon(Icons.document_scanner_outlined),
-          onPressed: () => context.push('/report'),
-        ),
-        IconButton(
-          tooltip: 'AI 健康顾问',
-          icon: const Icon(Icons.psychology_outlined),
-          onPressed: () => context.push('/chat'),
-        ),
         PopupMenuButton<String>(
           tooltip: '更多操作',
+          position: PopupMenuPosition.under,
+          offset: const Offset(0, 8),
           onSelected: (value) {
-            if (value == 'theme') {
-              _showThemePicker(context);
-            } else if (value == 'onboarding') {
-              context.push('/onboarding');
+            switch (value) {
+              case 'profile':
+                context.go('/profile');
+                break;
+              case 'indicator':
+                context.push('/indicators/input');
+                break;
+              case 'chat':
+                context.push('/chat');
+                break;
+              case 'report':
+                context.push('/report');
+                break;
+              case 'aiConsent':
+                context.go('/profile?manageAi=1');
+                break;
+              case 'theme':
+                _showThemePicker(context);
+                break;
+              case 'onboarding':
+                context.push('/onboarding');
+                break;
+              case 'privacy':
+                context.push('/privacy-policy');
+                break;
             }
           },
-          itemBuilder: (context) => const [
-            PopupMenuItem(value: 'theme', child: Text('外观主题')),
-            PopupMenuItem(value: 'onboarding', child: Text('使用引导')),
+          itemBuilder: (context) => [
+            _appMenuItem('profile', Icons.assignment_ind_outlined, '健康档案'),
+            _appMenuItem('indicator', Icons.add_chart_outlined, '录入健康指标'),
+            _appMenuItem('report', Icons.document_scanner_outlined, '报告识别'),
+            _appMenuItem('chat', Icons.psychology_outlined, 'AI 健康顾问'),
+            const PopupMenuDivider(),
+            _appMenuItem('theme', Icons.palette_outlined, '外观主题'),
+            _appMenuItem('onboarding', Icons.help_outline, '使用引导'),
+            _appMenuItem('privacy', Icons.privacy_tip_outlined, '隐私政策'),
+            _appMenuItem(
+                'aiConsent', Icons.admin_panel_settings_outlined, 'AI 数据处理授权'),
           ],
         ),
         const SizedBox(width: 8),
       ],
     );
   }
+}
+
+PopupMenuItem<String> _appMenuItem(
+  String value,
+  IconData icon,
+  String label,
+) {
+  return PopupMenuItem(
+    value: value,
+    child: Row(
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 12),
+        Text(label),
+      ],
+    ),
+  );
 }
 
 Future<void> _showThemePicker(BuildContext context) {

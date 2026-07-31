@@ -8,19 +8,22 @@ import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/auth/set_password_page.dart';
 import '../features/auth/onboarding_page.dart';
-import '../features/chat/chat_page.dart';
-import '../features/clock/clock_page.dart';
-import '../features/home/home_page.dart';
-import '../features/indicators/indicator_input_page.dart';
-import '../features/indicators/indicator_list_page.dart';
-import '../features/meals/meal_record_page.dart';
-import '../features/plan/plan_page.dart';
-import '../features/profile/profile_page.dart';
+import '../features/chat/chat_page.dart' deferred as chat;
+import '../features/clock/clock_page.dart' deferred as clock;
+import '../features/home/home_page.dart' deferred as home;
+import '../features/indicators/indicator_input_page.dart'
+    deferred as indicator_input;
+import '../features/indicators/indicator_list_page.dart'
+    deferred as indicator_list;
+import '../features/meals/meal_record_page.dart' deferred as meals;
+import '../features/meals/meal_input_args.dart';
+import '../features/plan/plan_page.dart' deferred as plan;
+import '../features/profile/profile_page.dart' deferred as profile;
 import '../features/privacy/privacy_policy_page.dart';
-import '../features/report/report_page.dart';
-import '../features/self_check/self_check_page.dart';
+import '../features/report/report_page.dart' deferred as report;
+import '../features/self_check/self_check_page.dart' deferred as self_check;
 import '../features/shell/app_shell.dart';
-import '../features/stats/stats_page.dart';
+import '../features/stats/stats_page.dart' deferred as stats;
 
 class AppRouter {
   AppRouter._();
@@ -97,67 +100,125 @@ class AppRouter {
           GoRoute(
             path: '/home',
             name: '/home',
-            pageBuilder: (_, state) => _shellPage(state, const HomePage()),
+            pageBuilder: (_, state) => _shellPage(
+              state,
+              _DeferredPage(
+                load: home.loadLibrary,
+                builder: () => home.HomePage(),
+              ),
+            ),
           ),
           GoRoute(
             path: '/profile',
-            pageBuilder: (_, state) => _shellPage(state, const ProfilePage()),
+            pageBuilder: (_, state) => _shellPage(
+              state,
+              _DeferredPage(
+                load: profile.loadLibrary,
+                builder: () => profile.ProfilePage(
+                  manageAiOnOpen: state.uri.queryParameters['manageAi'] == '1',
+                  guideProfileOnOpen:
+                      state.uri.queryParameters['guideProfile'] == '1',
+                ),
+              ),
+            ),
           ),
           GoRoute(
             path: '/plan',
             name: '/plan',
-            pageBuilder: (_, state) => _shellPage(state, const PlanPage()),
+            pageBuilder: (_, state) => _shellPage(
+              state,
+              _DeferredPage(
+                load: plan.loadLibrary,
+                builder: () => plan.PlanPage(),
+              ),
+            ),
           ),
           GoRoute(
             path: '/clock',
             name: '/clock',
-            pageBuilder: (_, state) => _shellPage(state, const ClockPage()),
+            pageBuilder: (_, state) => _shellPage(
+              state,
+              _DeferredPage(
+                load: clock.loadLibrary,
+                builder: () => clock.ClockPage(),
+              ),
+            ),
           ),
           GoRoute(
             path: '/stats',
-            pageBuilder: (_, state) => _shellPage(state, const StatsPage()),
+            pageBuilder: (_, state) => _shellPage(
+              state,
+              _DeferredPage(
+                load: stats.loadLibrary,
+                builder: () => stats.StatsPage(),
+              ),
+            ),
           ),
         ],
       ),
       GoRoute(
         path: '/indicators',
         name: '/indicators',
-        pageBuilder: (_, state) => _page(state, const IndicatorListPage()),
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: indicator_list.loadLibrary,
+            builder: () => indicator_list.IndicatorListPage(),
+          ),
+        ),
       ),
       GoRoute(
         path: '/indicators/input',
         name: '/indicators/input',
         pageBuilder: (_, state) {
           final defaultType = state.extra as String?;
-          return _page(state, IndicatorInputPage(defaultType: defaultType));
+          return _page(
+            state,
+            _DeferredPage(
+              load: indicator_input.loadLibrary,
+              builder: () =>
+                  indicator_input.IndicatorInputPage(defaultType: defaultType),
+            ),
+          );
         },
       ),
       GoRoute(
         path: '/indicators/edit/:id',
         pageBuilder: (_, state) {
           final existing = state.extra as HealthIndicatorEntry?;
-          return _page(state, IndicatorInputPage(existing: existing));
+          return _page(
+            state,
+            _DeferredPage(
+              load: indicator_input.loadLibrary,
+              builder: () =>
+                  indicator_input.IndicatorInputPage(existing: existing),
+            ),
+          );
         },
       ),
       GoRoute(
         path: '/meals/input',
         pageBuilder: (_, state) {
           final extra = state.extra;
-          if (extra is MealRecordData) {
-            return _page(state, MealRecordPage(record: extra));
-          }
-          if (extra is MealInputArgs) {
-            return _page(
-              state,
-              MealRecordPage(
-                mealType: extra.mealType,
-                eatenDate: extra.eatenDate,
-              ),
-            );
-          }
           return _page(
             state,
-            MealRecordPage(mealType: extra is String ? extra : 'lunch'),
+            _DeferredPage(
+              load: meals.loadLibrary,
+              builder: () {
+                if (extra is MealRecordData) {
+                  return meals.MealRecordPage(record: extra);
+                }
+                if (extra is MealInputArgs) {
+                  return meals.MealRecordPage(
+                    mealType: extra.mealType,
+                    eatenDate: extra.eatenDate,
+                  );
+                }
+                return meals.MealRecordPage(
+                  mealType: extra is String ? extra : 'lunch',
+                );
+              },
+            ),
           );
         },
       ),
@@ -165,7 +226,13 @@ class AppRouter {
         path: '/meals/detail/:id',
         pageBuilder: (_, state) {
           final id = int.tryParse(state.pathParameters['id'] ?? '') ?? 0;
-          return _page(state, MealDetailPage(id: id));
+          return _page(
+            state,
+            _DeferredPage(
+              load: meals.loadLibrary,
+              builder: () => meals.MealDetailPage(id: id),
+            ),
+          );
         },
       ),
       GoRoute(
@@ -190,12 +257,24 @@ class AppRouter {
       ),
       GoRoute(
         path: '/report',
-        pageBuilder: (_, state) => _page(state, const ReportPage()),
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: report.loadLibrary,
+            builder: () => report.ReportPage(),
+          ),
+        ),
       ),
       GoRoute(
         path: '/self-check',
         name: '/self-check',
-        pageBuilder: (_, state) => _page(state, const SelfCheckPage()),
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: self_check.loadLibrary,
+            builder: () => self_check.SelfCheckPage(),
+          ),
+        ),
       ),
       GoRoute(
         path: '/privacy-policy',
@@ -226,8 +305,54 @@ class AppRouter {
       GoRoute(
         path: '/chat',
         name: '/chat',
-        pageBuilder: (_, state) => _page(state, const ChatPage()),
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: chat.loadLibrary,
+            builder: () => chat.ChatPage(),
+          ),
+        ),
       ),
     ],
   );
+}
+
+class _DeferredPage extends StatefulWidget {
+  const _DeferredPage({
+    required this.load,
+    required this.builder,
+  });
+
+  final Future<void> Function() load;
+  final Widget Function() builder;
+
+  @override
+  State<_DeferredPage> createState() => _DeferredPageState();
+}
+
+class _DeferredPageState extends State<_DeferredPage> {
+  late Future<void> _loading = widget.load();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: _loading,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done &&
+            !snapshot.hasError) {
+          return widget.builder();
+        }
+        if (snapshot.hasError) {
+          return Center(
+            child: FilledButton.icon(
+              onPressed: () => setState(() => _loading = widget.load()),
+              icon: const Icon(Icons.refresh),
+              label: const Text('加载失败，点击重试'),
+            ),
+          );
+        }
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+  }
 }

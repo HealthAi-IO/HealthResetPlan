@@ -1,5 +1,5 @@
 #define AppName "健康重启计划"
-#define AppVersion "1.0.10"
+#define AppVersion "1.0.12"
 #define AppPublisher "健康重启计划"
 #define AppExeName "健康重启计划.exe"
 
@@ -16,6 +16,8 @@ VersionInfoProductName={#AppName}
 DefaultDirName={localappdata}\Programs\HealthResetPlan
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+DisableDirPage=no
+UsePreviousAppDir=yes
 PrivilegesRequired=lowest
 OutputDir=..\..\..\outputs
 OutputBaseFilename=健康重启计划-Windows-安装版-{#AppVersion}
@@ -40,6 +42,7 @@ Source: "..\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ign
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{autoprograms}\卸载 {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
@@ -56,7 +59,7 @@ begin
   DeleteDataCheckBox.Left := UninstallProgressForm.StatusLabel.Left;
   DeleteDataCheckBox.Top := UninstallProgressForm.StatusLabel.Top + 42;
   DeleteDataCheckBox.Width := UninstallProgressForm.StatusLabel.Width;
-  DeleteDataCheckBox.Caption := '同时删除本机健康数据和登录信息';
+  DeleteDataCheckBox.Caption := '同时删除本机登录信息和缓存';
   DeleteDataCheckBox.Checked := False;
   Result := True;
 end;
@@ -65,9 +68,8 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and DeleteDataCheckBox.Checked then
   begin
-    DeleteFile(ExpandConstant('{userdocs}\health_reset_plan.sqlite'));
-    DeleteFile(ExpandConstant('{userdocs}\health_reset_plan.sqlite-wal'));
-    DeleteFile(ExpandConstant('{userdocs}\health_reset_plan.sqlite-shm'));
     DelTree(ExpandConstant('{userappdata}\health_reset_plan'), True, True, True);
+    DelTree(ExpandConstant('{userappdata}\健康重启计划\健康重启计划'), True, True, True);
+    DelTree(ExpandConstant('{localappdata}\健康重启计划\健康重启计划'), True, True, True);
   end;
 end;

@@ -272,7 +272,9 @@ class _SqfliteAppDatabase extends AppDatabase {
   Future<void> _loadOnline() async {
     final api = _onlineApi;
     if (api == null) return;
+    final space = _activeSpace;
     final snapshot = await api.load();
+    if (!identical(_onlineApi, api) || _activeSpace != space) return;
     final db = await _ensureDb();
     _persisting = true;
     try {
@@ -282,7 +284,7 @@ class _SqfliteAppDatabase extends AppDatabase {
           for (final row in snapshot.tables[table] ?? const []) {
             await txn.insert(
               table,
-              {...row, 'space_id': _activeSpace},
+              {...row, 'space_id': space},
               conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
             );
           }

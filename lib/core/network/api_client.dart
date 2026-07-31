@@ -86,7 +86,13 @@ class ApiClient {
     DioException error,
     ErrorInterceptorHandler handler,
   ) async {
-    if (!_shouldRefresh(error)) {
+    if (!_isProtectedUnauthorized(error)) {
+      handler.next(error);
+      return;
+    }
+
+    if (!_canRefresh(error)) {
+      await _clearSessionAfterRefreshFailure();
       handler.next(error);
       return;
     }
@@ -110,7 +116,7 @@ class ApiClient {
     }
   }
 
-  bool _shouldRefresh(DioException error) {
+  bool _isProtectedUnauthorized(DioException error) {
     final status = error.response?.statusCode;
     if (status != 401) return false;
     if (error.requestOptions.extra[_skipAuthRefreshKey] == true) return false;
@@ -124,6 +130,11 @@ class ApiClient {
       return false;
     }
 
+    return true;
+  }
+
+  bool _canRefresh(DioException error) {
+    if (!_isProtectedUnauthorized(error)) return false;
     final refreshToken = UserSession.instance.refreshToken;
     return refreshToken != null && refreshToken.isNotEmpty;
   }

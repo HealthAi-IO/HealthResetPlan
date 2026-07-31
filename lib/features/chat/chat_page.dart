@@ -31,13 +31,12 @@ class _ChatPageState extends State<ChatPage> {
   ChatSession? _currentSession;
   List<_UiMessage> _messages = [];
 
-  String _selectedProvider = 'auto';
+  String _selectedProvider = 'doubao';
   bool _sending = false;
   bool _loadingHistory = true;
   UserProfileData? _profile;
 
   static const _providers = [
-    _ProviderOption('auto', '自动择优', 'AI'),
     _ProviderOption('deepseek', 'DeepSeek', '🤖'),
     _ProviderOption('doubao', '豆包', '🫘'),
     _ProviderOption('glm', '智谱 GLM', 'GLM'),
@@ -398,11 +397,10 @@ class _ChatPageState extends State<ChatPage> {
     return sessions.firstWhere((s) => s.id == id);
   }
 
-  String? get _apiProvider =>
-      _selectedProvider == 'auto' ? null : _selectedProvider;
+  String get _apiProvider => _selectedProvider;
 
   String _normalizeProvider(String provider) {
-    return _providers.any((p) => p.id == provider) ? provider : 'auto';
+    return _providers.any((p) => p.id == provider) ? provider : 'doubao';
   }
 
   void _scrollToBottom() {

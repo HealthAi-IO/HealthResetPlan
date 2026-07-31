@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -14,17 +12,11 @@ import '../../core/network/ai_api.dart';
 import '../../core/network/file_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import 'macro_ring.dart';
 
 const _proteinColor = Color(0xFF19B43B);
 const _carbColor = Color(0xFFF59E0B);
 const _fatColor = Color(0xFFFACC15);
-
-class MealInputArgs {
-  const MealInputArgs({required this.mealType, required this.eatenDate});
-
-  final String mealType;
-  final DateTime eatenDate;
-}
 
 class MealRecordPage extends StatefulWidget {
   const MealRecordPage({
@@ -892,91 +884,6 @@ class _NutritionTable extends StatelessWidget {
       ]),
     );
   }
-}
-
-class MacroRing extends StatelessWidget {
-  const MacroRing({
-    super.key,
-    required this.calories,
-    required this.proteinG,
-    required this.carbsG,
-    required this.fatG,
-    this.size = 98,
-  });
-
-  final double calories;
-  final double proteinG;
-  final double carbsG;
-  final double fatG;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(alignment: Alignment.center, children: [
-        CustomPaint(
-          size: Size(size, size),
-          painter: _MacroRingPainter(
-            protein: proteinG,
-            carbs: carbsG,
-            fat: fatG,
-          ),
-        ),
-        Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(calories < 0 ? '--' : calories.round().toString(),
-              style:
-                  const TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
-          const Text('kcal', style: TextStyle(color: AppTheme.muted)),
-        ]),
-      ]),
-    );
-  }
-}
-
-class _MacroRingPainter extends CustomPainter {
-  const _MacroRingPainter({
-    required this.protein,
-    required this.carbs,
-    required this.fat,
-  });
-
-  final double protein;
-  final double carbs;
-  final double fat;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    final stroke = size.width * 0.095;
-    final bg = Paint()
-      ..color = const Color(0xFFE5E7EB)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = stroke
-      ..strokeCap = StrokeCap.round;
-    canvas.drawArc(rect.deflate(stroke), -pi / 2, pi * 2, false, bg);
-    final total = max(1, protein + carbs + fat);
-    var start = -pi / 2;
-    for (final item in [
-      (protein, _proteinColor),
-      (carbs, _carbColor),
-      (fat, _fatColor),
-    ]) {
-      final sweep = pi * 2 * item.$1 / total;
-      final paint = Paint()
-        ..color = item.$2
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.butt;
-      canvas.drawArc(rect.deflate(stroke), start, sweep, false, paint);
-      start += sweep;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _MacroRingPainter old) =>
-      old.protein != protein || old.carbs != carbs || old.fat != fat;
 }
 
 class _SmallNutrientRing extends StatelessWidget {

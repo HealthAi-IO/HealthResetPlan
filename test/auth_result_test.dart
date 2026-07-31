@@ -24,4 +24,11 @@ void main() {
 
     expect(result.hasPassword, isFalse);
   });
+
+  test('account recovery errors preserve their business code', () {
+    const error = AuthApiException(40302, '账号处于恢复期');
+
+    expect(authErrorCode(error), 40302);
+    expect(friendlyAuthError(error), '账号处于恢复期');
+  });
 }

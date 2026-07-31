@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/user_session.dart';
@@ -91,7 +92,18 @@ class _RegisterPageState extends State<RegisterPage> {
         passwordPromptRequired: false,
       );
       sl<ApiClient>().setAccessToken(result.accessToken);
-      await sl<OnlineDataService>().bindToAccount(result.userId);
+      try {
+        await sl<OnlineDataService>().bindToAccount(result.userId);
+      } catch (_) {
+        await UserSession.instance.signOut();
+        sl<ApiClient>().setAccessToken(null);
+        rethrow;
+      }
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(
+        UserSession.welcomeLetterPendingUserKey,
+        result.userId,
+      );
       if (mounted) context.go(widget.args.returnTo);
     } catch (error) {
       if (mounted) setState(() => _error = friendlyAuthError(error));

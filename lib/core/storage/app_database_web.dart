@@ -173,10 +173,12 @@ class _WebAppDatabase extends AppDatabase {
   Future<void> _loadOnline() async {
     final api = _onlineApi;
     if (api == null) return;
+    final space = _activeSpace;
     final snapshot = await api.load();
+    if (!identical(_onlineApi, api) || _activeSpace != space) return;
     for (final table in _onlineTables) {
       _data[table] = (snapshot.tables[table] ?? const [])
-          .map((row) => {...row, 'space_id': _activeSpace})
+          .map((row) => {...row, 'space_id': space})
           .toList();
     }
     _onlineVersion = snapshot.version;

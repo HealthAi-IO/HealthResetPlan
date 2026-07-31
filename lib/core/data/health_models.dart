@@ -883,7 +883,19 @@ class HealthDashboardData {
   }
 
   double get todayCompletion {
-    return (todayClockCount / 4).clamp(0, 1).toDouble();
+    final now = DateTime.now();
+    final completedTypes = clockRecords
+        .where((item) {
+          final time = item.clockTime;
+          return item.status == 'done' &&
+              time.year == now.year &&
+              time.month == now.month &&
+              time.day == now.day;
+        })
+        .map((item) => item.type)
+        .where({'meal', 'exercise', 'medicine', 'weight'}.contains)
+        .toSet();
+    return (completedTypes.length / 4).clamp(0, 1).toDouble();
   }
 
   List<double> weightTrend({int limit = 8}) {

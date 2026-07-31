@@ -12,14 +12,6 @@ class AppTheme {
 
   static const Color healthGreen = primaryBlue;
   static const Color techBlue = deepBlue;
-  static const List<String> fontFamilyFallback = [
-    'PingFang SC',
-    'Hiragino Sans GB',
-    'Microsoft YaHei',
-    'Noto Sans SC',
-    'Roboto',
-  ];
-
   static Color accent(BuildContext context) =>
       Theme.of(context).colorScheme.primary;
 
@@ -67,7 +59,6 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       fontFamily: 'NotoSansSC',
-      fontFamilyFallback: fontFamilyFallback,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: pageBg,
       pageTransitionsTheme: const PageTransitionsTheme(
@@ -176,7 +167,6 @@ class AppTheme {
   static ThemeData get dark => ThemeData(
         useMaterial3: true,
         fontFamily: 'NotoSansSC',
-        fontFamilyFallback: fontFamilyFallback,
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
           seedColor: healthGreen,
