@@ -25,12 +25,25 @@ class ReminderScheduler {
   final Set<String> _inAppReminderKeys = <String>{};
   final StreamController<ReminderData> _inAppReminderController =
       StreamController<ReminderData>.broadcast();
+  final StreamController<int> _notificationTapController =
+      StreamController<int>.broadcast();
+  int? _pendingNotificationReminderId;
 
-  static const _channelId = 'hrp_reminders';
-  static const _channelName = '健康提醒';
-  static const _channelDesc = '饮食、运动、用药、称重、饮水定时提醒';
+  static const _dailyChannelId = 'hrp_daily_reminders_v2';
+  static const _dailyChannelName = '每日健康提醒';
+  static const _dailyChannelDesc = '每日饮食、运动、用药、称重和饮水提醒';
+  static const _planChannelId = 'hrp_reminders';
+  static const _planChannelName = '计划提醒';
+  static const _planChannelDesc = '健康计划临时提醒';
 
   Stream<ReminderData> get reminderEvents => _inAppReminderController.stream;
+  Stream<int> get notificationTapEvents => _notificationTapController.stream;
+
+  int? takePendingNotificationReminderId() {
+    final value = _pendingNotificationReminderId;
+    _pendingNotificationReminderId = null;
+    return value;
+  }
 
   bool get _usesInAppReminders =>
       kIsWeb || defaultTargetPlatform == TargetPlatform.windows;
@@ -72,31 +85,75 @@ class ReminderScheduler {
       linux: linux,
     );
 
-    await _plugin.initialize(settings);
+    await _plugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse: _handleNotificationResponse,
+    );
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _dailyChannelId,
+          _dailyChannelName,
+          description: _dailyChannelDesc,
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+        ),
+      );
+      await androidPlugin?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _planChannelId,
+          _planChannelName,
+          description: _planChannelDesc,
+          importance: Importance.defaultImportance,
+        ),
+      );
+    }
     _initialized = true;
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    final launchResponse = launchDetails?.notificationResponse;
+    if (launchDetails?.didNotificationLaunchApp == true &&
+        launchResponse != null) {
+      _handleNotificationResponse(launchResponse);
+    }
   }
 
   // ── 权限请求 ────────────────────────────────────────────────
 
-  Future<void> requestPermission() async {
-    if (!_supported || !_initialized) return;
+  Future<bool?> requestPermission() async {
+    if (!_supported || !_initialized) return true;
 
     if (defaultTargetPlatform == TargetPlatform.android) {
-      await _plugin
+      return _plugin
           .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>()
           ?.requestNotificationsPermission();
     } else if (defaultTargetPlatform == TargetPlatform.iOS) {
-      await _plugin
+      return _plugin
           .resolvePlatformSpecificImplementation<
               IOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(alert: true, badge: true, sound: true);
     } else if (defaultTargetPlatform == TargetPlatform.macOS) {
-      await _plugin
+      return _plugin
           .resolvePlatformSpecificImplementation<
               MacOSFlutterLocalNotificationsPlugin>()
           ?.requestPermissions(alert: true, badge: true, sound: true);
     }
+    return true;
+  }
+
+  Future<bool?> notificationsEnabled() async {
+    if (_usesInAppReminders || !_supported) return true;
+    if (!_initialized) await initialize();
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return _plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.areNotificationsEnabled();
+    }
+    return null;
   }
 
   // ── 同步全部提醒 ─────────────────────────────────────────────
@@ -173,23 +230,49 @@ class ReminderScheduler {
       reminder.label,
       body,
       scheduled,
-      _buildDetails(),
+      _buildDetails(reminder),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
       uiLocalNotificationDateInterpretation:
           UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: matchDateTimeComponents,
+      payload: 'reminder:${reminder.id}',
     );
   }
 
-  NotificationDetails _buildDetails() {
-    return const NotificationDetails(
-      android: AndroidNotificationDetails(
-        _channelId,
-        _channelName,
-        channelDescription: _channelDesc,
-        importance: Importance.defaultImportance,
-        priority: Priority.defaultPriority,
-      ),
+  void _handleNotificationResponse(NotificationResponse response) {
+    final payload = response.payload ?? '';
+    if (!payload.startsWith('reminder:')) return;
+    final reminderId = int.tryParse(payload.substring('reminder:'.length));
+    if (reminderId == null) return;
+    if (_notificationTapController.hasListener) {
+      _notificationTapController.add(reminderId);
+    } else {
+      _pendingNotificationReminderId = reminderId;
+    }
+  }
+
+  NotificationDetails _buildDetails(ReminderData reminder) {
+    final android = reminder.channel == 'local'
+        ? const AndroidNotificationDetails(
+            _dailyChannelId,
+            _dailyChannelName,
+            channelDescription: _dailyChannelDesc,
+            importance: Importance.high,
+            priority: Priority.high,
+            playSound: true,
+            enableVibration: true,
+            category: AndroidNotificationCategory.reminder,
+            visibility: NotificationVisibility.public,
+          )
+        : const AndroidNotificationDetails(
+            _planChannelId,
+            _planChannelName,
+            channelDescription: _planChannelDesc,
+            importance: Importance.defaultImportance,
+            priority: Priority.defaultPriority,
+          );
+    return NotificationDetails(
+      android: android,
       iOS: DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: false,

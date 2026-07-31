@@ -2,14 +2,6 @@
 {{flutter_build_config}}
 
 (async () => {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker
-      .getRegistrations()
-      .then((registrations) =>
-        Promise.all(registrations.map((registration) => registration.unregister())),
-      );
-  }
-
   const engineConfig = {
     canvasKitBaseUrl: 'canvaskit/',
     fontFallbackBaseUrl: 'font-fallback/',

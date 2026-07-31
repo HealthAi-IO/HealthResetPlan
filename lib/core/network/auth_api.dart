@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 
 import 'api_client.dart';
@@ -394,7 +396,11 @@ String friendlyAuthError(Object e) {
   if (e is DioException) {
     final data = e.response?.data;
     if (data is Map && data['message'] != null) {
-      return data['message'].toString();
+      final message = data['message'].toString();
+      if (message.contains('trajectory')) {
+        return '滑动过快，请慢一点再试';
+      }
+      return message;
     }
     if (e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.connectionError) {
@@ -405,6 +411,7 @@ String friendlyAuthError(Object e) {
     }
     return '请求失败：${e.type.name}';
   }
+  if (e is TimeoutException) return '安全验证加载超时，请点击刷新重试';
   if (e is StateError) return e.message;
   return e.toString();
 }

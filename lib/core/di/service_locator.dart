@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../ai/ai_plan_generation_controller.dart';
 import '../auth/user_session.dart';
+import '../content/site_message_service.dart';
 import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
 import '../data/online_data_service.dart';
@@ -18,6 +19,7 @@ import '../network/ai_api.dart';
 import '../network/ai_consent_api.dart';
 import '../network/api_client.dart';
 import '../network/auth_api.dart';
+import '../network/content_api.dart';
 import '../network/file_api.dart';
 import '../network/online_data_api.dart';
 import '../network/telemetry_api.dart';
@@ -75,6 +77,11 @@ Future<void> setupServiceLocator() async {
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
   sl.registerSingleton<FileApi>(FileApi(client: apiClient));
+  final contentApi = ContentApi(client: apiClient);
+  sl.registerSingleton<ContentApi>(contentApi);
+  sl.registerSingleton<SiteMessageService>(
+    SiteMessageService(api: contentApi),
+  );
   sl.registerSingleton<TelemetryApi>(
     TelemetryApi(
       client: apiClient,

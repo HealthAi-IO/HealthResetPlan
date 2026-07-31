@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/app_messenger.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
@@ -75,8 +76,10 @@ class _LoginPageState extends State<LoginPage> {
     try {
       if (_smsMode) {
         final code = _codeController.text;
-        final verified =
-            await sl<AuthApi>().verifyPhone(phone: phone, code: code);
+        final verified = await sl<AuthApi>().verifyPhone(
+          phone: phone,
+          code: code,
+        );
         if (verified.status == 'register' &&
             verified.registrationTicket != null) {
           if (mounted) {
@@ -126,31 +129,54 @@ class _LoginPageState extends State<LoginPage> {
       passwordPromptRequired: false,
     );
     sl<ApiClient>().setAccessToken(result.accessToken);
-    try {
-      await sl<OnlineDataService>().bindToAccount(result.userId);
-    } catch (_) {
-      await UserSession.instance.signOut();
-      sl<ApiClient>().setAccessToken(null);
-      rethrow;
-    }
-    final account = await sl<AuthApi>().fetchAccountInfo();
-    if (account != null && account.nickname.isNotEmpty) {
-      await UserSession.instance.setAccountSession(
-        userId: result.userId,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        nickname: account.nickname,
-      );
-    }
+    await sl<OnlineDataService>().activateAccount(result.userId);
     if (mounted) context.go(widget.returnTo);
+    unawaited(_finishLoginInBackground(result));
+  }
+
+  Future<void> _finishLoginInBackground(AuthResult result) async {
+    final accountFuture = sl<AuthApi>().fetchAccountInfo();
+    try {
+      await sl<OnlineDataService>().syncAccount();
+    } catch (_) {
+      _showSyncFailure();
+    }
+    try {
+      final account = await accountFuture;
+      if (account != null && account.nickname.isNotEmpty) {
+        await UserSession.instance.setAccountSession(
+          userId: result.userId,
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken,
+          nickname: account.nickname,
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _showSyncFailure() {
+    appMessengerKey.currentState?.showSnackBar(
+      SnackBar(
+        content: const Text('云端数据同步失败，本次登录仍可使用'),
+        action: SnackBarAction(
+          label: '重试',
+          onPressed: () async {
+            try {
+              await sl<OnlineDataService>().syncAccount();
+            } catch (_) {
+              _showSyncFailure();
+            }
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _openAccountRecovery() async {
     final result = await showDialog<AuthResult>(
       context: context,
-      builder: (context) => AccountRecoveryDialog(
-        initialPhone: _normalizedPhone,
-      ),
+      builder: (context) =>
+          AccountRecoveryDialog(initialPhone: _normalizedPhone),
     );
     if (result != null) await _completeLogin(result);
   }
@@ -230,8 +256,10 @@ class _LoginPageState extends State<LoginPage> {
                   children: [
                     const Text(
                       '现在出发，重新找回健康的自己！',
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     const Text(
@@ -301,8 +329,8 @@ class _LoginPageState extends State<LoginPage> {
                           TextButton(
                             onPressed:
                                 _submitting || _sendingCode || _countdown > 0
-                                    ? null
-                                    : _sendCode,
+                                ? null
+                                : _sendCode,
                             child: Text(
                               _countdown > 0 ? '$_countdown 秒' : '获取验证码',
                             ),

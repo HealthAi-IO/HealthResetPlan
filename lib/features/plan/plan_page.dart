@@ -232,9 +232,10 @@ class _PlanPageState extends State<PlanPage> {
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
             const SizedBox(height: 16),
             for (final p in [
-              ('doubao', '🫘', '豆包（火山方舟）', '响应更快，适合生成 7 天计划'),
-              ('deepseek', '🤖', 'DeepSeek', '推理能力强，方案逻辑严密'),
-              ('qwen', '🌟', '通义千问', '医疗健康垂直训练，参考价值高'),
+              ('doubao', '🫘', '豆包 Seed 2.1 Pro', '响应更快，适合生成 7 天计划'),
+              ('qwen', '🌟', '通义千问 3.7 Plus', '默认模型，支持健康计划生成'),
+              ('glm', 'GLM', '智谱 GLM-5.2', '适合结构化健康计划生成'),
+              ('deepseek', '🤖', 'DeepSeek V4 Pro', '推理能力强，方案逻辑严密'),
             ])
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -507,7 +508,7 @@ class _PlanPageState extends State<PlanPage> {
   String _invalidAiPlanMessage(String raw) {
     final text = _cleanAiText(raw);
     if (text.contains('"days"') && !text.trimRight().endsWith('}')) {
-      return 'AI 返回内容被截断，未形成完整 7 天方案。请重新生成，或切换 DeepSeek / 通义千问。';
+      return 'AI 返回内容被截断，未形成完整 7 天方案。请重新生成，或手动切换其他模型。';
     }
     return 'AI 返回格式不完整，未能转换为可执行的 7 天打卡任务。请重新生成，或切换模型。';
   }

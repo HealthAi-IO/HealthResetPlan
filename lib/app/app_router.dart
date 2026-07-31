@@ -9,6 +9,10 @@ import '../features/auth/register_page.dart';
 import '../features/auth/set_password_page.dart';
 import '../features/auth/onboarding_page.dart';
 import '../features/chat/chat_page.dart' deferred as chat;
+import '../features/content/content_detail_page.dart'
+    deferred as content_detail;
+import '../features/content/content_list_page.dart' deferred as content_list;
+import '../features/content/message_center_page.dart' deferred as messages;
 import '../features/clock/clock_page.dart' deferred as clock;
 import '../features/home/home_page.dart' deferred as home;
 import '../features/indicators/indicator_input_page.dart'
@@ -140,7 +144,11 @@ class AppRouter {
               state,
               _DeferredPage(
                 load: clock.loadLibrary,
-                builder: () => clock.ClockPage(),
+                builder: () => clock.ClockPage(
+                  initialReminderId: int.tryParse(
+                    state.uri.queryParameters['reminderId'] ?? '',
+                  ),
+                ),
               ),
             ),
           ),
@@ -307,9 +315,38 @@ class AppRouter {
         name: '/chat',
         pageBuilder: (_, state) => _page(
           state,
+          _DeferredPage(load: chat.loadLibrary, builder: () => chat.ChatPage()),
+        ),
+      ),
+      GoRoute(
+        path: '/content',
+        pageBuilder: (_, state) => _page(
+          state,
           _DeferredPage(
-            load: chat.loadLibrary,
-            builder: () => chat.ChatPage(),
+            load: content_list.loadLibrary,
+            builder: () => content_list.ContentListPage(),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/content/:id',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: content_detail.loadLibrary,
+            builder: () => content_detail.ContentDetailPage(
+              id: int.tryParse(state.pathParameters['id'] ?? '') ?? 0,
+            ),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/messages',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: messages.loadLibrary,
+            builder: () => messages.MessageCenterPage(),
           ),
         ),
       ),
@@ -318,10 +355,7 @@ class AppRouter {
 }
 
 class _DeferredPage extends StatefulWidget {
-  const _DeferredPage({
-    required this.load,
-    required this.builder,
-  });
+  const _DeferredPage({required this.load, required this.builder});
 
   final Future<void> Function() load;
   final Widget Function() builder;

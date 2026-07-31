@@ -331,6 +331,7 @@ class _HomePageState extends State<HomePage> {
         onOpenClock: () => context.go('/clock'),
         onOpenStats: () => context.go('/stats'),
         onOpenReports: () => context.push('/report'),
+        onOpenContent: () => context.push('/content'),
         onOpenLetter: _openWelcomeLetter,
         onAddIndicator: () {
           context.push('/indicators/input').then((_) {
@@ -357,6 +358,8 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 14),
           _WelcomeLetterCard(onTap: _openWelcomeLetter),
+          const SizedBox(height: 14),
+          _WeeklyContentCard(onTap: () => context.push('/content')),
           const SizedBox(height: 14),
 
           _FoodDiaryPanel(
@@ -469,6 +472,11 @@ class _HomePageState extends State<HomePage> {
                       label: '趋势统计',
                       color: Colors.orange,
                       onTap: () => context.go('/stats')),
+                  _QuickEntry(
+                      icon: Icons.auto_stories_outlined,
+                      label: '健康资讯',
+                      color: Colors.cyan.shade700,
+                      onTap: () => context.push('/content')),
                 ],
               );
             }),
@@ -545,6 +553,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
     required this.onOpenClock,
     required this.onOpenStats,
     required this.onOpenReports,
+    required this.onOpenContent,
     required this.onOpenLetter,
     required this.onAddIndicator,
   });
@@ -563,6 +572,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
   final VoidCallback onOpenClock;
   final VoidCallback onOpenStats;
   final VoidCallback onOpenReports;
+  final VoidCallback onOpenContent;
   final VoidCallback onOpenLetter;
   final VoidCallback onAddIndicator;
 
@@ -634,6 +644,8 @@ class _DesktopHomeDashboard extends StatelessWidget {
           _DesktopBrandBanner(profile: profile, todayLabel: todayLabel),
           const SizedBox(height: 12),
           _WelcomeLetterCard(onTap: onOpenLetter),
+          const SizedBox(height: 12),
+          _WeeklyContentCard(onTap: onOpenContent),
           const SizedBox(height: 18),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -1043,6 +1055,62 @@ class _WelcomeLetterCard extends StatelessWidget {
                 ),
               ),
               Icon(Icons.chevron_right, color: colors.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WeeklyContentCard extends StatelessWidget {
+  const _WeeklyContentCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.auto_stories_outlined, color: primary),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '每周健康科普',
+                      style: TextStyle(
+                        color: AppTheme.ink,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: 5),
+                    Text(
+                      '用轻量卡片了解饮食、运动、睡眠与健康习惯',
+                      style: TextStyle(color: AppTheme.muted, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppTheme.muted),
             ],
           ),
         ),

@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../../app/app_theme.dart';
 import '../../app/theme_controller.dart';
 import '../../core/auth/user_session.dart';
+import '../../core/content/site_message_service.dart';
+import '../../core/di/service_locator.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -128,6 +130,7 @@ class _AppShellState extends State<AppShell> {
     return AppBar(
       title: const Text('健康重启计划'),
       actions: [
+        const _MessageButton(),
         PopupMenuButton<String>(
           tooltip: '更多操作',
           position: PopupMenuPosition.under,
@@ -260,6 +263,11 @@ class _DesktopNavigation extends StatelessWidget {
             icon: Icons.smart_toy_outlined,
             onTap: () => context.push('/chat'),
           ),
+          _NavigationItem(
+            label: '健康资讯',
+            icon: Icons.auto_stories_outlined,
+            onTap: () => context.push('/content'),
+          ),
           const Spacer(),
           _NavigationItem(
             label: '账号与数据',
@@ -355,6 +363,8 @@ class _DesktopCommandBar extends StatelessWidget {
             style: const TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
           const Spacer(),
+          const _MessageButton(),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: '外观主题',
             onPressed: onThemeTap,
@@ -375,6 +385,38 @@ class _DesktopCommandBar extends StatelessWidget {
             icon: const Icon(Icons.chevron_right, size: 20),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MessageButton extends StatelessWidget {
+  const _MessageButton();
+
+  @override
+  Widget build(BuildContext context) {
+    if (!sl.isRegistered<SiteMessageService>()) {
+      return IconButton(
+        tooltip: '消息中心',
+        onPressed: () => context.push('/messages'),
+        icon: const Icon(Icons.notifications_outlined),
+      );
+    }
+    final service = sl<SiteMessageService>();
+    return AnimatedBuilder(
+      animation: service,
+      builder: (context, _) => IconButton(
+        tooltip: service.unreadCount == 0
+            ? '消息中心'
+            : '消息中心，${service.unreadCount}条未读',
+        onPressed: () => context.push('/messages'),
+        icon: Badge(
+          isLabelVisible: service.unreadCount > 0,
+          label: Text(
+            service.unreadCount > 99 ? '99+' : '${service.unreadCount}',
+          ),
+          child: const Icon(Icons.notifications_outlined),
+        ),
       ),
     );
   }

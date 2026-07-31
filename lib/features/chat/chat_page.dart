@@ -37,10 +37,10 @@ class _ChatPageState extends State<ChatPage> {
   UserProfileData? _profile;
 
   static const _providers = [
-    _ProviderOption('deepseek', 'DeepSeek', '🤖'),
-    _ProviderOption('doubao', '豆包', '🫘'),
-    _ProviderOption('glm', '智谱 GLM', 'GLM'),
-    _ProviderOption('qwen', '通义千问', '🌟'),
+    _ProviderOption('doubao', '豆包 Seed 2.1 Pro', '🫘'),
+    _ProviderOption('qwen', '通义千问 3.7 Plus', '🌟'),
+    _ProviderOption('glm', '智谱 GLM-5.2', 'GLM'),
+    _ProviderOption('deepseek', 'DeepSeek V4 Pro', '🤖'),
   ];
 
   static const _quickQuestions = [
@@ -101,8 +101,8 @@ class _ChatPageState extends State<ChatPage> {
     final gender = p.gender == 'male'
         ? '男'
         : p.gender == 'female'
-            ? '女'
-            : '';
+        ? '女'
+        : '';
     final bmi = p.bmi > 0 ? '，BMI ${p.bmi.toStringAsFixed(1)}' : '';
     return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
   }
@@ -150,124 +150,150 @@ class _ChatPageState extends State<ChatPage> {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          child: Column(children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(999),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(999),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
-              child: Row(children: [
-                const Expanded(
-                  child: Text('对话历史',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                ),
-                TextButton.icon(
-                  onPressed: () {
-                    Navigator.pop(sheetCtx);
-                    _newSession();
-                  },
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('新对话'),
-                ),
-              ]),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: sessions.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: Text('暂无历史对话',
-                            style: TextStyle(color: AppTheme.muted)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        '对话历史',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    )
-                  : ListView.separated(
-                      controller: scrollCtrl,
-                      itemCount: sessions.length,
-                      separatorBuilder: (_, __) =>
-                          const Divider(height: 1, indent: 16, endIndent: 16),
-                      itemBuilder: (_, i) {
-                        final s = sessions[i];
-                        final active = s.id == _currentSession?.id;
-                        final primary = Theme.of(context).colorScheme.primary;
-                        final time = DateFormat('MM-dd HH:mm').format(
-                            DateTime.fromMillisecondsSinceEpoch(s.updatedAt));
-                        return ListTile(
-                          dense: false,
-                          tileColor:
-                              active ? primary.withValues(alpha: 0.06) : null,
-                          leading: Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: primary.withValues(alpha: 0.12),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(Icons.chat_bubble_outline,
-                                size: 18, color: primary),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(sheetCtx);
+                        _newSession();
+                      },
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('新对话'),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: sessions.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(32),
+                          child: Text(
+                            '暂无历史对话',
+                            style: TextStyle(color: AppTheme.muted),
                           ),
-                          title: Text(
-                            s.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight:
-                                  active ? FontWeight.w700 : FontWeight.w600,
+                        ),
+                      )
+                    : ListView.separated(
+                        controller: scrollCtrl,
+                        itemCount: sessions.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1, indent: 16, endIndent: 16),
+                        itemBuilder: (_, i) {
+                          final s = sessions[i];
+                          final active = s.id == _currentSession?.id;
+                          final primary = Theme.of(context).colorScheme.primary;
+                          final time = DateFormat('MM-dd HH:mm').format(
+                            DateTime.fromMillisecondsSinceEpoch(s.updatedAt),
+                          );
+                          return ListTile(
+                            dense: false,
+                            tileColor: active
+                                ? primary.withValues(alpha: 0.06)
+                                : null,
+                            leading: Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: primary.withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.chat_bubble_outline,
+                                size: 18,
+                                color: primary,
+                              ),
                             ),
-                          ),
-                          subtitle: Text('$time · ${s.messageCount} 条消息',
+                            title: Text(
+                              s.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: active
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '$time · ${s.messageCount} 条消息',
                               style: const TextStyle(
-                                  fontSize: 11, color: AppTheme.muted)),
-                          trailing: IconButton(
-                            tooltip: '删除',
-                            icon: Icon(Icons.delete_outline,
-                                size: 18, color: Colors.grey.shade500),
-                            onPressed: () async {
-                              final confirm = await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('删除对话'),
-                                  content: Text('「${s.title}」将被永久删除'),
-                                  actions: [
-                                    TextButton(
+                                fontSize: 11,
+                                color: AppTheme.muted,
+                              ),
+                            ),
+                            trailing: IconButton(
+                              tooltip: '删除',
+                              icon: Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                                color: Colors.grey.shade500,
+                              ),
+                              onPressed: () async {
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('删除对话'),
+                                    content: Text('「${s.title}」将被永久删除'),
+                                    actions: [
+                                      TextButton(
                                         onPressed: () =>
                                             Navigator.pop(ctx, false),
-                                        child: const Text('取消')),
-                                    FilledButton(
+                                        child: const Text('取消'),
+                                      ),
+                                      FilledButton(
                                         style: FilledButton.styleFrom(
-                                            backgroundColor: Colors.red),
+                                          backgroundColor: Colors.red,
+                                        ),
                                         onPressed: () =>
                                             Navigator.pop(ctx, true),
-                                        child: const Text('删除')),
-                                  ],
-                                ),
-                              );
-                              if (confirm != true) return;
-                              await _chatRepo.deleteSession(s.id);
-                              if (!mounted || !sheetCtx.mounted) return;
+                                        child: const Text('删除'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirm != true) return;
+                                await _chatRepo.deleteSession(s.id);
+                                if (!mounted || !sheetCtx.mounted) return;
+                                Navigator.pop(sheetCtx);
+                                if (_currentSession?.id == s.id) {
+                                  await _newSession();
+                                }
+                              },
+                            ),
+                            onTap: () {
                               Navigator.pop(sheetCtx);
-                              if (_currentSession?.id == s.id) {
-                                await _newSession();
-                              }
+                              _openSession(s);
                             },
-                          ),
-                          onTap: () {
-                            Navigator.pop(sheetCtx);
-                            _openSession(s);
-                          },
-                        );
-                      },
-                    ),
-            ),
-          ]),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -276,119 +302,136 @@ class _ChatPageState extends State<ChatPage> {
   // ── 发送消息 ──────────────────────────────────────────────────
 
   Future<void> _sendMessage(String content) async {
-    if (!await ensureAiConsent(context)) return;
-    if (content.trim().isEmpty || _sending) return;
-
-    // 校验手机号账号
-    if (!mounted) return;
-    final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
-    if (!ok) return;
-
-    // 懒创建会话
-    _currentSession ??= await _ensureSession();
-
-    final sessionId = _currentSession!.id;
     final trimmed = content.trim();
+    if (trimmed.isEmpty || _sending) return;
+    setState(() => _sending = true);
 
-    // 1) 写入 user 消息到本地
-    final userMsgId = await _chatRepo.addMessage(
-      sessionId: sessionId,
-      role: 'user',
-      content: trimmed,
-    );
+    try {
+      if (!await ensureAiConsent(context)) {
+        if (mounted) setState(() => _sending = false);
+        return;
+      }
 
-    // 2) 预占 assistant 消息（先空内容，流式累加）
-    final assistantMsgId = await _chatRepo.addMessage(
-      sessionId: sessionId,
-      role: 'assistant',
-      content: '',
-      provider: _selectedProvider,
-    );
+      // 校验手机号账号
+      if (!mounted) return;
+      final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
+      if (!ok) {
+        if (mounted) setState(() => _sending = false);
+        return;
+      }
 
-    setState(() {
-      _messages.add(_UiMessage(
-        id: userMsgId,
+      // 懒创建会话
+      _currentSession ??= await _ensureSession();
+
+      final sessionId = _currentSession!.id;
+
+      // 1) 写入 user 消息到本地
+      final userMsgId = await _chatRepo.addMessage(
+        sessionId: sessionId,
         role: 'user',
         content: trimmed,
-      ));
-      _messages.add(_UiMessage(
-        id: assistantMsgId,
+      );
+
+      // 2) 预占 assistant 消息（先空内容，流式累加）
+      final assistantMsgId = await _chatRepo.addMessage(
+        sessionId: sessionId,
         role: 'assistant',
         content: '',
         provider: _selectedProvider,
-        streaming: true,
-      ));
-      _sending = true;
-    });
-    _inputCtrl.clear();
-    _scrollToBottom();
+      );
 
-    // 3) 构建发给 API 的历史（排除当前的空 assistant 占位）
-    final history = _messages
-        .where((m) => m.content.isNotEmpty)
-        .map((m) => {'role': m.role, 'content': m.content})
-        .toList();
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          _UiMessage(id: userMsgId, role: 'user', content: trimmed),
+        );
+        _messages.add(
+          _UiMessage(
+            id: assistantMsgId,
+            role: 'assistant',
+            content: '',
+            provider: _selectedProvider,
+            streaming: true,
+          ),
+        );
+      });
+      _inputCtrl.clear();
+      _scrollToBottom();
 
-    await _aiApi.streamChat(
-      messages: history,
-      provider: _apiProvider,
-      profileSummary: _buildProfileSummary(),
-      onToken: (token) {
-        if (!mounted) return;
-        setState(() {
+      // 3) 构建发给 API 的历史（排除当前的空 assistant 占位）
+      final history = _messages
+          .where((m) => m.content.isNotEmpty)
+          .map((m) => {'role': m.role, 'content': m.content})
+          .toList();
+
+      await _aiApi.streamChat(
+        messages: history,
+        provider: _apiProvider,
+        profileSummary: _buildProfileSummary(),
+        onToken: (token) {
+          if (!mounted) return;
+          setState(() {
+            final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
+            if (idx >= 0) {
+              _messages[idx] = _messages[idx].copyWith(
+                content: _messages[idx].content + token,
+              );
+            }
+          });
+          _scrollToBottom();
+        },
+        onDone: () async {
+          if (!mounted) return;
           final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
           if (idx >= 0) {
-            _messages[idx] = _messages[idx].copyWith(
-              content: _messages[idx].content + token,
-            );
-          }
-        });
-        _scrollToBottom();
-      },
-      onDone: () async {
-        if (!mounted) return;
-        final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
-        if (idx >= 0) {
-          final finalContent = _messages[idx].content.trim();
-          // 流结束，标记非 streaming，并把最终内容写库
-          setState(() {
-            _messages[idx] = _messages[idx].copyWith(
+            final finalContent = _messages[idx].content.trim();
+            // 流结束，标记非 streaming，并把最终内容写库
+            setState(() {
+              _messages[idx] = _messages[idx].copyWith(
+                content: finalContent,
+                streaming: false,
+              );
+              _sending = false;
+            });
+            await _chatRepo.updateMessageContent(
+              messageId: assistantMsgId,
               content: finalContent,
-              streaming: false,
             );
-            _sending = false;
-          });
-          await _chatRepo.updateMessageContent(
-            messageId: assistantMsgId,
-            content: finalContent,
-          );
-        } else {
-          setState(() => _sending = false);
-        }
-        _scrollToBottom();
-      },
-      onError: (error) async {
-        if (!mounted) return;
-        final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
-        if (idx >= 0) {
-          setState(() {
-            _messages[idx] = _messages[idx].copyWith(
+          } else {
+            setState(() => _sending = false);
+          }
+          _scrollToBottom();
+        },
+        onError: (error) async {
+          if (!mounted) return;
+          final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
+          if (idx >= 0) {
+            setState(() {
+              _messages[idx] = _messages[idx].copyWith(
+                content: error,
+                streaming: false,
+                isError: true,
+              );
+              _sending = false;
+            });
+            await _chatRepo.updateMessageContent(
+              messageId: assistantMsgId,
               content: error,
-              streaming: false,
               isError: true,
             );
-            _sending = false;
-          });
-          await _chatRepo.updateMessageContent(
-            messageId: assistantMsgId,
-            content: error,
-            isError: true,
-          );
-        } else {
-          setState(() => _sending = false);
-        }
-      },
-    );
+          } else {
+            setState(() => _sending = false);
+          }
+        },
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('消息发送失败，请重试')));
+      }
+    }
   }
 
   Future<ChatSession> _ensureSession() async {
@@ -454,31 +497,39 @@ class _ChatPageState extends State<ChatPage> {
               for (final p in _providers)
                 PopupMenuItem(
                   value: p.id,
-                  child: Row(children: [
-                    Text(p.emoji, style: const TextStyle(fontSize: 16)),
-                    const SizedBox(width: 8),
-                    Text(p.name),
-                    if (p.id == _selectedProvider) ...[
-                      const Spacer(),
-                      Icon(Icons.check,
+                  child: Row(
+                    children: [
+                      Text(p.emoji, style: const TextStyle(fontSize: 16)),
+                      const SizedBox(width: 8),
+                      Text(p.name),
+                      if (p.id == _selectedProvider) ...[
+                        const Spacer(),
+                        Icon(
+                          Icons.check,
                           size: 16,
-                          color: Theme.of(context).colorScheme.primary),
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ],
                     ],
-                  ]),
+                  ),
                 ),
             ],
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Row(children: [
-                Text(
-                  _providers
-                      .firstWhere((p) => p.id == _selectedProvider,
-                          orElse: () => _providers.first)
-                      .emoji,
-                  style: const TextStyle(fontSize: 14),
-                ),
-                const Icon(Icons.arrow_drop_down, size: 18),
-              ]),
+              child: Row(
+                children: [
+                  Text(
+                    _providers
+                        .firstWhere(
+                          (p) => p.id == _selectedProvider,
+                          orElse: () => _providers.first,
+                        )
+                        .emoji,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const Icon(Icons.arrow_drop_down, size: 18),
+                ],
+              ),
             ),
           ),
         ],
@@ -531,8 +582,10 @@ class _ChatPageState extends State<ChatPage> {
             child: Icon(Icons.psychology_outlined, size: 38, color: primary),
           ),
           const SizedBox(height: 16),
-          const Text('AI 健康顾问',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const Text(
+            'AI 健康顾问',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 8),
           const Text(
             '有什么健康问题，直接问我吧',
@@ -584,50 +637,57 @@ class _ChatPageState extends State<ChatPage> {
           color: Colors.white,
           border: Border(top: BorderSide(color: AppTheme.cardBorder)),
         ),
-        child: Row(children: [
-          Expanded(
-            child: TextField(
-              controller: _inputCtrl,
-              focusNode: _focusNode,
-              maxLines: 4,
-              minLines: 1,
-              textInputAction: TextInputAction.newline,
-              decoration: InputDecoration(
-                hintText: '输入健康问题…',
-                hintStyle: const TextStyle(color: AppTheme.muted, fontSize: 14),
-                filled: true,
-                fillColor: AppTheme.pageBg,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  borderSide: BorderSide.none,
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _inputCtrl,
+                focusNode: _focusNode,
+                maxLines: 4,
+                minLines: 1,
+                textInputAction: TextInputAction.newline,
+                decoration: InputDecoration(
+                  hintText: '输入健康问题…',
+                  hintStyle: const TextStyle(
+                    color: AppTheme.muted,
+                    fontSize: 14,
+                  ),
+                  filled: true,
+                  fillColor: AppTheme.pageBg,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          _sending
-              ? const SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+            const SizedBox(width: 8),
+            _sending
+                ? const SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                     ),
+                  )
+                : IconButton.filled(
+                    onPressed: () => _sendMessage(_inputCtrl.text),
+                    style: IconButton.styleFrom(
+                      backgroundColor: colors.primary,
+                      foregroundColor: colors.onPrimary,
+                    ),
+                    icon: const Icon(Icons.send_rounded, size: 20),
                   ),
-                )
-              : IconButton.filled(
-                  onPressed: () => _sendMessage(_inputCtrl.text),
-                  style: IconButton.styleFrom(
-                    backgroundColor: colors.primary,
-                    foregroundColor: colors.onPrimary,
-                  ),
-                  icon: const Icon(Icons.send_rounded, size: 20),
-                ),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -652,11 +712,7 @@ class _UiMessage {
   bool isError;
   bool streaming;
 
-  _UiMessage copyWith({
-    String? content,
-    bool? streaming,
-    bool? isError,
-  }) =>
+  _UiMessage copyWith({String? content, bool? streaming, bool? isError}) =>
       _UiMessage(
         id: id,
         role: role,
@@ -667,12 +723,12 @@ class _UiMessage {
       );
 
   factory _UiMessage.fromDb(ChatMessage m) => _UiMessage(
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        provider: m.provider,
-        isError: m.isError,
-      );
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    provider: m.provider,
+    isError: m.isError,
+  );
 }
 
 // ── 消息气泡 ──────────────────────────────────────────────────
@@ -700,8 +756,9 @@ class _MessageBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
-        mainAxisAlignment:
-            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isUser
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isUser) ...[
@@ -726,19 +783,21 @@ class _MessageBubble extends StatelessWidget {
             child: GestureDetector(
               onLongPress: () {
                 Clipboard.setData(ClipboardData(text: content));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已复制')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('已复制')));
               },
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: isUser
                       ? colors.primary
                       : isError
-                          ? Colors.red.shade50
-                          : Colors.white,
+                      ? Colors.red.shade50
+                      : Colors.white,
                   borderRadius: BorderRadius.only(
                     topLeft: const Radius.circular(18),
                     topRight: const Radius.circular(18),
@@ -750,7 +809,8 @@ class _MessageBubble extends StatelessWidget {
                       : Border.all(
                           color: isError
                               ? Colors.red.shade200
-                              : AppTheme.cardBorder),
+                              : AppTheme.cardBorder,
+                        ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -767,8 +827,8 @@ class _MessageBubble extends StatelessWidget {
                         color: isUser
                             ? colors.onPrimary
                             : isError
-                                ? Colors.red.shade700
-                                : AppTheme.ink,
+                            ? Colors.red.shade700
+                            : AppTheme.ink,
                       ),
                     ),
                   ],

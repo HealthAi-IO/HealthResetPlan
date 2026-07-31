@@ -7,18 +7,27 @@ class OnlineDataService {
     required AppDatabase database,
     required OnlineDataApi api,
     required HealthRepository repository,
-  })  : _database = database,
-        _api = api,
-        _repository = repository;
+  }) : _database = database,
+       _api = api,
+       _repository = repository;
 
   final AppDatabase _database;
   final OnlineDataApi _api;
   final HealthRepository _repository;
 
-  Future<void> bindToAccount(String userId) async {
+  Future<void> activateAccount(String userId) async {
     await _database.switchSpace(userId);
+    _repository.signalChanged();
+  }
+
+  Future<void> syncAccount() async {
     await _database.bindOnline(_api);
     _repository.signalChanged();
+  }
+
+  Future<void> bindToAccount(String userId) async {
+    await activateAccount(userId);
+    await syncAccount();
   }
 
   Future<void> signOut() async {

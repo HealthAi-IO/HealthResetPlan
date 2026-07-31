@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'app/app_router.dart';
+import 'app/app_messenger.dart';
 import 'app/app_theme.dart';
 import 'app/theme_controller.dart';
 import 'core/ai/ai_plan_generation_controller.dart';
@@ -12,14 +13,14 @@ import 'core/auth/user_session.dart';
 import 'core/data/health_models.dart';
 import 'core/data/health_repository.dart';
 import 'core/di/service_locator.dart';
+import 'core/content/content_models.dart';
+import 'core/content/site_message_service.dart';
 import 'core/notification/reminder_scheduler.dart';
 import 'core/network/telemetry_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
 import 'core/update/app_update_service.dart';
 
 ThemeMode get _themeMode => ThemeMode.light;
-final GlobalKey<ScaffoldMessengerState> _messengerKey =
-    GlobalKey<ScaffoldMessengerState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,15 +46,9 @@ class _AppLoaderState extends State<_AppLoader> {
   }
 
   Future<void> _init() async {
-    final startedAt = DateTime.now();
     if (mounted) setState(() => _initError = null);
     try {
       await setupServiceLocator();
-      final elapsed = DateTime.now().difference(startedAt);
-      const minimumSplashDuration = Duration(milliseconds: 1400);
-      if (elapsed < minimumSplashDuration) {
-        await Future<void>.delayed(minimumSplashDuration - elapsed);
-      }
 
       // 兼容：若无昵称但 profile 有，补一下；不阻塞首屏，后台执行
       if (mounted) setState(() => _ready = true);
@@ -75,7 +70,9 @@ class _AppLoaderState extends State<_AppLoader> {
       if (profile != null && profile.nickname.isNotEmpty) {
         UserSession.instance.setName(profile.nickname);
       }
-    }).catchError((_) {/* 忽略 */});
+    }).catchError((_) {
+      /* 忽略 */
+    });
   }
 
   void _initNotificationsInBackground() {
@@ -253,8 +250,11 @@ class HealthResetPlanApp extends StatefulWidget {
   State<HealthResetPlanApp> createState() => _HealthResetPlanAppState();
 }
 
-class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
+class _HealthResetPlanAppState extends State<HealthResetPlanApp>
+    with WidgetsBindingObserver {
   StreamSubscription<ReminderData>? _reminderSubscription;
+  StreamSubscription<int>? _notificationTapSubscription;
+  StreamSubscription<SiteMessage>? _siteMessageSubscription;
   late final AiPlanGenerationController _aiPlanController;
   bool _updateChecked = false;
   int _handledAiPlanEventId = 0;
@@ -262,18 +262,62 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _aiPlanController = sl<AiPlanGenerationController>();
     _aiPlanController.addListener(_onAiPlanGenerationChanged);
-    _reminderSubscription =
-        sl<ReminderScheduler>().reminderEvents.listen(_showReminder);
+    final scheduler = sl<ReminderScheduler>();
+    _reminderSubscription = scheduler.reminderEvents.listen(_showReminder);
+    _notificationTapSubscription = scheduler.notificationTapEvents.listen(
+      _openReminder,
+    );
+    final pendingReminderId = scheduler.takePendingNotificationReminderId();
+    if (pendingReminderId != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _openReminder(pendingReminderId),
+      );
+    }
+    final siteMessages = sl<SiteMessageService>();
+    _siteMessageSubscription = siteMessages.events.listen(_showSiteMessage);
+    siteMessages.start();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _aiPlanController.removeListener(_onAiPlanGenerationChanged);
     _reminderSubscription?.cancel();
+    _notificationTapSubscription?.cancel();
+    _siteMessageSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      sl<SiteMessageService>().poll();
+    }
+  }
+
+  void _showSiteMessage(SiteMessage message) {
+    appMessengerKey.currentState?.showSnackBar(
+      SnackBar(
+        content: Text(message.title),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: '查看',
+          onPressed: () async {
+            await sl<SiteMessageService>().markRead(message.id);
+            final contentId = message.contentId;
+            if (contentId != null && message.contentStatus == 'published') {
+              AppRouter.router.push('/content/$contentId');
+            } else {
+              AppRouter.router.push('/messages');
+            }
+          },
+        ),
+      ),
+    );
   }
 
   void _onAiPlanGenerationChanged() {
@@ -284,7 +328,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
     if (currentPath == '/plan') return;
 
     if (_aiPlanController.status == AiPlanGenerationStatus.completed) {
-      _messengerKey.currentState?.showSnackBar(
+      appMessengerKey.currentState?.showSnackBar(
         SnackBar(
           content: const Text('AI 健康计划已生成'),
           action: SnackBarAction(
@@ -294,7 +338,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
         ),
       );
     } else if (_aiPlanController.status == AiPlanGenerationStatus.failed) {
-      _messengerKey.currentState?.showSnackBar(
+      appMessengerKey.currentState?.showSnackBar(
         SnackBar(
           content: const Text('AI 健康计划生成失败'),
           action: SnackBarAction(
@@ -309,13 +353,23 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
   void _showReminder(ReminderData reminder) {
     final note = reminder.payload['note'] as String? ?? '';
     final body = note.isNotEmpty ? note : reminder.label;
-    _messengerKey.currentState?.showSnackBar(
+    appMessengerKey.currentState?.showSnackBar(
       SnackBar(
         content: Text(body),
         duration: const Duration(seconds: 8),
-        action: SnackBarAction(label: 'OK', onPressed: () {}),
+        action: SnackBarAction(
+          label: '查看',
+          onPressed: () {
+            final id = reminder.id;
+            if (id != null) _openReminder(id);
+          },
+        ),
       ),
     );
+  }
+
+  void _openReminder(int reminderId) {
+    AppRouter.router.go('/clock?reminderId=$reminderId');
   }
 
   Future<void> _checkForUpdate() async {
@@ -370,7 +424,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
       mode: LaunchMode.externalApplication,
     );
     if (!opened) {
-      _messengerKey.currentState?.showSnackBar(
+      appMessengerKey.currentState?.showSnackBar(
         const SnackBar(content: Text('无法打开下载地址，请稍后重试')),
       );
     }
@@ -381,17 +435,14 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp> {
     return AnimatedBuilder(
       animation: themeController,
       builder: (context, _) => MaterialApp.router(
-        scaffoldMessengerKey: _messengerKey,
+        scaffoldMessengerKey: appMessengerKey,
         title: '健康重启计划',
         theme: AppTheme.lightFor(themeController.colorTheme.seed),
         darkTheme: AppTheme.dark,
         themeMode: _themeMode,
         routerConfig: AppRouter.router,
         debugShowCheckedModeBanner: false,
-        supportedLocales: const [
-          Locale('zh', 'CN'),
-          Locale('en', 'US'),
-        ],
+        supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,
           GlobalWidgetsLocalizations.delegate,

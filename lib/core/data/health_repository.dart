@@ -38,9 +38,8 @@ class HealthRepository extends ChangeNotifier {
     final perType = await Future.wait(
       types.map((t) => loadIndicators(type: t, limit: 5)),
     );
-    final indicators = [
-      for (final list in perType) ...list,
-    ]..sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
+    final indicators = [for (final list in perType) ...list]
+      ..sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
 
     return HealthDashboardData(
       profile: await loadProfile(),
@@ -84,8 +83,10 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<List<HealthIndicatorEntry>> loadIndicators(
-      {int limit = 50, String? type}) async {
+  Future<List<HealthIndicatorEntry>> loadIndicators({
+    int limit = 50,
+    String? type,
+  }) async {
     final db = await database.open();
     final rows = await db.query(
       'health_indicator',
@@ -432,14 +433,18 @@ class HealthRepository extends ChangeNotifier {
       risks.add('血压偏高 Stage 1（收缩压 130-139 或舒张压 80-89 mmHg，建议生活方式干预）');
     }
     if (highGlucose) {
-      risks.add(mealType == 'postmeal'
-          ? '餐后血糖达糖尿病标准（≥ 11.1 mmol/L，ADA 2024，建议就医）'
-          : '空腹血糖达糖尿病标准（≥ 7.0 mmol/L，ADA 2024，建议就医）');
+      risks.add(
+        mealType == 'postmeal'
+            ? '餐后血糖达糖尿病标准（≥ 11.1 mmol/L，ADA 2024，建议就医）'
+            : '空腹血糖达糖尿病标准（≥ 7.0 mmol/L，ADA 2024，建议就医）',
+      );
     }
     if (borderlineGlucose) {
-      risks.add(mealType == 'postmeal'
-          ? '餐后血糖偏高（7.8-11.0 mmol/L，糖耐量异常 IGT）'
-          : '空腹血糖处于糖尿病前期（5.6-6.9 mmol/L，ADA 标准）');
+      risks.add(
+        mealType == 'postmeal'
+            ? '餐后血糖偏高（7.8-11.0 mmol/L，糖耐量异常 IGT）'
+            : '空腹血糖处于糖尿病前期（5.6-6.9 mmol/L，ADA 标准）',
+      );
     }
     if (highLipid) {
       risks.add('血脂明显偏高（TC ≥ 6.22 或 LDL ≥ 4.14 mmol/L，ACC/AHA 高危阈值）');
@@ -448,8 +453,9 @@ class HealthRepository extends ChangeNotifier {
       risks.add('血脂处于边界高值（TC 5.18-6.21 或 LDL 3.37-4.13 mmol/L）');
     }
     if (lowHdl) {
-      risks
-          .add('HDL 胆固醇偏低（${isMale ? "男 < 1.04" : "女 < 1.30"} mmol/L，心血管保护不足）');
+      risks.add(
+        'HDL 胆固醇偏低（${isMale ? "男 < 1.04" : "女 < 1.30"} mmol/L，心血管保护不足）',
+      );
     }
     if (highTg) {
       risks.add('甘油三酯偏高（≥ 2.26 mmol/L，建议减少精制糖和饮酒）');
@@ -465,11 +471,13 @@ class HealthRepository extends ChangeNotifier {
     }
     if (highBodyFat) {
       risks.add(
-          '体脂率偏高（${bodyFatPct.toStringAsFixed(1)}%，${isMale ? "男 ≥ 25%" : "女 ≥ 32%"}，ACSM 标准）');
+        '体脂率偏高（${bodyFatPct.toStringAsFixed(1)}%，${isMale ? "男 ≥ 25%" : "女 ≥ 32%"}，ACSM 标准）',
+      );
     }
     if (highWaist) {
       risks.add(
-          '腰围超标（${waistCm.toStringAsFixed(1)} cm，${isMale ? "男 ≥ 90 cm" : "女 ≥ 80 cm"}，IDF 亚洲标准）');
+        '腰围超标（${waistCm.toStringAsFixed(1)} cm，${isMale ? "男 ≥ 90 cm" : "女 ≥ 80 cm"}，IDF 亚洲标准）',
+      );
     }
     if (dangerSpo2) {
       risks.add('血氧饱和度危险偏低（$spo2%，< 90%，建议立即就医）');
@@ -479,7 +487,8 @@ class HealthRepository extends ChangeNotifier {
     }
     if (shortSleep) {
       risks.add(
-          '睡眠严重不足（${sleepHours.toStringAsFixed(1)} h < 6 h，成人建议 7-9 h，NSF 标准）');
+        '睡眠严重不足（${sleepHours.toStringAsFixed(1)} h < 6 h，成人建议 7-9 h，NSF 标准）',
+      );
     }
     if (borderlineSleep) {
       risks.add('睡眠略显不足（${sleepHours.toStringAsFixed(1)} h，建议达到 7-9 h）');
@@ -527,7 +536,7 @@ class HealthRepository extends ChangeNotifier {
     final dietParts = [
       saltNote,
       if (carbNote.isNotEmpty) carbNote,
-      if (fatNote.isNotEmpty) fatNote
+      if (fatNote.isNotEmpty) fatNote,
     ];
     final dietNote = dietParts.join('；');
 
@@ -540,21 +549,32 @@ class HealthRepository extends ChangeNotifier {
 
     return _RiskResult(
       risks: risks,
-      highBp: highBp, borderlineBp: borderlineBp, crisisBp: crisisBp,
-      highGlucose: highGlucose, borderlineGlucose: borderlineGlucose,
-      highLipid: highLipid, borderlineLipid: borderlineLipid,
-      lowHdl: lowHdl, highTg: highTg,
+      highBp: highBp,
+      borderlineBp: borderlineBp,
+      crisisBp: crisisBp,
+      highGlucose: highGlucose,
+      borderlineGlucose: borderlineGlucose,
+      highLipid: highLipid,
+      borderlineLipid: borderlineLipid,
+      lowHdl: lowHdl,
+      highTg: highTg,
       obese: obese,
-      highBodyFat: highBodyFat, highWaist: highWaist,
-      lowSpo2: lowSpo2, dangerSpo2: dangerSpo2,
+      highBodyFat: highBodyFat,
+      highWaist: highWaist,
+      lowSpo2: lowSpo2,
+      dangerSpo2: dangerSpo2,
       shortSleep: shortSleep,
       lowSteps: lowSteps,
-      targetKcal: targetKcal, bmr: bmr,
-      goalNote: goalNote, dietNote: dietNote,
+      targetKcal: targetKcal,
+      bmr: bmr,
+      goalNote: goalNote,
+      dietNote: dietNote,
       // 实际数值，用于生成个性化摘要
-      systolic: systolic, diastolic: diastolic,
+      systolic: systolic,
+      diastolic: diastolic,
       glucoseMmol: glucoseMmol,
-      tc: tc, ldl: ldl,
+      tc: tc,
+      ldl: ldl,
       bmi: bmi,
       steps: steps,
       spo2: spo2,
@@ -572,9 +592,7 @@ class HealthRepository extends ChangeNotifier {
     }
     final risk = await _assessRisk(value);
     if (risk.crisisBp || risk.dangerSpo2) {
-      throw const PlanBlockedException(
-        '检测到紧急健康风险，请立即就医，暂不生成健康或运动计划',
-      );
+      throw const PlanBlockedException('检测到紧急健康风险，请立即就医，暂不生成健康或运动计划');
     }
     return risk;
   }
@@ -596,8 +614,11 @@ class HealthRepository extends ChangeNotifier {
     final today = DateTime(now.year, now.month, now.day);
     final ts = now.millisecondsSinceEpoch;
 
-    await db.delete('plan',
-        where: "user_id = ? AND type = 'risk'", whereArgs: [kLocalUserId]);
+    await db.delete(
+      'plan',
+      where: "user_id = ? AND type = 'risk'",
+      whereArgs: [kLocalUserId],
+    );
     await db.insert(
       'plan',
       PlanRecordData(
@@ -691,8 +712,13 @@ class HealthRepository extends ChangeNotifier {
           'reminder',
           ReminderData(
             type: 'bp',
-            remindAt: DateTime(now.year, now.month, now.day, 19, 0)
-                .millisecondsSinceEpoch,
+            remindAt: DateTime(
+              now.year,
+              now.month,
+              now.day,
+              19,
+              0,
+            ).millisecondsSinceEpoch,
             payload: {'note': '晚间血压监测（安静休息5分钟后测量）'},
             channel: 'local',
             status: 'pending',
@@ -706,8 +732,13 @@ class HealthRepository extends ChangeNotifier {
           'reminder',
           ReminderData(
             type: 'glucose',
-            remindAt: DateTime(now.year, now.month, now.day, 9, 30)
-                .millisecondsSinceEpoch,
+            remindAt: DateTime(
+              now.year,
+              now.month,
+              now.day,
+              9,
+              30,
+            ).millisecondsSinceEpoch,
             payload: {'note': '餐后2小时血糖监测'},
             channel: 'local',
             status: 'pending',
@@ -900,19 +931,14 @@ class HealthRepository extends ChangeNotifier {
       if (duration != null) 'durationMinutes': duration,
       if (intensity.isNotEmpty) 'intensity': intensity,
       if (description.isNotEmpty) 'desc': description,
-      'items': [
-        if (description.isNotEmpty) description,
-      ],
+      'items': [if (description.isNotEmpty) description],
     };
   }
 
   Map<String, dynamic> _aiMeasurementPayload(List<String> reminders) {
     final items =
         reminders.isEmpty ? const ['晨起空腹体重', '按需记录血压、血糖或今日不适'] : reminders;
-    return {
-      'summary': '今日 ${items.length} 项提醒',
-      'items': items,
-    };
+    return {'summary': '今日 ${items.length} 项提醒', 'items': items};
   }
 
   Future<void> _insertAiPlanReminders(
@@ -1055,9 +1081,11 @@ class HealthRepository extends ChangeNotifier {
   Future<int> cleanupAiPlanReminders() async {
     final db = await database.open();
     final now = DateTime.now();
-    final end = DateTime(now.year, now.month, now.day).add(
-      const Duration(days: 7),
-    );
+    final end = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).add(const Duration(days: 7));
     var deleted = 0;
 
     await db.transaction((txn) async {
@@ -1086,11 +1114,7 @@ class HealthRepository extends ChangeNotifier {
         }
 
         await _queueDelete(txn, 'reminder', row);
-        await txn.delete(
-          'reminder',
-          where: 'id = ?',
-          whereArgs: [row['id']],
-        );
+        await txn.delete('reminder', where: 'id = ?', whereArgs: [row['id']]);
         deleted++;
       }
     });
@@ -1099,29 +1123,106 @@ class HealthRepository extends ChangeNotifier {
     return deleted;
   }
 
-  Future<void> addReminder({
+  Future<ReminderData> addReminder({
     required String type,
     required TimeOfDayValue time,
     String note = '',
+    String imageObjectKey = '',
+    String imageMimeType = '',
+    bool syncAlarm = false,
   }) async {
     final db = await database.open();
     final now = DateTime.now();
-    final remindAt =
-        DateTime(now.year, now.month, now.day, time.hour, time.minute);
+    final remindAt = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      time.hour,
+      time.minute,
+    );
     final timestamp = now.millisecondsSinceEpoch;
-    await db.insert(
+    final payload = <String, dynamic>{
+      'note': note,
+      'syncAlarm': syncAlarm,
+    };
+    if (imageObjectKey.isNotEmpty) {
+      payload['imageObjectKey'] = imageObjectKey;
+      payload['imageMimeType'] = imageMimeType;
+    }
+    final reminder = ReminderData(
+      type: type,
+      remindAt: remindAt.millisecondsSinceEpoch,
+      payload: payload,
+      channel: 'local',
+      status: 'pending',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    );
+    final id = await db.insert('reminder', reminder.toRow());
+    notifyListeners();
+    return ReminderData(
+      id: id,
+      type: reminder.type,
+      remindAt: reminder.remindAt,
+      payload: reminder.payload,
+      channel: reminder.channel,
+      status: reminder.status,
+      createdAt: reminder.createdAt,
+      updatedAt: reminder.updatedAt,
+    );
+  }
+
+  Future<ReminderData> updateReminder({
+    required ReminderData reminder,
+    required TimeOfDayValue time,
+    required String note,
+    required String imageObjectKey,
+    required String imageMimeType,
+    required bool syncAlarm,
+  }) async {
+    final id = reminder.id;
+    if (id == null) throw StateError('提醒记录无效');
+    final db = await database.open();
+    final now = DateTime.now();
+    final remindAt = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      time.hour,
+      time.minute,
+    );
+    final payload = Map<String, dynamic>.from(reminder.payload)
+      ..['note'] = note
+      ..['syncAlarm'] = syncAlarm;
+    if (imageObjectKey.isEmpty) {
+      payload
+        ..remove('imageObjectKey')
+        ..remove('imageMimeType');
+    } else {
+      payload['imageObjectKey'] = imageObjectKey;
+      payload['imageMimeType'] = imageMimeType;
+    }
+    final updated = ReminderData(
+      id: id,
+      userId: reminder.userId,
+      type: reminder.type,
+      remindAt: remindAt.millisecondsSinceEpoch,
+      payload: payload,
+      channel: reminder.channel,
+      status: reminder.status,
+      createdAt: reminder.createdAt,
+      updatedAt: now.millisecondsSinceEpoch,
+      version: reminder.version + 1,
+      isDirty: 1,
+    );
+    await db.update(
       'reminder',
-      ReminderData(
-        type: type,
-        remindAt: remindAt.millisecondsSinceEpoch,
-        payload: {'note': note},
-        channel: 'local',
-        status: 'pending',
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      ).toRow(),
+      updated.toRow(),
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
     );
     notifyListeners();
+    return updated;
   }
 
   Future<void> deleteReminder(int id) async {
@@ -1284,11 +1385,7 @@ class HealthRepository extends ChangeNotifier {
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.update(
       'health_indicator',
-      {
-        'payload_json': jsonEncode(payload),
-        'updated_at': now,
-        'is_dirty': 1,
-      },
+      {'payload_json': jsonEncode(payload), 'updated_at': now, 'is_dirty': 1},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -1316,8 +1413,9 @@ class HealthRepository extends ChangeNotifier {
     final db = await database.open();
     final now = DateTime.now();
     final todayStart = DateTime(now.year, now.month, now.day);
-    final weekStart =
-        todayStart.subtract(Duration(days: todayStart.weekday - 1));
+    final weekStart = todayStart.subtract(
+      Duration(days: todayStart.weekday - 1),
+    );
     final monthStart = DateTime(now.year, now.month, 1);
 
     Future<Map<String, int>> countByType(DateTime start, DateTime end) async {
@@ -1328,7 +1426,7 @@ class HealthRepository extends ChangeNotifier {
           kLocalUserId,
           start.millisecondsSinceEpoch,
           end.millisecondsSinceEpoch,
-          'done'
+          'done',
         ],
       );
       final map = <String, int>{};
@@ -1368,14 +1466,26 @@ class HealthRepository extends ChangeNotifier {
   /// 全量 JSON 备份，包含档案/指标/提醒/打卡记录
   Future<Map<String, dynamic>> exportJson() async {
     final db = await database.open();
-    final profileRows = await db
-        .query('user_profile', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-    final indicatorRows = await db.query('health_indicator',
-        where: 'user_id = ?', whereArgs: [kLocalUserId]);
-    final reminderRows = await db
-        .query('reminder', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-    final clockRows = await db
-        .query('clock_record', where: 'user_id = ?', whereArgs: [kLocalUserId]);
+    final profileRows = await db.query(
+      'user_profile',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
+    final indicatorRows = await db.query(
+      'health_indicator',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
+    final reminderRows = await db.query(
+      'reminder',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
+    final clockRows = await db.query(
+      'clock_record',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
     return {
       'version': '1.0',
       'exportedAt': DateTime.now().toIso8601String(),
@@ -1410,10 +1520,11 @@ class HealthRepository extends ChangeNotifier {
           final mt = switch (e.payload['mealType']) {
             'fasting' => '空腹',
             'postmeal' => '餐后2h',
-            _ => '随机'
+            _ => '随机',
           };
           buf.writeln(
-              '$date,$time,血糖,${e.payload['glucoseMmol'] ?? ''},mmol/L,$mt');
+            '$date,$time,血糖,${e.payload['glucoseMmol'] ?? ''},mmol/L,$mt',
+          );
         case 'heart_rate':
           buf.writeln('$date,$time,心率,${e.payload['bpm'] ?? ''},bpm,');
         case 'lipid':
@@ -1439,7 +1550,7 @@ class HealthRepository extends ChangeNotifier {
           final q = switch (e.payload['quality']) {
             'good' => '好',
             'fair' => '一般',
-            _ => '差'
+            _ => '差',
           };
           buf.writeln('$date,$time,睡眠时长,${e.payload['sleepHours'] ?? ''},h,$q');
         case 'steps':
@@ -1462,12 +1573,21 @@ class HealthRepository extends ChangeNotifier {
 
     await db.transaction((txn) async {
       // 清除现有记录（保留 plan，恢复后可重新生成）
-      await txn.delete('health_indicator',
-          where: 'user_id = ?', whereArgs: [kLocalUserId]);
-      await txn
-          .delete('reminder', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-      await txn.delete('clock_record',
-          where: 'user_id = ?', whereArgs: [kLocalUserId]);
+      await txn.delete(
+        'health_indicator',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+      await txn.delete(
+        'reminder',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+      await txn.delete(
+        'clock_record',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
 
       // 导入指标
       final indicators = exportData['indicators'] as List?;
@@ -1510,13 +1630,20 @@ class HealthRepository extends ChangeNotifier {
         profileMap['user_id'] = kLocalUserId;
         profileMap.remove('id');
         profileMap['updated_at'] = DateTime.now().millisecondsSinceEpoch;
-        final existing = await txn.query('user_profile',
-            where: 'user_id = ?', whereArgs: [kLocalUserId]);
+        final existing = await txn.query(
+          'user_profile',
+          where: 'user_id = ?',
+          whereArgs: [kLocalUserId],
+        );
         if (existing.isEmpty) {
           await txn.insert('user_profile', profileMap);
         } else {
-          await txn.update('user_profile', profileMap,
-              where: 'user_id = ?', whereArgs: [kLocalUserId]);
+          await txn.update(
+            'user_profile',
+            profileMap,
+            where: 'user_id = ?',
+            whereArgs: [kLocalUserId],
+          );
         }
       }
     });
@@ -1538,8 +1665,13 @@ class HealthRepository extends ChangeNotifier {
         'reminder',
         ReminderData(
           type: item.$1,
-          remindAt: DateTime(now.year, now.month, now.day, item.$2, item.$3)
-              .millisecondsSinceEpoch,
+          remindAt: DateTime(
+            now.year,
+            now.month,
+            now.day,
+            item.$2,
+            item.$3,
+          ).millisecondsSinceEpoch,
           payload: {'note': item.$4},
           channel: 'local',
           status: 'pending',
@@ -1574,7 +1706,7 @@ class HealthRepository extends ChangeNotifier {
             '豆腐干 + 坚果',
             '鸡蛋 2个',
             '毛豆 + 豆浆',
-            '黄豆 + 豆腐'
+            '黄豆 + 豆腐',
           ]
         : [
             '鸡胸肉 120g',
@@ -1583,7 +1715,7 @@ class HealthRepository extends ChangeNotifier {
             '牛肉 100g',
             '三文鱼 100g',
             '鸡腿肉（去皮）130g',
-            '猪瘦肉 80g'
+            '猪瘦肉 80g',
           ];
 
     return [
@@ -1687,7 +1819,7 @@ class HealthRepository extends ChangeNotifier {
         'items': [
           '热身 5 分钟（原地踏步 + 肩颈活动）',
           '$cardioType ${durations[0]} 分钟',
-          '整理拉伸 8 分钟'
+          '整理拉伸 8 分钟',
         ],
         'type': 'cardio',
       },
@@ -1699,7 +1831,7 @@ class HealthRepository extends ChangeNotifier {
           '弹力带划船 3×12',
           '俯卧撑 / 推墙 3×10',
           '哑铃弯举 3×12',
-          '核心稳定 10 分钟'
+          '核心稳定 10 分钟',
         ],
         'type': 'strength',
       },
@@ -1717,7 +1849,7 @@ class HealthRepository extends ChangeNotifier {
           '$cardioType ${durations[3] - 10} 分钟',
           '平板支撑 3 组',
           '腹肌卷曲 3 组',
-          '放松拉伸 8 分钟'
+          '放松拉伸 8 分钟',
         ],
         'type': 'cardio',
       },
@@ -1730,7 +1862,7 @@ class HealthRepository extends ChangeNotifier {
           '弓箭步 3×10',
           '臀桥 3×15',
           '小腿提踵 3×20',
-          '拉伸 8 分钟'
+          '拉伸 8 分钟',
         ],
         'type': 'strength',
       },
@@ -1740,7 +1872,7 @@ class HealthRepository extends ChangeNotifier {
         'items': [
           '热身 8 分钟',
           '$cardioType ${durations[5] - 10} 分钟',
-          '拉伸 + 泡沫轴放松 12 分钟'
+          '拉伸 + 泡沫轴放松 12 分钟',
         ],
         'type': 'cardio',
       },
@@ -1770,10 +1902,7 @@ class HealthRepository extends ChangeNotifier {
     if (goal == 'fat_loss') {
       items.add('记录今日饮食摄入（估算热量）');
     }
-    return {
-      'summary': '今日 ${items.length} 项测量',
-      'items': items,
-    };
+    return {'summary': '今日 ${items.length} 项测量', 'items': items};
   }
 }
 
@@ -1847,8 +1976,9 @@ class _RiskResult {
 
     // 有风险：按严重程度描述主要问题
     final severe = risks
-        .where((r) =>
-            r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'))
+        .where(
+          (r) => r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'),
+        )
         .toList();
     if (severe.isNotEmpty) {
       return '检测到 ${severe.length} 项需立即关注的指标，请尽快就医确认，同时参考以下计划调整生活方式。';

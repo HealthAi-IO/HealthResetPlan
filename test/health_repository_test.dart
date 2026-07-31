@@ -282,6 +282,39 @@ void main() {
     expect(report.indicatorCount, 1);
   });
 
+  test('medicine reminder keeps its encrypted image reference', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+
+    final reminder = await repo.addReminder(
+      type: 'medicine',
+      time: const TimeOfDayValue(hour: 8, minute: 30),
+      note: '降压药一片',
+      imageObjectKey: 'files/user-1/medicine-1.enc',
+      imageMimeType: 'image/jpeg',
+    );
+
+    expect(reminder.id, isNotNull);
+    expect(reminder.payload['imageObjectKey'], 'files/user-1/medicine-1.enc');
+    expect(reminder.payload['imageMimeType'], 'image/jpeg');
+
+    final updated = await repo.updateReminder(
+      reminder: reminder,
+      time: const TimeOfDayValue(hour: 9, minute: 15),
+      note: '早餐后服用',
+      imageObjectKey: 'files/user-1/medicine-2.enc',
+      imageMimeType: 'image/webp',
+      syncAlarm: true,
+    );
+    final stored = (await repo.loadReminders()).single;
+
+    expect(updated.timeText, '09:15');
+    expect(stored.payload['note'], '早餐后服用');
+    expect(stored.payload['imageObjectKey'], 'files/user-1/medicine-2.enc');
+    expect(stored.payload['imageMimeType'], 'image/webp');
+    expect(stored.payload['syncAlarm'], isTrue);
+  });
+
   test('AI plan keeps four daily reminders and queues every replaced row',
       () async {
     final database = _MemoryAppDatabase();

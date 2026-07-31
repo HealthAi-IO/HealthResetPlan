@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -59,8 +60,9 @@ class _CaptchaDialogState extends State<CaptchaDialog> {
       });
     }
     try {
-      final challenge =
-          await widget.api.createLoginCaptcha(phone: widget.phone);
+      final challenge = await widget.api
+          .createLoginCaptcha(phone: widget.phone)
+          .timeout(const Duration(seconds: 8));
       final background = base64Decode(challenge.backgroundImageBase64);
       final piece = base64Decode(challenge.pieceImageBase64);
       if (!mounted) return;
@@ -113,6 +115,15 @@ class _CaptchaDialogState extends State<CaptchaDialog> {
     _recordPoint(_trajectory.isEmpty ? 0 : _trajectory.last.y);
     final challenge = _challenge;
     if (challenge == null) return;
+    if (_trajectory.length < 12 ||
+        _stopwatch.elapsed < const Duration(milliseconds: 350)) {
+      setState(() {
+        _serverX = 0;
+        _trajectory.clear();
+        _error = '滑动过快，请慢一点再试';
+      });
+      return;
+    }
 
     setState(() {
       _verifying = true;
@@ -149,14 +160,35 @@ class _CaptchaDialogState extends State<CaptchaDialog> {
       title: const Text('安全验证'),
       content: SizedBox(
         width: 320,
-        child: _loading || challenge == null
-            ? const SizedBox(
+        child: challenge == null
+            ? SizedBox(
                 height: 240,
-                child: Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: _loading
+                      ? const Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text('正在加载安全验证…'),
+                          ],
+                        )
+                      : Text(
+                          _error ?? '安全验证加载失败',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                ),
               )
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_loading) ...[
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 10),
+                  ],
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text('拖动滑块，将拼图移入缺口'),

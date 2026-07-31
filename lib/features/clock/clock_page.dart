@@ -2,6 +2,7 @@ import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
@@ -9,10 +10,14 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
+import '../../core/network/file_api.dart';
 import '../../core/network/telemetry_api.dart';
+import '../../core/storage/report_image_storage.dart';
 
 class ClockPage extends StatefulWidget {
-  const ClockPage({super.key});
+  const ClockPage({super.key, this.initialReminderId});
+
+  final int? initialReminderId;
 
   @override
   State<ClockPage> createState() => _ClockPageState();
@@ -26,6 +31,8 @@ class _ClockPageState extends State<ClockPage> {
   List<ClockRecordData> _records = const [];
   List<ReminderData> _reminders = const [];
   List<PlanRecordData> _plans = const [];
+  int? _openedReminderId;
+  bool _notificationPermissionChecked = false;
 
   @override
   void initState() {
@@ -38,6 +45,14 @@ class _ClockPageState extends State<ClockPage> {
   void dispose() {
     _repo.removeListener(_onRepoChanged);
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ClockPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialReminderId != oldWidget.initialReminderId) {
+      _openInitialReminderIfNeeded();
+    }
   }
 
   void _onRepoChanged() => _load(silent: true);
@@ -54,6 +69,22 @@ class _ClockPageState extends State<ClockPage> {
       _reminders = reminders;
       _plans = plans.where((p) => p.type != 'risk').toList(growable: false);
       _loading = false;
+    });
+    _openInitialReminderIfNeeded();
+    await _checkNotificationPermission();
+  }
+
+  void _openInitialReminderIfNeeded() {
+    final reminderId = widget.initialReminderId;
+    if (reminderId == null || reminderId == _openedReminderId || !mounted) {
+      return;
+    }
+    final reminder =
+        _reminders.where((item) => item.id == reminderId).firstOrNull;
+    if (reminder == null) return;
+    _openedReminderId = reminderId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showReminderDetails(reminder);
     });
   }
 
@@ -78,7 +109,9 @@ class _ClockPageState extends State<ClockPage> {
         content: const Text('请选择本次用药状态：'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
           OutlinedButton(
             onPressed: () => Navigator.pop(ctx, 'skip'),
             child: const Text('跳过'),
@@ -107,7 +140,7 @@ class _ClockPageState extends State<ClockPage> {
           controller: ctrl,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))
+            FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
           ],
           decoration: const InputDecoration(
             labelText: '当前体重',
@@ -117,7 +150,9 @@ class _ClockPageState extends State<ClockPage> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () {
               final v = double.tryParse(ctrl.text);
@@ -137,10 +172,7 @@ class _ClockPageState extends State<ClockPage> {
       note: '体重 $result kg',
     );
     // 联动写入健康指标
-    await _repo.addIndicator(
-      type: 'weight',
-      payload: {'weightKg': result},
-    );
+    await _repo.addIndicator(type: 'weight', payload: {'weightKg': result});
     if (!mounted) return;
     _showSnack('称重 $result kg 已记录 ✓');
   }
@@ -179,37 +211,159 @@ class _ClockPageState extends State<ClockPage> {
       builder: (_) => _ReminderDialog(type: type),
     );
     if (result == null) return;
-    await _repo.addReminder(type: type, time: result.time, note: result.note);
+    var imageObjectKey = '';
+    if (result.image != null) {
+      try {
+        imageObjectKey = await sl<FileApi>().uploadImage(
+          result.image!,
+          HealthRepository.newClientId(),
+        );
+      } catch (_) {
+        if (mounted) _showSnack('药品图片上传失败，请检查网络后重试');
+        return;
+      }
+    }
+    ReminderData reminder;
+    try {
+      reminder = await _repo.addReminder(
+        type: type,
+        time: result.time,
+        note: result.note,
+        imageObjectKey: imageObjectKey,
+        imageMimeType: result.imageMimeType,
+        syncAlarm: result.syncAlarm,
+      );
+    } catch (_) {
+      if (imageObjectKey.isNotEmpty) {
+        try {
+          await sl<FileApi>().delete(imageObjectKey);
+        } catch (_) {}
+      }
+      if (mounted) _showSnack('提醒保存失败，请重试');
+      return;
+    }
+    bool? notificationsGranted;
     try {
       await _scheduler.initialize();
-      await _scheduler.requestPermission();
+      notificationsGranted = await _scheduler.requestPermission();
       await _scheduler.syncAll();
     } catch (_) {}
     if (!mounted) return;
-    _showSnack(result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存');
-    if (result.syncAlarm) {
-      await _syncReminderToSystemAlarm(
-        ReminderData(
-          type: type,
-          remindAt: DateTime(
-            DateTime.now().year,
-            DateTime.now().month,
-            DateTime.now().day,
-            result.time.hour,
-            result.time.minute,
-          ).millisecondsSinceEpoch,
-          payload: const {},
-          channel: 'local',
-          status: 'pending',
-          createdAt: 0,
-          updatedAt: 0,
-        ),
+    if (notificationsGranted == false) {
+      _showNotificationPermissionNotice('提醒已保存，但通知权限尚未开启');
+    } else {
+      _showSnack(
+        result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存',
       );
+    }
+    if (result.syncAlarm) {
+      await _syncReminderToSystemAlarm(reminder);
     }
   }
 
-  Future<String?> _showNoteDialog(
-      {required String title, required String hint}) async {
+  Future<void> _editReminder(ReminderData reminder) async {
+    final result = await _showSmoothDialog<_ReminderDraft>(
+      builder: (_) => _ReminderDialog(type: reminder.type, reminder: reminder),
+    );
+    if (result == null) return;
+
+    final oldImageObjectKey =
+        reminder.payload['imageObjectKey']?.toString() ?? '';
+    var imageObjectKey =
+        result.removeExistingImage ? '' : oldImageObjectKey;
+    var imageMimeType = result.removeExistingImage
+        ? ''
+        : reminder.payload['imageMimeType']?.toString() ?? '';
+    var uploadedImageObjectKey = '';
+    if (result.image != null) {
+      try {
+        uploadedImageObjectKey = await sl<FileApi>().uploadImage(
+          result.image!,
+          HealthRepository.newClientId(),
+        );
+        imageObjectKey = uploadedImageObjectKey;
+        imageMimeType = result.imageMimeType;
+      } catch (_) {
+        if (mounted) _showSnack('药品图片上传失败，请检查网络后重试');
+        return;
+      }
+    }
+
+    ReminderData updated;
+    try {
+      updated = await _repo.updateReminder(
+        reminder: reminder,
+        time: result.time,
+        note: result.note,
+        imageObjectKey: imageObjectKey,
+        imageMimeType: imageMimeType,
+        syncAlarm: result.syncAlarm,
+      );
+    } catch (_) {
+      if (uploadedImageObjectKey.isNotEmpty) {
+        try {
+          await sl<FileApi>().delete(uploadedImageObjectKey);
+        } catch (_) {}
+      }
+      if (mounted) _showSnack('提醒修改失败，请重试');
+      return;
+    }
+
+    if (oldImageObjectKey.isNotEmpty &&
+        oldImageObjectKey != imageObjectKey) {
+      try {
+        await sl<FileApi>().delete(oldImageObjectKey);
+      } catch (_) {}
+    }
+    try {
+      await _scheduler.syncAll();
+    } catch (_) {}
+    if (!mounted) return;
+    bool? notificationsEnabled;
+    try {
+      notificationsEnabled = await _scheduler.notificationsEnabled();
+    } catch (_) {}
+    if (!mounted) return;
+    if (notificationsEnabled == false) {
+      _showNotificationPermissionNotice('提醒已更新，但通知权限尚未开启');
+    } else {
+      _showSnack(
+        result.syncAlarm ? '提醒已更新，请在系统闹钟界面确认修改' : '提醒已更新',
+      );
+    }
+    if (result.syncAlarm) {
+      await _syncReminderToSystemAlarm(updated);
+    }
+  }
+
+  Future<void> _deleteReminder(ReminderData reminder) async {
+    final id = reminder.id;
+    if (id == null) return;
+    await _repo.deleteReminder(id);
+    final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
+    if (imageObjectKey.isNotEmpty) {
+      try {
+        await sl<FileApi>().delete(imageObjectKey);
+      } catch (_) {}
+    }
+    try {
+      await _scheduler.syncAll();
+    } catch (_) {}
+  }
+
+  Future<void> _showReminderDetails(ReminderData reminder) async {
+    final edit = await _showSmoothDialog<bool>(
+      builder: (context) => _ReminderDetailsDialog(reminder: reminder),
+    );
+    if (edit == true && reminder.channel == 'local' && mounted) {
+      await _editReminder(reminder);
+    }
+  }
+
+  Future<String?> _showNoteDialog({
+    required String title,
+    required String hint,
+  }) async {
     final ctrl = TextEditingController();
     final result = await _showSmoothDialog<String>(
       builder: (ctx) => AlertDialog(
@@ -221,7 +375,9 @@ class _ClockPageState extends State<ClockPage> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('保存'),
@@ -262,6 +418,52 @@ class _ClockPageState extends State<ClockPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _checkNotificationPermission() async {
+    if (_notificationPermissionChecked ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        !_reminders.any((reminder) => reminder.channel == 'local')) {
+      return;
+    }
+    _notificationPermissionChecked = true;
+    bool? enabled;
+    try {
+      await _scheduler.initialize();
+      enabled = await _scheduler.notificationsEnabled();
+    } catch (_) {}
+    if (enabled == false && mounted) {
+      _showNotificationPermissionNotice('通知权限未开启，APP 提醒不会显示');
+    }
+  }
+
+  void _showNotificationPermissionNotice(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: '去设置',
+          onPressed: _openNotificationSettings,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openNotificationSettings() async {
+    try {
+      await const AndroidIntent(
+        action: 'android.settings.APP_NOTIFICATION_SETTINGS',
+        arguments: {
+          'android.provider.extra.APP_PACKAGE': 'com.jkcqplan',
+        },
+      ).launch();
+    } catch (_) {
+      await const AndroidIntent(
+        action: 'android.settings.APPLICATION_DETAILS_SETTINGS',
+        data: 'package:com.jkcqplan',
+      ).launch();
+    }
+  }
+
   List<_ClockTarget> _buildTodayTargets(DateTime now) {
     final today = DateTime(now.year, now.month, now.day);
     final targets = <String, _ClockTarget>{};
@@ -283,8 +485,9 @@ class _ClockPageState extends State<ClockPage> {
       ..sort((a, b) {
         final ai = order.indexOf(a.type);
         final bi = order.indexOf(b.type);
-        return (ai == -1 ? order.length : ai)
-            .compareTo(bi == -1 ? order.length : bi);
+        return (ai == -1 ? order.length : ai).compareTo(
+          bi == -1 ? order.length : bi,
+        );
       });
   }
 
@@ -323,44 +526,51 @@ class _ClockPageState extends State<ClockPage> {
           _Panel(
             title: '快速打卡',
             subtitle: '点击记录当前行为',
-            child: LayoutBuilder(builder: (context, constraints) {
-              final cols = constraints.maxWidth >= 600 ? 5 : 3;
-              return GridView.count(
-                crossAxisCount: cols,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 0.95,
-                children: [
-                  _ClockTile(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final cols = constraints.maxWidth >= 600 ? 5 : 3;
+                return GridView.count(
+                  crossAxisCount: cols,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 0.95,
+                  children: [
+                    _ClockTile(
                       icon: Icons.restaurant_outlined,
                       label: '饮食',
                       color: Colors.orange,
-                      onTap: () => _clockWithNote('meal')),
-                  _ClockTile(
+                      onTap: () => _clockWithNote('meal'),
+                    ),
+                    _ClockTile(
                       icon: Icons.directions_run_outlined,
                       label: '运动',
                       color: Colors.green,
-                      onTap: () => _clockWithNote('exercise')),
-                  _ClockTile(
+                      onTap: () => _clockWithNote('exercise'),
+                    ),
+                    _ClockTile(
                       icon: Icons.medication_outlined,
                       label: '用药',
                       color: Colors.redAccent,
-                      onTap: _clockMedicine),
-                  _ClockTile(
+                      onTap: _clockMedicine,
+                    ),
+                    _ClockTile(
                       icon: Icons.scale_outlined,
                       label: '称重',
                       color: AppTheme.deepBlue,
-                      onTap: _clockWeight),
-                  _ClockTile(
+                      onTap: _clockWeight,
+                    ),
+                    _ClockTile(
                       icon: Icons.water_drop_outlined,
                       label: '饮水',
                       color: Colors.lightBlue,
-                      onTap: () => _clockWithNote('water')),
-                ],
-              );
-            }),
+                      onTap: () => _clockWithNote('water'),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
           const SizedBox(height: 14),
 
@@ -373,71 +583,79 @@ class _ClockPageState extends State<ClockPage> {
               runSpacing: 8,
               children: [
                 _ReminderChip(
-                    label: '称重提醒',
-                    icon: Icons.scale_outlined,
-                    onTap: () => _addReminder('weight')),
+                  label: '称重提醒',
+                  icon: Icons.scale_outlined,
+                  onTap: () => _addReminder('weight'),
+                ),
                 _ReminderChip(
-                    label: '饮食提醒',
-                    icon: Icons.restaurant_outlined,
-                    onTap: () => _addReminder('meal')),
+                  label: '饮食提醒',
+                  icon: Icons.restaurant_outlined,
+                  onTap: () => _addReminder('meal'),
+                ),
                 _ReminderChip(
-                    label: '运动提醒',
-                    icon: Icons.directions_run_outlined,
-                    onTap: () => _addReminder('exercise')),
+                  label: '运动提醒',
+                  icon: Icons.directions_run_outlined,
+                  onTap: () => _addReminder('exercise'),
+                ),
                 _ReminderChip(
-                    label: '用药提醒',
-                    icon: Icons.medication_outlined,
-                    onTap: () => _addReminder('medicine')),
+                  label: '用药提醒',
+                  icon: Icons.medication_outlined,
+                  onTap: () => _addReminder('medicine'),
+                ),
                 _ReminderChip(
-                    label: '饮水提醒',
-                    icon: Icons.water_drop_outlined,
-                    onTap: () => _addReminder('water')),
+                  label: '饮水提醒',
+                  icon: Icons.water_drop_outlined,
+                  onTap: () => _addReminder('water'),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 14),
 
           // 今日打卡 + 提醒规则
-          LayoutBuilder(builder: (context, constraints) {
-            final wide = constraints.maxWidth >= 960;
-            final recentPanel = _Panel(
-              title: '今日打卡记录',
-              subtitle:
-                  '${DateFormat('MM月dd日').format(now)} · 共 ${todayRecords.length} 条',
-              child: _RecordList(
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 960;
+              final recentPanel = _Panel(
+                title: '今日打卡记录',
+                subtitle:
+                    '${DateFormat('MM月dd日').format(now)} · 共 ${todayRecords.length} 条',
+                child: _RecordList(
                   records: todayRecords.isEmpty
                       ? _records.take(8).toList()
-                      : todayRecords),
-            );
-            final reminderPanel = _Panel(
-              title: '提醒规则',
-              subtitle: '本地保存的计划提醒',
-              child: _ReminderList(
-                reminders: _reminders,
-                onDelete: (id) async {
-                  await _repo.deleteReminder(id);
-                  try {
-                    await _scheduler.syncAll();
-                  } catch (_) {}
-                },
-                onSyncAlarm: _syncReminderToSystemAlarm,
-              ),
-            );
-            if (wide) {
-              return Row(
+                      : todayRecords,
+                ),
+              );
+              final reminderPanel = _Panel(
+                title: '提醒规则',
+                subtitle: '本地保存的计划提醒',
+                child: _ReminderList(
+                  reminders: _reminders,
+                  onDelete: _deleteReminder,
+                  onEdit: _editReminder,
+                  onSyncAlarm: _syncReminderToSystemAlarm,
+                  onOpen: _showReminderDetails,
+                ),
+              );
+              if (wide) {
+                return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(child: recentPanel),
                     const SizedBox(width: 12),
                     Expanded(child: reminderPanel),
-                  ]);
-            }
-            return Column(children: [
-              recentPanel,
-              const SizedBox(height: 14),
-              reminderPanel
-            ]);
-          }),
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  recentPanel,
+                  const SizedBox(height: 14),
+                  reminderPanel,
+                ],
+              );
+            },
+          ),
           const SizedBox(height: 20),
         ],
       ),
@@ -512,48 +730,63 @@ class _TodayProgressCard extends StatelessWidget {
         gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(children: [
-        Expanded(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('今日打卡进度',
-                style: TextStyle(color: Colors.white70, fontSize: 13)),
-            const SizedBox(height: 6),
-            Text('$done / $total 条完成',
-                style: const TextStyle(
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '今日打卡进度',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$done / $total 条完成',
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
-                    fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: rate,
-                minHeight: 8,
-                backgroundColor: Colors.white24,
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-              ),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: rate,
+                    minHeight: 8,
+                    backgroundColor: Colors.white24,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ]),
-        ),
-        const SizedBox(width: 16),
-        Text('$pct%',
+          ),
+          const SizedBox(width: 16),
+          Text(
+            '$pct%',
             style: const TextStyle(
-                color: Colors.white,
-                fontSize: 36,
-                fontWeight: FontWeight.w900)),
-      ]),
+              color: Colors.white,
+              fontSize: 36,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 // ── 打卡按钮 ─────────────────────────────────────────────────
 class _ClockTile extends StatelessWidget {
-  const _ClockTile(
-      {required this.icon,
-      required this.label,
-      required this.color,
-      required this.onTap});
+  const _ClockTile({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
   final IconData icon;
   final String label;
   final Color color;
@@ -571,20 +804,29 @@ class _ClockTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: color.withValues(alpha: 0.25)),
         ),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(12)),
-            child: Icon(icon, color: color, size: 22),
-          ),
-          const SizedBox(height: 8),
-          Text(label,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
               style: TextStyle(
-                  fontWeight: FontWeight.w700, color: color, fontSize: 13)),
-        ]),
+                fontWeight: FontWeight.w700,
+                color: color,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -592,8 +834,11 @@ class _ClockTile extends StatelessWidget {
 
 // ── 提醒快捷芯片 ──────────────────────────────────────────────
 class _ReminderChip extends StatelessWidget {
-  const _ReminderChip(
-      {required this.label, required this.icon, required this.onTap});
+  const _ReminderChip({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
   final String label;
   final IconData icon;
   final VoidCallback onTap;
@@ -607,7 +852,10 @@ class _ReminderChip extends StatelessWidget {
       backgroundColor: AppTheme.pageBg,
       side: const BorderSide(color: AppTheme.cardBorder),
       labelStyle: const TextStyle(
-          color: AppTheme.deepBlue, fontWeight: FontWeight.w700, fontSize: 13),
+        color: AppTheme.deepBlue,
+        fontWeight: FontWeight.w700,
+        fontSize: 13,
+      ),
     );
   }
 }
@@ -622,86 +870,116 @@ class _RecordList extends StatelessWidget {
     if (records.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 12),
-        child:
-            Text('暂无打卡记录，点击上方按钮开始打卡。', style: TextStyle(color: AppTheme.muted)),
+        child: Text(
+          '暂无打卡记录，点击上方按钮开始打卡。',
+          style: TextStyle(color: AppTheme.muted),
+        ),
       );
     }
-    return Column(children: [
-      for (final r in records.take(20))
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppTheme.pageBg,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: _typeColor(r.type).withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(_typeIcon(r.type),
-                    color: _typeColor(r.type), size: 19),
+    return Column(
+      children: [
+        for (final r in records.take(20))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.pageBg,
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        Text('${r.label}  ',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w700, fontSize: 14)),
-                        if (r.status == 'skip')
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 1),
-                            decoration: BoxDecoration(
-                                color: Colors.orange.shade50,
-                                borderRadius: BorderRadius.circular(6)),
-                            child: const Text('跳过',
-                                style: TextStyle(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: _typeColor(r.type).withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      _typeIcon(r.type),
+                      color: _typeColor(r.type),
+                      size: 19,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              '${r.label}  ',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            if (r.status == 'skip')
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.shade50,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Text(
+                                  '跳过',
+                                  style: TextStyle(
                                     color: Colors.orange,
                                     fontSize: 11,
-                                    fontWeight: FontWeight.w700)),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          r.note.isNotEmpty
+                              ? r.note
+                              : DateFormat('MM月dd日 HH:mm').format(r.clockTime),
+                          style: const TextStyle(
+                            color: AppTheme.muted,
+                            fontSize: 12,
                           ),
-                      ]),
-                      const SizedBox(height: 3),
-                      Text(
-                        r.note.isNotEmpty
-                            ? r.note
-                            : DateFormat('MM月dd日 HH:mm').format(r.clockTime),
-                        style: const TextStyle(
-                            color: AppTheme.muted, fontSize: 12),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ]),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    DateFormat('HH:mm').format(r.clockTime),
+                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                  ),
+                ],
               ),
-              Text(
-                DateFormat('HH:mm').format(r.clockTime),
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-              ),
-            ]),
+            ),
           ),
-        ),
-    ]);
+      ],
+    );
   }
 }
 
 // ── 提醒规则列表 ──────────────────────────────────────────────
 class _ReminderList extends StatefulWidget {
-  const _ReminderList(
-      {required this.reminders,
-      required this.onDelete,
-      required this.onSyncAlarm});
+  const _ReminderList({
+    required this.reminders,
+    required this.onDelete,
+    required this.onEdit,
+    required this.onSyncAlarm,
+    required this.onOpen,
+  });
   final List<ReminderData> reminders;
-  final Future<void> Function(int) onDelete;
+  final Future<void> Function(ReminderData) onDelete;
+  final Future<void> Function(ReminderData) onEdit;
   final Future<void> Function(ReminderData) onSyncAlarm;
+  final Future<void> Function(ReminderData) onOpen;
 
   @override
   State<_ReminderList> createState() => _ReminderListState();
@@ -710,6 +988,7 @@ class _ReminderList extends StatefulWidget {
 class _ReminderListState extends State<_ReminderList> {
   static const _collapsedCount = 4;
   bool _expanded = false;
+  int? _expandedActionReminderId;
 
   @override
   Widget build(BuildContext context) {
@@ -747,105 +1026,207 @@ class _ReminderListState extends State<_ReminderList> {
     final visibleDaily =
         visible.where((reminder) => reminder.channel == 'local').toList();
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (visibleToday.isNotEmpty) ...[
-        const Text('今日计划提醒',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-        const SizedBox(height: 8),
-        ...visibleToday.map((reminder) => _buildReminder(reminder, false)),
-      ],
-      if (visibleDaily.isNotEmpty) ...[
-        if (visibleToday.isNotEmpty) const SizedBox(height: 4),
-        const Text('每日固定提醒',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-        const SizedBox(height: 8),
-        ...visibleDaily.map((reminder) => _buildReminder(reminder, true)),
-      ],
-      if (reminders.length > _collapsedCount)
-        Center(
-          child: TextButton.icon(
-            onPressed: () => setState(() => _expanded = !_expanded),
-            icon: Icon(_expanded
-                ? Icons.keyboard_arrow_up
-                : Icons.keyboard_arrow_down),
-            label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (visibleToday.isNotEmpty) ...[
+          const Text(
+            '今日计划提醒',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
           ),
-        ),
-      const _ReminderSafetyNotice(),
-    ]);
+          const SizedBox(height: 8),
+          ...visibleToday.map((reminder) => _buildReminder(reminder, false)),
+        ],
+        if (visibleDaily.isNotEmpty) ...[
+          if (visibleToday.isNotEmpty) const SizedBox(height: 4),
+          const Text(
+            '每日固定提醒',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          ...visibleDaily.map((reminder) => _buildReminder(reminder, true)),
+        ],
+        if (reminders.length > _collapsedCount)
+          Center(
+            child: TextButton.icon(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(
+                _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+              ),
+              label: Text(_expanded ? '收起提醒' : '展开全部 ${reminders.length} 条'),
+            ),
+          ),
+        const _ReminderSafetyNotice(),
+      ],
+    );
   }
 
   Widget _buildReminder(ReminderData reminder, bool isDaily) {
+    final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
+    final imageProvider = reportImageProvider(imageObjectKey);
+    final showActions =
+        isDaily && reminder.id != null && _expandedActionReminderId == reminder.id;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-        decoration: BoxDecoration(
-            color: AppTheme.pageBg, borderRadius: BorderRadius.circular(14)),
-        child: Row(children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(10),
+      child: Material(
+        color: AppTheme.pageBg,
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            InkWell(
+              onTap: () => widget.onOpen(reminder),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryBlue.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: imageProvider == null
+                          ? const Icon(
+                              Icons.notifications_active_outlined,
+                              color: AppTheme.deepBlue,
+                              size: 19,
+                            )
+                          : Image(
+                              image: imageProvider,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.medication_outlined,
+                                color: AppTheme.deepBlue,
+                                size: 19,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${reminder.label}  ${reminder.timeText}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                          Text(
+                            '${isDaily ? '每日' : '今日'} · ${reminder.payload['note'] as String? ?? reminder.label}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppTheme.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isDaily)
+                      IconButton(
+                        tooltip: showActions ? '收起操作' : '更多操作',
+                        onPressed: () => setState(() {
+                          _expandedActionReminderId =
+                              showActions ? null : reminder.id;
+                        }),
+                        icon: AnimatedRotation(
+                          turns: showActions ? 0.25 : 0,
+                          duration: const Duration(milliseconds: 180),
+                          child: const Icon(Icons.more_vert),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
-            child: const Icon(Icons.notifications_active_outlined,
-                color: AppTheme.deepBlue, size: 19),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('${reminder.label}  ${reminder.timeText}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 14)),
-              Text(
-                '${isDaily ? '每日' : '今日'} · ${reminder.payload['note'] as String? ?? reminder.label}',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-              ),
-            ]),
-          ),
-          PopupMenuButton<_ReminderAction>(
-            tooltip: '更多操作',
-            onSelected: (action) {
-              switch (action) {
-                case _ReminderAction.syncAlarm:
-                  widget.onSyncAlarm(reminder);
-                case _ReminderAction.delete:
-                  if (reminder.id != null) widget.onDelete(reminder.id!);
-              }
-            },
-            itemBuilder: (context) => [
-              if (defaultTargetPlatform == TargetPlatform.android)
-                const PopupMenuItem(
-                  value: _ReminderAction.syncAlarm,
-                  child: ListTile(
-                    leading: Icon(Icons.alarm_add_outlined),
-                    title: Text('同步到系统闹钟'),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ),
-              PopupMenuItem(
-                value: _ReminderAction.delete,
-                enabled: reminder.id != null,
-                child: const ListTile(
-                  leading: Icon(Icons.delete_outline),
-                  title: Text('删除提醒'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ],
-          ),
-        ]),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              child: showActions
+                  ? _ReminderActionBar(
+                      onEdit: () async {
+                        setState(() => _expandedActionReminderId = null);
+                        await widget.onEdit(reminder);
+                      },
+                      onSyncAlarm:
+                          defaultTargetPlatform == TargetPlatform.android
+                          ? () async {
+                              setState(
+                                () => _expandedActionReminderId = null,
+                              );
+                              await widget.onSyncAlarm(reminder);
+                            }
+                          : null,
+                      onDelete: () async {
+                        setState(() => _expandedActionReminderId = null);
+                        await widget.onDelete(reminder);
+                      },
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-enum _ReminderAction { syncAlarm, delete }
+class _ReminderActionBar extends StatelessWidget {
+  const _ReminderActionBar({
+    required this.onEdit,
+    required this.onSyncAlarm,
+    required this.onDelete,
+  });
+
+  final Future<void> Function() onEdit;
+  final Future<void> Function()? onSyncAlarm;
+  final Future<void> Function() onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.05),
+        border: const Border(top: BorderSide(color: AppTheme.cardBorder)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 4,
+          runSpacing: 2,
+          children: [
+            TextButton.icon(
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('编辑'),
+            ),
+            if (onSyncAlarm != null)
+              TextButton.icon(
+                onPressed: onSyncAlarm,
+                icon: const Icon(Icons.alarm_add_outlined, size: 18),
+                label: const Text('同步闹钟'),
+              ),
+            TextButton.icon(
+              onPressed: onDelete,
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('删除'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _ReminderSafetyNotice extends StatelessWidget {
   const _ReminderSafetyNotice();
@@ -873,8 +1254,11 @@ class _ReminderSafetyNotice extends StatelessWidget {
 
 // ── 面板容器 ──────────────────────────────────────────────────
 class _Panel extends StatelessWidget {
-  const _Panel(
-      {required this.title, required this.subtitle, required this.child});
+  const _Panel({
+    required this.title,
+    required this.subtitle,
+    required this.child,
+  });
   final String title;
   final String subtitle;
   final Widget child;
@@ -900,23 +1284,31 @@ class _Panel extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 3),
-        Text(subtitle,
-            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
-        const SizedBox(height: 14),
-        child,
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            subtitle,
+            style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
     );
   }
 }
 
 // ── 提醒弹窗 ──────────────────────────────────────────────────
 class _ReminderDialog extends StatefulWidget {
-  const _ReminderDialog({required this.type});
+  const _ReminderDialog({required this.type, this.reminder});
   final String type;
+  final ReminderData? reminder;
 
   @override
   State<_ReminderDialog> createState() => _ReminderDialogState();
@@ -924,14 +1316,25 @@ class _ReminderDialog extends StatefulWidget {
 
 class _ReminderDialogState extends State<_ReminderDialog> {
   final _noteCtrl = TextEditingController();
+  final _imagePicker = ImagePicker();
   TimeOfDay _time = const TimeOfDay(hour: 7, minute: 0);
+  XFile? _image;
+  String? _imageError;
+  bool _removeExistingImage = false;
   late bool _syncAlarm;
 
   @override
   void initState() {
     super.initState();
-    _syncAlarm = widget.type == 'medicine' &&
-        defaultTargetPlatform == TargetPlatform.android;
+    final reminder = widget.reminder;
+    if (reminder != null) {
+      _time = TimeOfDay.fromDateTime(reminder.remindTime);
+      _noteCtrl.text = reminder.payload['note']?.toString() ?? '';
+    }
+    _syncAlarm = reminder?.payload['syncAlarm'] == true ||
+        (reminder == null &&
+            widget.type == 'medicine' &&
+            defaultTargetPlatform == TargetPlatform.android);
   }
 
   @override
@@ -949,64 +1352,177 @@ class _ReminderDialogState extends State<_ReminderDialog> {
         _ => '提醒',
       };
 
+  String get _existingImageObjectKey =>
+      widget.reminder?.payload['imageObjectKey']?.toString() ?? '';
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('新增$_title'),
+      title: Text(widget.reminder == null ? '新增$_title' : '编辑$_title'),
       content: SizedBox(
         width: 360,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: _noteCtrl,
-            decoration: const InputDecoration(labelText: '备注（选填）'),
-          ),
-          const SizedBox(height: 14),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('提醒时间'),
-            subtitle: Text(_time.format(context)),
-            trailing: TextButton(onPressed: _pickTime, child: const Text('选择')),
-          ),
-          if (defaultTargetPlatform == TargetPlatform.android) ...[
-            const Divider(height: 1),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('同步到手机闹钟', style: TextStyle(fontSize: 14)),
-              subtitle:
-                  const Text('将该时间写入系统时钟App', style: TextStyle(fontSize: 12)),
-              value: _syncAlarm,
-              onChanged: (v) => setState(() => _syncAlarm = v),
-            ),
-          ],
-          if (widget.type == 'medicine')
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(top: 10),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.orange.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _noteCtrl,
+                decoration: const InputDecoration(labelText: '备注（选填）'),
               ),
-              child: const Text(
-                '建议同步到系统闹钟，确保准时提醒。APP 提醒不用于紧急或关键医疗用途。',
-                style: TextStyle(fontSize: 12, color: AppTheme.ink),
+              if (widget.type == 'medicine') ...[
+                const SizedBox(height: 14),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (!kIsWeb &&
+                          defaultTargetPlatform == TargetPlatform.android)
+                        OutlinedButton.icon(
+                          onPressed: () => _pickImage(ImageSource.camera),
+                          icon: const Icon(Icons.camera_alt_outlined),
+                          label: const Text('拍照'),
+                        ),
+                      OutlinedButton.icon(
+                        onPressed: () => _pickImage(ImageSource.gallery),
+                        icon: const Icon(Icons.photo_library_outlined),
+                        label: Text(
+                          kIsWeb ||
+                                  defaultTargetPlatform ==
+                                      TargetPlatform.windows
+                              ? '选择图片'
+                              : '从相册选择',
+                        ),
+                      ),
+                      if (_image != null ||
+                          (_existingImageObjectKey.isNotEmpty &&
+                              !_removeExistingImage))
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _image = null;
+                            _removeExistingImage = true;
+                            _imageError = null;
+                          }),
+                          child: const Text('移除'),
+                        ),
+                    ],
+                  ),
+                ),
+                if (_image != null) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: FutureBuilder<Uint8List>(
+                      future: _image!.readAsBytes(),
+                      builder: (context, snapshot) {
+                        final bytes = snapshot.data;
+                        if (bytes == null) {
+                          return const SizedBox(
+                            height: 120,
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return Image.memory(
+                          bytes,
+                          width: double.infinity,
+                          height: 140,
+                          fit: BoxFit.cover,
+                        );
+                      },
+                    ),
+                  ),
+                ] else if (_existingImageObjectKey.isNotEmpty &&
+                    !_removeExistingImage) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image(
+                      image: reportImageProvider(_existingImageObjectKey)!,
+                      width: double.infinity,
+                      height: 140,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox(
+                        height: 120,
+                        child: Center(child: Text('药品图片加载失败')),
+                      ),
+                    ),
+                  ),
+                ],
+                if (_imageError != null) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _imageError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: 14),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('提醒时间'),
+                subtitle: Text(_time.format(context)),
+                trailing: TextButton(
+                  onPressed: _pickTime,
+                  child: const Text('选择'),
+                ),
               ),
-            ),
-        ]),
+              if (defaultTargetPlatform == TargetPlatform.android) ...[
+                const Divider(height: 1),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('同步到手机闹钟', style: TextStyle(fontSize: 14)),
+                  subtitle: const Text(
+                    '将该时间写入系统时钟App',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  value: _syncAlarm,
+                  onChanged: (v) => setState(() => _syncAlarm = v),
+                ),
+              ],
+              if (widget.type == 'medicine')
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(top: 10),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    '建议同步到系统闹钟，确保准时提醒。APP 提醒不用于紧急或关键医疗用途。',
+                    style: TextStyle(fontSize: 12, color: AppTheme.ink),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
       actions: [
         TextButton(
-            onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
         FilledButton(
           onPressed: () => Navigator.pop(
-              context,
-              _ReminderDraft(
-                time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
-                note: _noteCtrl.text.trim().isEmpty
-                    ? _title
-                    : _noteCtrl.text.trim(),
-                syncAlarm: _syncAlarm,
-              )),
+            context,
+            _ReminderDraft(
+              time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
+              note: _noteCtrl.text.trim().isEmpty
+                  ? _title
+                  : _noteCtrl.text.trim(),
+              syncAlarm: _syncAlarm,
+              image: _image,
+              imageMimeType: _imageMimeType(_image),
+              removeExistingImage: _removeExistingImage,
+            ),
+          ),
           child: const Text('保存'),
         ),
       ],
@@ -1018,14 +1534,117 @@ class _ReminderDialogState extends State<_ReminderDialog> {
     if (picked == null || !mounted) return;
     setState(() => _time = picked);
   }
+
+  Future<void> _pickImage(ImageSource source) async {
+    final image = await _imagePicker.pickImage(
+      source: source,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 82,
+    );
+    if (image == null) return;
+    final extension = image.name.toLowerCase().split('.').last;
+    if (!{'jpg', 'jpeg', 'png', 'webp'}.contains(extension)) {
+      if (mounted) setState(() => _imageError = '仅支持 JPG、PNG 或 WebP 图片');
+      return;
+    }
+    if (await image.length() > 5 * 1024 * 1024) {
+      if (mounted) setState(() => _imageError = '图片不能超过 5MB');
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _image = image;
+        _removeExistingImage = false;
+        _imageError = null;
+      });
+    }
+  }
 }
 
 class _ReminderDraft {
-  const _ReminderDraft(
-      {required this.time, required this.note, this.syncAlarm = false});
+  const _ReminderDraft({
+    required this.time,
+    required this.note,
+    this.syncAlarm = false,
+    this.image,
+    this.imageMimeType = '',
+    this.removeExistingImage = false,
+  });
   final TimeOfDayValue time;
   final String note;
   final bool syncAlarm;
+  final XFile? image;
+  final String imageMimeType;
+  final bool removeExistingImage;
+}
+
+class _ReminderDetailsDialog extends StatelessWidget {
+  const _ReminderDetailsDialog({required this.reminder});
+
+  final ReminderData reminder;
+
+  @override
+  Widget build(BuildContext context) {
+    final note = reminder.payload['note']?.toString() ?? reminder.label;
+    final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
+    final imageProvider = reportImageProvider(imageObjectKey);
+    return AlertDialog(
+      title: Text('${reminder.label} ${reminder.timeText}'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (imageProvider != null) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image(
+                    image: imageProvider,
+                    width: double.infinity,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      height: 180,
+                      child: Center(child: Text('药品图片加载失败')),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              Text(note),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        if (reminder.channel == 'local')
+          TextButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('编辑'),
+          ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('知道了'),
+        ),
+      ],
+    );
+  }
+}
+
+String _imageMimeType(XFile? image) {
+  if (image == null) return '';
+  final provided = image.mimeType;
+  if (provided != null && provided.isNotEmpty) return provided;
+  final extension = image.name.toLowerCase().split('.').last;
+  return switch (extension) {
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'png' => 'image/png',
+    'webp' => 'image/webp',
+    _ => '',
+  };
 }
 
 // ── 工具函数 ──────────────────────────────────────────────────
