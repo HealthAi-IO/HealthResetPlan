@@ -52,7 +52,7 @@ Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppName}"; Flags: nowait
 var
   DeleteDataCheckBox: TNewCheckBox;
 
-function InitializeUninstall(): Boolean;
+procedure InitializeUninstallProgressForm;
 begin
   DeleteDataCheckBox := TNewCheckBox.Create(UninstallProgressForm);
   DeleteDataCheckBox.Parent := UninstallProgressForm;
@@ -61,7 +61,6 @@ begin
   DeleteDataCheckBox.Width := UninstallProgressForm.StatusLabel.Width;
   DeleteDataCheckBox.Caption := '同时删除本机登录信息和缓存';
   DeleteDataCheckBox.Checked := False;
-  Result := True;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -19,6 +19,17 @@ import '../../core/widgets/ai_content_notice.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
 
+bool _isAiPlanProvider(String provider) =>
+    provider.isNotEmpty && provider != 'local' && provider != 'manual';
+
+String _planProviderLabel(String provider) => switch (provider) {
+      'doubao' => '豆包',
+      'qwen' => '通义千问',
+      'glm' => '智谱 GLM',
+      'deepseek' => 'DeepSeek',
+      _ => 'AI',
+    };
+
 class PlanPage extends StatefulWidget {
   const PlanPage({super.key});
 
@@ -315,7 +326,7 @@ class _PlanPageState extends State<PlanPage> {
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(color: AppTheme.cardBorder),
                     ),
-                    child: Text(result.provider,
+                    child: Text(_planProviderLabel(result.provider),
                         style: const TextStyle(
                             fontSize: 11, color: AppTheme.muted)),
                   ),
@@ -550,8 +561,11 @@ class _PlanPageState extends State<PlanPage> {
         if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置。';
         if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试。';
         if (code == 40101) return 'AI 服务密钥失效，请联系管理员检查后台配置。';
+        if (code == 50302) {
+          return '当前模型返回的计划格式异常，自动修复后仍未通过，请稍后重试或切换模型。';
+        }
         if (code == 50301) {
-          return 'AI 服务暂时繁忙，已为你保留本地规则计划，稍后可重试。';
+          return '当前 AI 模型暂时不可用，已为你保留本地规则计划，请稍后重试。';
         }
         if (message != null && message.isNotEmpty) return message;
       }
@@ -566,7 +580,12 @@ class _PlanPageState extends State<PlanPage> {
     }
     final s = e.toString();
     if (s.contains('40301')) return '请先登录账号后再试';
-    if (s.contains('50301')) return 'AI 服务暂时繁忙，已为你保留本地规则计划，稍后可重试。';
+    if (s.contains('50302')) {
+      return '当前模型返回的计划格式异常，自动修复后仍未通过，请稍后重试或切换模型。';
+    }
+    if (s.contains('50301')) {
+      return '当前 AI 模型暂时不可用，已为你保留本地规则计划，请稍后重试。';
+    }
     if (s.contains('Connection') || s.contains('Socket')) {
       return '网络连接失败，请检查后端服务和 WiFi。';
     }
@@ -1009,6 +1028,8 @@ class _PlanHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
+    final isAiPlan = _isAiPlanProvider(riskPlan?.aiProvider ?? '');
+    final sourceColor = isAiPlan ? primary : AppTheme.cardBorder;
     final hasCompleteProfile = profile?.isComplete == true;
     final isCritical = _isCriticalRiskPlan(riskPlan);
     final canGenerate = hasCompleteProfile && !isCritical;
@@ -1018,12 +1039,22 @@ class _PlanHero extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [primary.withValues(alpha: 0.12), Colors.white],
+          colors: isAiPlan
+              ? [
+                  primary.withValues(alpha: 0.15),
+                  primary.withValues(alpha: 0.06),
+                  Colors.white,
+                ]
+              : const [Colors.white, AppTheme.pageBg],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: isAiPlan
+              ? sourceColor.withValues(alpha: 0.28)
+              : AppTheme.cardBorder,
+        ),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1031,8 +1062,20 @@ class _PlanHero extends StatelessWidget {
           final summary = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('7 天健康规划',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('7 天健康规划',
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w800)),
+                  ),
+                  if (riskPlan != null)
+                    _PlanSourceBadge(
+                      isAi: isAiPlan,
+                      provider: riskPlan!.aiProvider,
+                    ),
+                ],
+              ),
               const SizedBox(height: 8),
               Text(
                 isCritical
@@ -1296,6 +1339,12 @@ class _DayPlanCard extends StatelessWidget {
     final exercises = plans.where((item) => item.type == 'exercise').toList();
     final measurements =
         plans.where((item) => item.type == 'measurement').toList();
+    final aiPlans =
+        plans.where((item) => _isAiPlanProvider(item.aiProvider)).toList();
+    final isAiPlan = aiPlans.isNotEmpty;
+    final provider = isAiPlan ? aiPlans.first.aiProvider : 'local';
+    final sourceColor =
+        isAiPlan ? Theme.of(context).colorScheme.primary : AppTheme.cardBorder;
 
     final showMeal = filter == 'all' || filter == 'meal';
     final showExercise = filter == 'all' || filter == 'exercise';
@@ -1307,15 +1356,36 @@ class _DayPlanCard extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: LinearGradient(
+          colors: isAiPlan
+              ? [
+                  sourceColor.withValues(alpha: 0.12),
+                  sourceColor.withValues(alpha: 0.04),
+                  Colors.white,
+                ]
+              : const [Colors.white, AppTheme.pageBg],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: isAiPlan
+              ? sourceColor.withValues(alpha: 0.28)
+              : AppTheme.cardBorder,
+        ),
       ),
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
         childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-        title: Text(displayDate,
-            style: const TextStyle(fontWeight: FontWeight.w800)),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(displayDate,
+                  style: const TextStyle(fontWeight: FontWeight.w800)),
+            ),
+            _PlanSourceBadge(isAi: isAiPlan, provider: provider),
+          ],
+        ),
         subtitle: Text('$visibleCount 条计划',
             style: const TextStyle(color: AppTheme.muted)),
         children: [
@@ -1347,6 +1417,37 @@ class _DayPlanCard extends StatelessWidget {
               label: const Text('添加计划项'),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanSourceBadge extends StatelessWidget {
+  const _PlanSourceBadge({required this.isAi, required this.provider});
+
+  final bool isAi;
+  final String provider;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isAi ? Theme.of(context).colorScheme.primary : AppTheme.muted;
+    final label = isAi ? 'AI · ${_planProviderLabel(provider)}' : '本地规则';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(isAi ? Icons.auto_awesome : Icons.tune, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 11, fontWeight: FontWeight.w700)),
         ],
       ),
     );

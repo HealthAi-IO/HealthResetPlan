@@ -62,6 +62,11 @@ flutter:
     - assets/icons/
     - assets/fonts/OFL.txt
 
+  fonts:
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Variable-1.0.12.ttf
+
 hooks:
   user_defines:
     sqlite3:
