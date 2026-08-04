@@ -23,7 +23,9 @@ import '../network/content_api.dart';
 import '../network/file_api.dart';
 import '../network/online_data_api.dart';
 import '../network/telemetry_api.dart';
+import '../network/web_push_api.dart';
 import '../notification/reminder_scheduler.dart';
+import '../notification/web_push_service.dart';
 import '../storage/app_database.dart';
 
 final GetIt sl = GetIt.instance;
@@ -92,13 +94,24 @@ Future<void> setupServiceLocator() async {
 
   final onlineDataApi = OnlineDataApi(client: apiClient);
   sl.registerSingleton<OnlineDataApi>(onlineDataApi);
+  final webPushApi = WebPushApi(client: apiClient);
+  final webPushService = WebPushService(api: webPushApi);
+  sl.registerSingleton<WebPushApi>(webPushApi);
+  sl.registerSingleton<WebPushService>(webPushService);
+  final reminderScheduler = ReminderScheduler(
+    repository: healthRepository,
+    webPushService: webPushService,
+  );
+  sl.registerSingleton<ReminderScheduler>(reminderScheduler);
   final onlineDataService = OnlineDataService(
     database: appDatabase,
     api: onlineDataApi,
     repository: healthRepository,
+    reminderScheduler: reminderScheduler,
+    webPushService: webPushService,
   );
   apiClient.setSessionExpiredHandler(() async {
-    await onlineDataService.signOut();
+    await onlineDataService.signOut(removePushSubscription: false);
     await UserSession.instance.signOut(sessionExpired: true);
   });
   sl.registerSingleton<OnlineDataService>(onlineDataService);
@@ -118,11 +131,6 @@ Future<void> setupServiceLocator() async {
     ),
   );
   sl.registerLazySingleton<AiConsentApi>(() => AiConsentApi(client: apiClient));
-
-  // 通知调度也改为延迟（main.dart 后台再触发 initialize）
-  sl.registerLazySingleton<ReminderScheduler>(
-    () => ReminderScheduler(repository: healthRepository),
-  );
 }
 
 Future<void> _bindStartupData(

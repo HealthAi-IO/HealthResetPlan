@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../auth/user_session.dart';
+import '../config/app_config.dart';
 
 Future<String> persistReportImage(XFile image, String clientId) async {
   throw UnsupportedError('文件必须通过在线文件接口上传');
@@ -24,7 +25,7 @@ Future<String> restoreReportImage(
 ImageProvider<Object>? reportImageProvider(String objectKey) {
   if (objectKey.isEmpty) return null;
   return NetworkImage(
-    'https://api.jkcqplan.com/api/v1/files/content'
+    '${apiUrl('files/content')}'
     '?objectKey=${Uri.encodeQueryComponent(objectKey)}',
     headers: {
       if (UserSession.instance.accessToken != null)

@@ -2729,12 +2729,9 @@ class _ReminderPreview extends StatelessWidget {
     final now = DateTime.now();
     final reminders = this.reminders.where((reminder) {
       final time = reminder.remindTime;
-      final isToday = time.year == now.year &&
-          time.month == now.month &&
-          time.day == now.day;
       final isUpcomingToday = time.hour > now.hour ||
           (time.hour == now.hour && time.minute > now.minute);
-      return isUpcomingToday && (reminder.channel == 'local' || isToday);
+      return isUpcomingToday && reminder.occursOn(now);
     }).toList(growable: false)
       ..sort((a, b) {
         final aMinutes = a.remindTime.hour * 60 + a.remindTime.minute;

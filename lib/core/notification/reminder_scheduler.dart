@@ -3,20 +3,23 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
+import 'web_push_service.dart';
 
 /// 将 [HealthRepository] 中的提醒规则同步为系统本地通知。
 ///
 /// 调用顺序：initialize() → requestPermission() → syncAll()
 /// 每次新增或删除提醒后再调用一次 syncAll() 保持同步。
 class ReminderScheduler {
-  ReminderScheduler({required this.repository});
+  ReminderScheduler({required this.repository, required this.webPushService});
 
   final HealthRepository repository;
+  final WebPushService webPushService;
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
@@ -32,12 +35,23 @@ class ReminderScheduler {
   static const _dailyChannelId = 'hrp_daily_reminders_v2';
   static const _dailyChannelName = '每日健康提醒';
   static const _dailyChannelDesc = '每日饮食、运动、用药、称重和饮水提醒';
-  static const _planChannelId = 'hrp_reminders';
+  static const _planChannelId = 'hrp_plan_reminders_v2';
   static const _planChannelName = '计划提醒';
   static const _planChannelDesc = '健康计划临时提醒';
+  static const _consentKey = 'reminder_user_consent';
 
   Stream<ReminderData> get reminderEvents => _inAppReminderController.stream;
   Stream<int> get notificationTapEvents => _notificationTapController.stream;
+
+  Future<bool> hasUserConsent() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getBool(_consentKey) == true;
+  }
+
+  Future<void> grantUserConsent() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_consentKey, true);
+  }
 
   int? takePendingNotificationReminderId() {
     final value = _pendingNotificationReminderId;
@@ -45,15 +59,15 @@ class ReminderScheduler {
     return value;
   }
 
-  bool get _usesInAppReminders =>
-      kIsWeb || defaultTargetPlatform == TargetPlatform.windows;
+  bool get _usesInAppReminders => kIsWeb;
 
   bool get _supported =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS ||
           defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux);
+          defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.windows);
 
   // ── 初始化 ─────────────────────────────────────────────────
 
@@ -70,23 +84,29 @@ class ReminderScheduler {
     final tzInfo = await FlutterTimezone.getLocalTimezone();
     tz.setLocalLocation(tz.getLocation(tzInfo.identifier));
 
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const android = AndroidInitializationSettings('notification_icon');
     const darwin = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
     const linux = LinuxInitializationSettings(defaultActionName: '打开健康重启计划');
+    const windows = WindowsInitializationSettings(
+      appName: '健康重启计划',
+      appUserModelId: 'BeijingWeilingji.HealthResetPlan',
+      guid: '9f20e3a4-5f3e-4f6d-8c72-7a82c02f8cb1',
+    );
 
     const settings = InitializationSettings(
       android: android,
       iOS: darwin,
       macOS: darwin,
       linux: linux,
+      windows: windows,
     );
 
     await _plugin.initialize(
-      settings,
+      settings: settings,
       onDidReceiveNotificationResponse: _handleNotificationResponse,
     );
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -107,7 +127,9 @@ class ReminderScheduler {
           _planChannelId,
           _planChannelName,
           description: _planChannelDesc,
-          importance: Importance.defaultImportance,
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
         ),
       );
     }
@@ -123,6 +145,7 @@ class ReminderScheduler {
   // ── 权限请求 ────────────────────────────────────────────────
 
   Future<bool?> requestPermission() async {
+    if (kIsWeb) return webPushService.enable();
     if (!_supported || !_initialized) return true;
 
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -145,7 +168,8 @@ class ReminderScheduler {
   }
 
   Future<bool?> notificationsEnabled() async {
-    if (_usesInAppReminders || !_supported) return true;
+    if (kIsWeb) return webPushService.isEnabled();
+    if (!_supported) return true;
     if (!_initialized) await initialize();
     if (defaultTargetPlatform == TargetPlatform.android) {
       return _plugin
@@ -161,6 +185,10 @@ class ReminderScheduler {
   /// 取消所有已调度通知，再根据数据库中的提醒规则重新调度。
   Future<void> syncAll() async {
     if (!_initialized) return;
+    if (!await hasUserConsent()) {
+      if (_supported) await _plugin.cancelAll();
+      return;
+    }
     if (_usesInAppReminders) {
       _startInAppReminderLoop();
       await _checkInAppReminders();
@@ -173,8 +201,33 @@ class ReminderScheduler {
     final reminders = await repository.loadReminders();
     final now = tz.TZDateTime.now(tz.local);
     for (final reminder in reminders) {
-      if (reminder.id == null) continue;
+      if (reminder.id == null || !reminder.isEnabled) continue;
       await _scheduleUpcoming(reminder, now);
+    }
+  }
+
+  Future<void> syncReminder(ReminderData reminder) async {
+    if (!_initialized) await initialize();
+    if (reminder.id == null) return;
+    if (_usesInAppReminders) {
+      _startInAppReminderLoop();
+      return;
+    }
+    if (!_supported || !await hasUserConsent()) return;
+    await _cancelReminderNotifications(reminder.id!);
+    if (!reminder.isEnabled) return;
+    await _scheduleUpcoming(reminder, tz.TZDateTime.now(tz.local));
+  }
+
+  Future<void> cancelReminder(int reminderId) async {
+    if (!_initialized) await initialize();
+    if (!_supported) return;
+    await _cancelReminderNotifications(reminderId);
+  }
+
+  Future<void> _cancelReminderNotifications(int reminderId) async {
+    for (var suffix = 0; suffix <= 7; suffix++) {
+      await _plugin.cancel(id: reminderId * 10 + suffix);
     }
   }
 
@@ -184,36 +237,51 @@ class ReminderScheduler {
     ReminderData reminder,
     tz.TZDateTime now,
   ) async {
-    final reminderDate = reminder.remindTime;
-    final isLocalRule = reminder.channel == 'local';
-
-    if (isLocalRule) {
-      var next = tz.TZDateTime(
-        now.location,
-        now.year,
-        now.month,
-        now.day,
-        reminderDate.hour,
-        reminderDate.minute,
-      );
-      if (!next.isAfter(now)) {
-        next = next.add(const Duration(days: 1));
+    if (reminder.isWeekly) {
+      for (final weekday in reminder.weekdays) {
+        final scheduled = _nextWeekdayOccurrence(reminder, weekday, now);
+        if (scheduled == null) continue;
+        await _scheduleOnce(
+          reminder,
+          scheduled,
+          weekday,
+          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+        );
       }
-      await _scheduleOnce(
-        reminder,
-        next,
-        0,
-        matchDateTimeComponents: DateTimeComponents.time,
-      );
       return;
     }
 
-    final scheduled = tz.TZDateTime.from(reminderDate, now.location);
-    if (scheduled.isBefore(now) ||
+    final scheduled = tz.TZDateTime.from(reminder.remindTime, now.location);
+    if (!scheduled.isAfter(now)) return;
+    if (reminder.channel != 'local' &&
         scheduled.isAfter(now.add(const Duration(days: 7)))) {
       return;
     }
     await _scheduleOnce(reminder, scheduled, 0);
+  }
+
+  tz.TZDateTime? _nextWeekdayOccurrence(
+    ReminderData reminder,
+    int weekday,
+    tz.TZDateTime now,
+  ) {
+    final today = DateTime(now.year, now.month, now.day);
+    final firstDay =
+        reminder.startDate.isAfter(today) ? reminder.startDate : today;
+    for (var offset = 0; offset < 14; offset++) {
+      final day = firstDay.add(Duration(days: offset));
+      if (day.weekday != weekday || !reminder.occursOn(day)) continue;
+      final scheduled = tz.TZDateTime(
+        now.location,
+        day.year,
+        day.month,
+        day.day,
+        reminder.remindTime.hour,
+        reminder.remindTime.minute,
+      );
+      if (scheduled.isAfter(now)) return scheduled;
+    }
+    return null;
   }
 
   Future<void> _scheduleOnce(
@@ -222,18 +290,13 @@ class ReminderScheduler {
     int dayOffset, {
     DateTimeComponents? matchDateTimeComponents,
   }) async {
-    final note = reminder.payload['note'] as String? ?? '';
-    final body = note.isNotEmpty ? note : reminder.label;
-
     await _plugin.zonedSchedule(
-      reminder.id! * 10 + dayOffset,
-      reminder.label,
-      body,
-      scheduled,
-      _buildDetails(reminder),
+      id: reminder.id! * 10 + dayOffset,
+      title: '健康重启计划提醒',
+      body: '你有一项已设定的健康提醒',
+      scheduledDate: scheduled,
+      notificationDetails: _buildDetails(reminder),
       androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
       matchDateTimeComponents: matchDateTimeComponents,
       payload: 'reminder:${reminder.id}',
     );
@@ -262,14 +325,18 @@ class ReminderScheduler {
             playSound: true,
             enableVibration: true,
             category: AndroidNotificationCategory.reminder,
-            visibility: NotificationVisibility.public,
+            visibility: NotificationVisibility.private,
           )
         : const AndroidNotificationDetails(
             _planChannelId,
             _planChannelName,
             channelDescription: _planChannelDesc,
-            importance: Importance.defaultImportance,
-            priority: Priority.defaultPriority,
+            importance: Importance.high,
+            priority: Priority.high,
+            playSound: true,
+            enableVibration: true,
+            category: AndroidNotificationCategory.reminder,
+            visibility: NotificationVisibility.private,
           );
     return NotificationDetails(
       android: android,
@@ -284,6 +351,9 @@ class ReminderScheduler {
         presentSound: true,
       ),
       linux: LinuxNotificationDetails(),
+      windows: const WindowsNotificationDetails(
+        scenario: WindowsNotificationScenario.reminder,
+      ),
     );
   }
 
@@ -298,14 +368,10 @@ class ReminderScheduler {
     final now = DateTime.now();
     final reminders = await repository.loadReminders();
     for (final reminder in reminders) {
+      if (!reminder.isEnabled) continue;
       final time = reminder.remindTime;
       if (time.hour != now.hour || time.minute != now.minute) continue;
-      if (reminder.channel != 'local' &&
-          (time.year != now.year ||
-              time.month != now.month ||
-              time.day != now.day)) {
-        continue;
-      }
+      if (!reminder.occursOn(now)) continue;
 
       final id = reminder.id?.toString() ??
           '${reminder.type}-${time.hour}-${time.minute}';

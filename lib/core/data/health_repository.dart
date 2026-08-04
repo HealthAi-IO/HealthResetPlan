@@ -754,6 +754,7 @@ class HealthRepository extends ChangeNotifier {
   Future<void> applyAiPlan({
     required Map<String, dynamic> plan,
     required String provider,
+    bool createReminders = true,
   }) async {
     final rawDays = plan['days'];
     final days = rawDays is List
@@ -844,15 +845,17 @@ class HealthRepository extends ChangeNotifier {
           replace: true,
         );
 
-        await _insertAiPlanReminders(
-          txn,
-          date: date,
-          diet: diet,
-          exercise: exercise,
-          reminders: reminders,
-          timestamp: timestamp,
-          dayIndex: i + 1,
-        );
+        if (createReminders) {
+          await _insertAiPlanReminders(
+            txn,
+            date: date,
+            diet: diet,
+            exercise: exercise,
+            reminders: reminders,
+            timestamp: timestamp,
+            dayIndex: i + 1,
+          );
+        }
       }
 
       await txn.insert(
@@ -1126,6 +1129,9 @@ class HealthRepository extends ChangeNotifier {
   Future<ReminderData> addReminder({
     required String type,
     required TimeOfDayValue time,
+    required DateTime date,
+    required String scheduleMode,
+    required List<int> weekdays,
     String note = '',
     String imageObjectKey = '',
     String imageMimeType = '',
@@ -1134,9 +1140,9 @@ class HealthRepository extends ChangeNotifier {
     final db = await database.open();
     final now = DateTime.now();
     final remindAt = DateTime(
-      now.year,
-      now.month,
-      now.day,
+      date.year,
+      date.month,
+      date.day,
       time.hour,
       time.minute,
     );
@@ -1144,6 +1150,15 @@ class HealthRepository extends ChangeNotifier {
     final payload = <String, dynamic>{
       'note': note,
       'syncAlarm': syncAlarm,
+      'scheduleMode': scheduleMode,
+      'startDate': DateTime(
+        date.year,
+        date.month,
+        date.day,
+      ).millisecondsSinceEpoch,
+      'weekdays': scheduleMode == 'weekly'
+          ? (weekdays.toSet().toList()..sort())
+          : <int>[],
     };
     if (imageObjectKey.isNotEmpty) {
       payload['imageObjectKey'] = imageObjectKey;
@@ -1175,6 +1190,9 @@ class HealthRepository extends ChangeNotifier {
   Future<ReminderData> updateReminder({
     required ReminderData reminder,
     required TimeOfDayValue time,
+    required DateTime date,
+    required String scheduleMode,
+    required List<int> weekdays,
     required String note,
     required String imageObjectKey,
     required String imageMimeType,
@@ -1185,15 +1203,24 @@ class HealthRepository extends ChangeNotifier {
     final db = await database.open();
     final now = DateTime.now();
     final remindAt = DateTime(
-      now.year,
-      now.month,
-      now.day,
+      date.year,
+      date.month,
+      date.day,
       time.hour,
       time.minute,
     );
     final payload = Map<String, dynamic>.from(reminder.payload)
       ..['note'] = note
-      ..['syncAlarm'] = syncAlarm;
+      ..['syncAlarm'] = syncAlarm
+      ..['scheduleMode'] = scheduleMode
+      ..['startDate'] = DateTime(
+        date.year,
+        date.month,
+        date.day,
+      ).millisecondsSinceEpoch
+      ..['weekdays'] = scheduleMode == 'weekly'
+          ? (weekdays.toSet().toList()..sort())
+          : <int>[];
     if (imageObjectKey.isEmpty) {
       payload
         ..remove('imageObjectKey')
@@ -1218,6 +1245,41 @@ class HealthRepository extends ChangeNotifier {
     await db.update(
       'reminder',
       updated.toRow(),
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+    );
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ReminderData> setReminderEnabled(
+    ReminderData reminder,
+    bool enabled,
+  ) async {
+    final id = reminder.id;
+    if (id == null) throw StateError('提醒记录无效');
+    final db = await database.open();
+    final updated = ReminderData(
+      id: id,
+      userId: reminder.userId,
+      type: reminder.type,
+      remindAt: reminder.remindAt,
+      payload: reminder.payload,
+      channel: reminder.channel,
+      status: enabled ? 'pending' : 'paused',
+      createdAt: reminder.createdAt,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+      version: reminder.version + 1,
+      isDirty: 1,
+    );
+    await db.update(
+      'reminder',
+      {
+        'status': updated.status,
+        'updated_at': updated.updatedAt,
+        'version': updated.version,
+        'is_dirty': updated.isDirty,
+      },
       where: 'id = ? AND user_id = ?',
       whereArgs: [id, kLocalUserId],
     );

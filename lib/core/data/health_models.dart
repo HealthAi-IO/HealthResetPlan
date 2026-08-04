@@ -801,6 +801,66 @@ class ReminderData {
 
   DateTime get remindTime => DateTime.fromMillisecondsSinceEpoch(remindAt);
 
+  bool get isEnabled => status != 'paused';
+
+  String get source => channel == 'local' ? 'manual' : channel;
+
+  bool get isWeekly => channel == 'local' && payload['scheduleMode'] != 'once';
+
+  List<int> get weekdays {
+    if (!isWeekly) return const [];
+    final raw = payload['weekdays'];
+    if (raw is! List) return const [1, 2, 3, 4, 5, 6, 7];
+    final values = raw
+        .whereType<num>()
+        .map((value) => value.toInt())
+        .where((value) => value >= 1 && value <= 7)
+        .toSet()
+        .toList()
+      ..sort();
+    return values.isEmpty ? const [1, 2, 3, 4, 5, 6, 7] : values;
+  }
+
+  DateTime get startDate {
+    final raw = payload['startDate'];
+    final value = raw is num ? raw.toInt() : null;
+    final date =
+        value == null ? remindTime : DateTime.fromMillisecondsSinceEpoch(value);
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  bool occursOn(DateTime date) {
+    final day = DateTime(date.year, date.month, date.day);
+    if (!isWeekly) {
+      final reminderDay = DateTime(
+        remindTime.year,
+        remindTime.month,
+        remindTime.day,
+      );
+      return reminderDay == day;
+    }
+    return !day.isBefore(startDate) && weekdays.contains(day.weekday);
+  }
+
+  DateTime? nextOccurrence(DateTime after) {
+    if (!isWeekly) return remindTime.isAfter(after) ? remindTime : null;
+    final afterDay = DateTime(after.year, after.month, after.day);
+    final firstDay = startDate.isAfter(afterDay) ? startDate : afterDay;
+    for (var offset = 0; offset < 14; offset++) {
+      final day = firstDay.add(Duration(days: offset));
+      if (!occursOn(day)) continue;
+      final candidate = DateTime(
+        day.year,
+        day.month,
+        day.day,
+        remindTime.hour,
+        remindTime.minute,
+      );
+      if (candidate.isAfter(after)) return candidate;
+    }
+    return null;
+  }
+
   String get label {
     return switch (type) {
       'meal' => '饮食提醒',

@@ -14,6 +14,8 @@ import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/network/telemetry_api.dart';
+import '../../core/notification/reminder_consent.dart';
+import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
 
@@ -42,6 +44,7 @@ class _PlanPageState extends State<PlanPage> {
   final AiApi _aiApi = sl<AiApi>();
   final AiPlanGenerationController _aiPlanController =
       sl<AiPlanGenerationController>();
+  final ReminderScheduler _reminderScheduler = sl<ReminderScheduler>();
 
   bool _loading = true;
   bool _presentingAiResult = false;
@@ -427,19 +430,34 @@ class _PlanPageState extends State<PlanPage> {
                       onPressed: !hasExecutablePlan
                           ? null
                           : () async {
+                              final reminderConsent = await confirmReminderUse(
+                                context,
+                                _reminderScheduler,
+                              );
+                              if (!mounted) return;
+                              final createReminders = reminderConsent ==
+                                  ReminderConsentResult.allowed;
                               final messenger = ScaffoldMessenger.of(context);
                               Navigator.pop(context);
                               try {
                                 await _repo.applyAiPlan(
                                   plan: parsed,
                                   provider: result.provider,
+                                  createReminders: createReminders,
                                 );
+                                if (createReminders) {
+                                  await _reminderScheduler.syncAll();
+                                }
                                 if (mounted) {
                                   _aiPlanController.clear();
                                   await _load(silent: true);
                                   messenger.showSnackBar(
                                     SnackBar(
-                                      content: const Text('AI 方案已应用到打卡任务'),
+                                      content: Text(
+                                        createReminders
+                                            ? 'AI 方案和计划提醒已应用'
+                                            : 'AI 方案已应用，未开启计划提醒',
+                                      ),
                                       action: SnackBarAction(
                                         label: '去打卡',
                                         onPressed: () => context.push('/clock'),

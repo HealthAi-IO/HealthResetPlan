@@ -289,6 +289,9 @@ void main() {
     final reminder = await repo.addReminder(
       type: 'medicine',
       time: const TimeOfDayValue(hour: 8, minute: 30),
+      date: DateTime(2026, 8, 3),
+      scheduleMode: 'weekly',
+      weekdays: const [1, 3, 5],
       note: '降压药一片',
       imageObjectKey: 'files/user-1/medicine-1.enc',
       imageMimeType: 'image/jpeg',
@@ -297,10 +300,21 @@ void main() {
     expect(reminder.id, isNotNull);
     expect(reminder.payload['imageObjectKey'], 'files/user-1/medicine-1.enc');
     expect(reminder.payload['imageMimeType'], 'image/jpeg');
+    expect(reminder.isWeekly, isTrue);
+    expect(reminder.weekdays, [1, 3, 5]);
+    expect(reminder.occursOn(DateTime(2026, 8, 3)), isTrue);
+    expect(reminder.occursOn(DateTime(2026, 8, 4)), isFalse);
+    expect(
+      reminder.nextOccurrence(DateTime(2026, 8, 3, 9)),
+      DateTime(2026, 8, 5, 8, 30),
+    );
 
     final updated = await repo.updateReminder(
       reminder: reminder,
       time: const TimeOfDayValue(hour: 9, minute: 15),
+      date: DateTime(2026, 8, 5),
+      scheduleMode: 'once',
+      weekdays: const [],
       note: '早餐后服用',
       imageObjectKey: 'files/user-1/medicine-2.enc',
       imageMimeType: 'image/webp',
@@ -313,6 +327,30 @@ void main() {
     expect(stored.payload['imageObjectKey'], 'files/user-1/medicine-2.enc');
     expect(stored.payload['imageMimeType'], 'image/webp');
     expect(stored.payload['syncAlarm'], isTrue);
+    expect(stored.isWeekly, isFalse);
+    expect(stored.remindTime, DateTime(2026, 8, 5, 9, 15));
+  });
+
+  test('reminder can be paused and resumed', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    final reminder = await repo.addReminder(
+      type: 'water',
+      time: const TimeOfDayValue(hour: 10, minute: 0),
+      date: DateTime(2026, 8, 3),
+      scheduleMode: 'weekly',
+      weekdays: const [1, 2, 3, 4, 5],
+    );
+
+    await repo.setReminderEnabled(reminder, false);
+    final paused = (await repo.loadReminders()).single;
+    expect(paused.isEnabled, isFalse);
+    expect(paused.status, 'paused');
+
+    await repo.setReminderEnabled(paused, true);
+    final resumed = (await repo.loadReminders()).single;
+    expect(resumed.isEnabled, isTrue);
+    expect(resumed.status, 'pending');
   });
 
   test('AI plan keeps four daily reminders and queues every replaced row',
@@ -356,6 +394,34 @@ void main() {
 
     expect(await repo.loadReminders(), hasLength(28));
     expect(await database.query('sync_queue'), hasLength(28));
+  });
+
+  test('AI plan can be applied without creating reminders', () async {
+    final database = _MemoryAppDatabase();
+    final repo = HealthRepository(database: database);
+    await repo.initialize();
+
+    await repo.applyAiPlan(
+      provider: 'test',
+      createReminders: false,
+      plan: {
+        'days': List.generate(
+          7,
+          (_) => {
+            'diet': {
+              'breakfast': ['早餐'],
+              'lunch': ['午餐'],
+              'dinner': ['晚餐'],
+            },
+            'exercise': {'type': '快走', 'durationMinutes': 30},
+            'reminders': ['测量血压'],
+          },
+        ),
+      },
+    );
+
+    expect(await repo.loadPlans(), isNotEmpty);
+    expect(await repo.loadReminders(), isEmpty);
   });
 }
 

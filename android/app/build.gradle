@@ -18,12 +18,12 @@ android {
 
     compileOptions {
         coreLibraryDesugaringEnabled true
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_1_8
+        jvmTarget = JavaVersion.VERSION_17
     }
 
     defaultConfig {
@@ -35,6 +35,20 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders += [appScheme: "healthresetplan"]
+    }
+
+    flavorDimensions += "environment"
+    productFlavors {
+        production {
+            dimension = "environment"
+        }
+        development {
+            dimension = "environment"
+            applicationIdSuffix = ".dev"
+            resValue "string", "app_name", "健康重启计划-测试"
+            manifestPlaceholders += [appScheme: "healthresetplan-dev"]
+        }
     }
 
     signingConfigs {
@@ -61,5 +75,5 @@ flutter {
 }
 
 dependencies {
-    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }

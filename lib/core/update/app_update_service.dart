@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/app_config.dart';
 import '../network/api_client.dart';
 
 class AppUpdateInfo {
@@ -10,6 +11,7 @@ class AppUpdateInfo {
     required this.forceUpdate,
     required this.packageUrl,
     required this.releaseNotes,
+    required this.packageSha256,
     this.packageSizeMb,
   });
 
@@ -17,6 +19,7 @@ class AppUpdateInfo {
   final bool forceUpdate;
   final String packageUrl;
   final String releaseNotes;
+  final String packageSha256;
   final num? packageSizeMb;
 
   static AppUpdateInfo? fromJson(Map<String, dynamic> json) {
@@ -24,16 +27,32 @@ class AppUpdateInfo {
 
     final latestVersion = json['latestVersion'] as String? ?? '';
     final packageUrl = json['packageUrl'] as String? ?? '';
-    if (latestVersion.isEmpty || packageUrl.isEmpty) return null;
+    final packageSha256 = json['packageSha256'] as String? ?? '';
+    if (latestVersion.isEmpty || !isTrustedPackageUrl(packageUrl)) return null;
+    if (packageSha256.isNotEmpty &&
+        !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(packageSha256)) {
+      return null;
+    }
 
     return AppUpdateInfo(
       latestVersion: latestVersion,
       forceUpdate: json['forceUpdate'] == true,
       packageUrl: packageUrl,
       releaseNotes: json['releaseNotes'] as String? ?? '',
+      packageSha256: packageSha256.toLowerCase(),
       packageSizeMb: json['packageSizeMb'] as num?,
     );
   }
+}
+
+bool isTrustedPackageUrl(String value) {
+  final uri = Uri.tryParse(value);
+  return uri != null &&
+      uri.scheme == 'https' &&
+      uri.host == 'jkcqplan.com' &&
+      !uri.hasPort &&
+      uri.userInfo.isEmpty &&
+      uri.path.startsWith('/downloads/');
 }
 
 class AppUpdateService {
@@ -53,7 +72,7 @@ class AppUpdateService {
         queryParameters: {
           'platform': platform,
           'currentVersion': packageInfo.version,
-          'channel': 'official',
+          'channel': appReleaseChannel,
           'deviceId': prefs.getString('client_device_id') ?? '',
         },
       );

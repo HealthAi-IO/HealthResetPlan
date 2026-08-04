@@ -40,6 +40,36 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
     }
   }
 
+  Future<bool> _openContentUrl(String value) async {
+    final uri = Uri.tryParse(value);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
+      return false;
+    }
+    final official =
+        uri.host == 'jkcqplan.com' || uri.host.endsWith('.jkcqplan.com');
+    if (!official) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('打开外部链接？'),
+          content: Text(uri.host),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('继续'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return false;
+    }
+    return launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -160,10 +190,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                             fontSize: 16,
                             height: 1.75,
                           ),
-                          onTapUrl: (url) => launchUrl(
-                            Uri.parse(url),
-                            mode: LaunchMode.externalApplication,
-                          ),
+                          onTapUrl: _openContentUrl,
                         )
                       else
                         const Text('该内容类型将在后续版本开放。'),

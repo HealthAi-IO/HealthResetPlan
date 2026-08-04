@@ -829,12 +829,12 @@ class _ProfilePageState extends State<ProfilePage> {
     );
     if (confirmed != true) return;
     final refreshToken = UserSession.instance.refreshToken;
+    await sl<OnlineDataService>().signOut();
     if (refreshToken != null && refreshToken.isNotEmpty) {
       try {
         await sl<AuthApi>().logout(refreshToken);
       } catch (_) {}
     }
-    await sl<OnlineDataService>().signOut();
     await UserSession.instance.clear();
     sl<ApiClient>().setAccessToken(null);
     if (mounted) context.go('/login');

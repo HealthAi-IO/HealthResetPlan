@@ -77,7 +77,9 @@ class _AppLoaderState extends State<_AppLoader> {
 
   void _initNotificationsInBackground() {
     final scheduler = sl<ReminderScheduler>();
-    scheduler.initialize().then((_) => scheduler.syncAll()).catchError((_) {});
+    scheduler.initialize().then((_) => scheduler.syncAll()).catchError((error) {
+      debugPrint('Notification initialization failed: $error');
+    });
   }
 
   @override
@@ -258,6 +260,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   late final AiPlanGenerationController _aiPlanController;
   bool _updateChecked = false;
   int _handledAiPlanEventId = 0;
+  Timer? _reminderRefreshTimer;
 
   @override
   void initState() {
@@ -279,6 +282,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     final siteMessages = sl<SiteMessageService>();
     _siteMessageSubscription = siteMessages.events.listen(_showSiteMessage);
     siteMessages.start();
+    _scheduleReminderRefresh();
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
   }
 
@@ -289,6 +293,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     _reminderSubscription?.cancel();
     _notificationTapSubscription?.cancel();
     _siteMessageSubscription?.cancel();
+    _reminderRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -296,7 +301,26 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       sl<SiteMessageService>().poll();
+      sl<ReminderScheduler>().syncAll().catchError((error) {
+        debugPrint('Reminder refresh failed: $error');
+      });
+      _scheduleReminderRefresh();
     }
+  }
+
+  void _scheduleReminderRefresh() {
+    _reminderRefreshTimer?.cancel();
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    _reminderRefreshTimer = Timer(
+      tomorrow.difference(now) + const Duration(seconds: 1),
+      () {
+        sl<ReminderScheduler>().syncAll().catchError((error) {
+          debugPrint('Reminder refresh failed: $error');
+        });
+        _scheduleReminderRefresh();
+      },
+    );
   }
 
   void _showSiteMessage(SiteMessage message) {
@@ -419,6 +443,12 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   }
 
   Future<void> _openUpdate(String packageUrl) async {
+    if (!isTrustedPackageUrl(packageUrl)) {
+      appMessengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text('更新地址未通过安全校验')),
+      );
+      return;
+    }
     final opened = await launchUrl(
       Uri.parse(packageUrl),
       mode: LaunchMode.externalApplication,

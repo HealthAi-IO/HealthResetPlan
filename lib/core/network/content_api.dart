@@ -68,10 +68,10 @@ class ContentApi {
   Future<void> markAllMessagesRead() => _client.dio.post('/messages/read-all');
 
   String assetUrl(String value) {
-    if (value.isEmpty ||
-        value.startsWith('http://') ||
-        value.startsWith('https://')) {
-      return value;
+    if (value.isEmpty) return value;
+    final uri = Uri.tryParse(value);
+    if (uri != null && uri.hasScheme) {
+      return uri.scheme == 'https' ? value : '';
     }
     return Uri.parse(_client.dio.options.baseUrl).resolve(value).toString();
   }

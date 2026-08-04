@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../auth/user_session.dart';
+import '../config/app_config.dart';
 
 const _skipAuthRefreshKey = 'skipAuthRefresh';
 
@@ -10,10 +11,7 @@ const _skipAuthRefreshKey = 'skipAuthRefresh';
 /// 本类只负责 HTTP 通信，不处理加密 / 解密。
 class ApiClient {
   ApiClient({
-    String baseUrl = const String.fromEnvironment(
-      'API_BASE_URL',
-      defaultValue: 'https://api.jkcqplan.com/api/v1',
-    ),
+    String baseUrl = apiBaseUrl,
     HttpClientAdapter? adapter,
   })  : _refreshDio = Dio(
           BaseOptions(

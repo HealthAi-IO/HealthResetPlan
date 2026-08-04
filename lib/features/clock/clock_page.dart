@@ -1,14 +1,18 @@
+import 'dart:async';
+
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/notification/reminder_consent.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import '../../core/network/file_api.dart';
 import '../../core/network/telemetry_api.dart';
@@ -23,7 +27,7 @@ class ClockPage extends StatefulWidget {
   State<ClockPage> createState() => _ClockPageState();
 }
 
-class _ClockPageState extends State<ClockPage> {
+class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
   final HealthRepository _repo = sl<HealthRepository>();
   final ReminderScheduler _scheduler = sl<ReminderScheduler>();
 
@@ -33,18 +37,44 @@ class _ClockPageState extends State<ClockPage> {
   List<PlanRecordData> _plans = const [];
   int? _openedReminderId;
   bool _notificationPermissionChecked = false;
+  Timer? _dayRefreshTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _repo.addListener(_onRepoChanged);
+    _scheduleDayRefresh();
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _dayRefreshTimer?.cancel();
     _repo.removeListener(_onRepoChanged);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    _notificationPermissionChecked = false;
+    _scheduleDayRefresh();
+    _load(silent: true);
+  }
+
+  void _scheduleDayRefresh() {
+    _dayRefreshTimer?.cancel();
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    _dayRefreshTimer = Timer(
+      tomorrow.difference(now) + const Duration(seconds: 1),
+      () {
+        _load(silent: true);
+        _scheduleDayRefresh();
+      },
+    );
   }
 
   @override
@@ -177,7 +207,12 @@ class _ClockPageState extends State<ClockPage> {
     _showSnack('称重 $result kg 已记录 ✓');
   }
 
-  Future<void> _openSystemAlarm(int hour, int minute, String label) async {
+  Future<void> _openSystemAlarm(
+    int hour,
+    int minute,
+    String label, {
+    List<int> weekdays = const [],
+  }) async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     final intent = AndroidIntent(
       action: 'android.intent.action.SET_ALARM',
@@ -186,6 +221,9 @@ class _ClockPageState extends State<ClockPage> {
         'android.intent.extra.alarm.MINUTES': minute,
         'android.intent.extra.alarm.MESSAGE': label,
         'android.intent.extra.alarm.VIBRATE': true,
+        if (weekdays.isNotEmpty)
+          'android.intent.extra.alarm.DAYS':
+              weekdays.map((weekday) => weekday % 7 + 1).toList(),
       },
     );
     await intent.launch();
@@ -197,6 +235,7 @@ class _ClockPageState extends State<ClockPage> {
         reminder.remindTime.hour,
         reminder.remindTime.minute,
         reminder.label,
+        weekdays: reminder.isWeekly ? reminder.weekdays : const [],
       );
       if (mounted) {
         _showSnack('已打开系统闹钟，请在系统界面确认创建');
@@ -207,6 +246,12 @@ class _ClockPageState extends State<ClockPage> {
   }
 
   Future<void> _addReminder(String type) async {
+    final consent = await confirmReminderUse(context, _scheduler);
+    if (!mounted || consent == ReminderConsentResult.declined) return;
+    if (consent == ReminderConsentResult.notificationsDisabled) {
+      _showNotificationPermissionNotice('请先开启通知权限，再使用提醒');
+      return;
+    }
     final result = await _showSmoothDialog<_ReminderDraft>(
       builder: (_) => _ReminderDialog(type: type),
     );
@@ -228,6 +273,9 @@ class _ClockPageState extends State<ClockPage> {
       reminder = await _repo.addReminder(
         type: type,
         time: result.time,
+        date: result.date,
+        scheduleMode: result.scheduleMode,
+        weekdays: result.weekdays,
         note: result.note,
         imageObjectKey: imageObjectKey,
         imageMimeType: result.imageMimeType,
@@ -242,20 +290,16 @@ class _ClockPageState extends State<ClockPage> {
       if (mounted) _showSnack('提醒保存失败，请重试');
       return;
     }
-    bool? notificationsGranted;
     try {
-      await _scheduler.initialize();
-      notificationsGranted = await _scheduler.requestPermission();
-      await _scheduler.syncAll();
-    } catch (_) {}
-    if (!mounted) return;
-    if (notificationsGranted == false) {
-      _showNotificationPermissionNotice('提醒已保存，但通知权限尚未开启');
-    } else {
-      _showSnack(
-        result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存',
-      );
+      await _scheduler.syncReminder(reminder);
+    } catch (error, stackTrace) {
+      debugPrint('Reminder scheduling failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
     }
+    if (!mounted) return;
+    _showSnack(
+      result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存',
+    );
     if (result.syncAlarm) {
       await _syncReminderToSystemAlarm(reminder);
     }
@@ -269,8 +313,7 @@ class _ClockPageState extends State<ClockPage> {
 
     final oldImageObjectKey =
         reminder.payload['imageObjectKey']?.toString() ?? '';
-    var imageObjectKey =
-        result.removeExistingImage ? '' : oldImageObjectKey;
+    var imageObjectKey = result.removeExistingImage ? '' : oldImageObjectKey;
     var imageMimeType = result.removeExistingImage
         ? ''
         : reminder.payload['imageMimeType']?.toString() ?? '';
@@ -294,6 +337,9 @@ class _ClockPageState extends State<ClockPage> {
       updated = await _repo.updateReminder(
         reminder: reminder,
         time: result.time,
+        date: result.date,
+        scheduleMode: result.scheduleMode,
+        weekdays: result.weekdays,
         note: result.note,
         imageObjectKey: imageObjectKey,
         imageMimeType: imageMimeType,
@@ -309,14 +355,13 @@ class _ClockPageState extends State<ClockPage> {
       return;
     }
 
-    if (oldImageObjectKey.isNotEmpty &&
-        oldImageObjectKey != imageObjectKey) {
+    if (oldImageObjectKey.isNotEmpty && oldImageObjectKey != imageObjectKey) {
       try {
         await sl<FileApi>().delete(oldImageObjectKey);
       } catch (_) {}
     }
     try {
-      await _scheduler.syncAll();
+      await _scheduler.syncReminder(updated);
     } catch (_) {}
     if (!mounted) return;
     bool? notificationsEnabled;
@@ -347,8 +392,19 @@ class _ClockPageState extends State<ClockPage> {
       } catch (_) {}
     }
     try {
-      await _scheduler.syncAll();
+      await _scheduler.cancelReminder(id);
     } catch (_) {}
+  }
+
+  Future<void> _toggleReminder(ReminderData reminder) async {
+    final updated =
+        await _repo.setReminderEnabled(reminder, !reminder.isEnabled);
+    try {
+      await _scheduler.syncReminder(updated);
+    } catch (_) {}
+    if (mounted) {
+      _showSnack(reminder.isEnabled ? '提醒已暂停' : '提醒已恢复');
+    }
   }
 
   Future<void> _showReminderDetails(ReminderData reminder) async {
@@ -421,7 +477,7 @@ class _ClockPageState extends State<ClockPage> {
   Future<void> _checkNotificationPermission() async {
     if (_notificationPermissionChecked ||
         defaultTargetPlatform != TargetPlatform.android ||
-        !_reminders.any((reminder) => reminder.channel == 'local')) {
+        _reminders.isEmpty) {
       return;
     }
     _notificationPermissionChecked = true;
@@ -429,6 +485,13 @@ class _ClockPageState extends State<ClockPage> {
     try {
       await _scheduler.initialize();
       enabled = await _scheduler.notificationsEnabled();
+      if (enabled == false && await _scheduler.hasUserConsent()) {
+        final granted = await _scheduler.requestPermission();
+        enabled = await _scheduler.notificationsEnabled();
+        if (granted != false && enabled != false) {
+          await _scheduler.syncAll();
+        }
+      }
     } catch (_) {}
     if (enabled == false && mounted) {
       _showNotificationPermissionNotice('通知权限未开启，APP 提醒不会显示');
@@ -449,17 +512,18 @@ class _ClockPageState extends State<ClockPage> {
   }
 
   Future<void> _openNotificationSettings() async {
+    final packageName = (await PackageInfo.fromPlatform()).packageName;
     try {
-      await const AndroidIntent(
+      await AndroidIntent(
         action: 'android.settings.APP_NOTIFICATION_SETTINGS',
         arguments: {
-          'android.provider.extra.APP_PACKAGE': 'com.jkcqplan',
+          'android.provider.extra.APP_PACKAGE': packageName,
         },
       ).launch();
     } catch (_) {
-      await const AndroidIntent(
+      await AndroidIntent(
         action: 'android.settings.APPLICATION_DETAILS_SETTINGS',
-        data: 'package:com.jkcqplan',
+        data: 'package:$packageName',
       ).launch();
     }
   }
@@ -476,6 +540,7 @@ class _ClockPageState extends State<ClockPage> {
     }
 
     for (final reminder in _reminders) {
+      if (!reminder.occursOn(now)) continue;
       final target = _ClockTarget(type: reminder.type);
       targets.putIfAbsent(target.type, () => target);
     }
@@ -627,12 +692,13 @@ class _ClockPageState extends State<ClockPage> {
                 ),
               );
               final reminderPanel = _Panel(
-                title: '提醒规则',
-                subtitle: '本地保存的计划提醒',
+                title: '我的提醒',
+                subtitle: '${DateFormat('MM月dd日').format(now)} · 只显示今天',
                 child: _ReminderList(
                   reminders: _reminders,
                   onDelete: _deleteReminder,
                   onEdit: _editReminder,
+                  onToggle: _toggleReminder,
                   onSyncAlarm: _syncReminderToSystemAlarm,
                   onOpen: _showReminderDetails,
                 ),
@@ -972,12 +1038,14 @@ class _ReminderList extends StatefulWidget {
     required this.reminders,
     required this.onDelete,
     required this.onEdit,
+    required this.onToggle,
     required this.onSyncAlarm,
     required this.onOpen,
   });
   final List<ReminderData> reminders;
   final Future<void> Function(ReminderData) onDelete;
   final Future<void> Function(ReminderData) onEdit;
+  final Future<void> Function(ReminderData) onToggle;
   final Future<void> Function(ReminderData) onSyncAlarm;
   final Future<void> Function(ReminderData) onOpen;
 
@@ -993,59 +1061,43 @@ class _ReminderListState extends State<_ReminderList> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-    final dailyReminders = widget.reminders
-        .where((reminder) => reminder.channel == 'local')
-        .toList(growable: false);
-    final todayPlanReminders = widget.reminders.where((reminder) {
-      final time = reminder.remindTime;
-      return reminder.channel != 'local' &&
-          time.year == now.year &&
-          time.month == now.month &&
-          time.day == now.day &&
-          time.isAfter(now);
-    }).toList(growable: false);
-    final reminders = [...todayPlanReminders, ...dailyReminders];
+    final reminders = widget.reminders.where((reminder) {
+      if (!reminder.occursOn(now)) return false;
+      final todayAt = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        reminder.remindTime.hour,
+        reminder.remindTime.minute,
+      );
+      return todayAt.isAfter(now);
+    }).toList()
+      ..sort((a, b) {
+        if (a.isEnabled != b.isEnabled) return a.isEnabled ? -1 : 1;
+        final aMinutes = a.remindTime.hour * 60 + a.remindTime.minute;
+        final bMinutes = b.remindTime.hour * 60 + b.remindTime.minute;
+        return aMinutes.compareTo(bMinutes);
+      });
 
     if (reminders.isEmpty) {
-      return const Column(
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
+          const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
             child: Text('今天暂无待提醒事项。', style: TextStyle(color: AppTheme.muted)),
           ),
-          _ReminderSafetyNotice(),
+          const _ReminderSafetyNotice(),
         ],
       );
     }
     final visible = _expanded
         ? reminders
         : reminders.take(_collapsedCount).toList(growable: false);
-    final visibleToday =
-        visible.where((reminder) => reminder.channel != 'local').toList();
-    final visibleDaily =
-        visible.where((reminder) => reminder.channel == 'local').toList();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (visibleToday.isNotEmpty) ...[
-          const Text(
-            '今日计划提醒',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-          ),
-          const SizedBox(height: 8),
-          ...visibleToday.map((reminder) => _buildReminder(reminder, false)),
-        ],
-        if (visibleDaily.isNotEmpty) ...[
-          if (visibleToday.isNotEmpty) const SizedBox(height: 4),
-          const Text(
-            '每日固定提醒',
-            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-          ),
-          const SizedBox(height: 8),
-          ...visibleDaily.map((reminder) => _buildReminder(reminder, true)),
-        ],
+        ...visible.map(_buildReminder),
         if (reminders.length > _collapsedCount)
           Center(
             child: TextButton.icon(
@@ -1061,11 +1113,11 @@ class _ReminderListState extends State<_ReminderList> {
     );
   }
 
-  Widget _buildReminder(ReminderData reminder, bool isDaily) {
+  Widget _buildReminder(ReminderData reminder) {
     final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
     final imageProvider = reportImageProvider(imageObjectKey);
     final showActions =
-        isDaily && reminder.id != null && _expandedActionReminderId == reminder.id;
+        reminder.id != null && _expandedActionReminderId == reminder.id;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -1109,38 +1161,53 @@ class _ReminderListState extends State<_ReminderList> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            '${reminder.label}  ${reminder.timeText}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  reminder.label,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              if (!reminder.isEnabled)
+                                const Text(
+                                  '已暂停',
+                                  style: TextStyle(
+                                    color: AppTheme.muted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                            ],
                           ),
                           Text(
-                            '${isDaily ? '每日' : '今日'} · ${reminder.payload['note'] as String? ?? reminder.label}',
+                            '${_reminderScheduleText(reminder)} · ${_reminderSourceText(reminder)} · ${reminder.payload['note'] as String? ?? reminder.label}',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppTheme.muted,
+                            style: TextStyle(
+                              color: reminder.isEnabled
+                                  ? AppTheme.muted
+                                  : AppTheme.muted.withValues(alpha: 0.65),
                               fontSize: 12,
                             ),
                           ),
                         ],
                       ),
                     ),
-                    if (isDaily)
-                      IconButton(
-                        tooltip: showActions ? '收起操作' : '更多操作',
-                        onPressed: () => setState(() {
-                          _expandedActionReminderId =
-                              showActions ? null : reminder.id;
-                        }),
-                        icon: AnimatedRotation(
-                          turns: showActions ? 0.25 : 0,
-                          duration: const Duration(milliseconds: 180),
-                          child: const Icon(Icons.more_vert),
-                        ),
+                    IconButton(
+                      tooltip: showActions ? '收起操作' : '更多操作',
+                      onPressed: () => setState(() {
+                        _expandedActionReminderId =
+                            showActions ? null : reminder.id;
+                      }),
+                      icon: AnimatedRotation(
+                        turns: showActions ? 0.25 : 0,
+                        duration: const Duration(milliseconds: 180),
+                        child: const Icon(Icons.more_vert),
                       ),
+                    ),
                   ],
                 ),
               ),
@@ -1150,19 +1217,28 @@ class _ReminderListState extends State<_ReminderList> {
               curve: Curves.easeOutCubic,
               child: showActions
                   ? _ReminderActionBar(
-                      onEdit: () async {
+                      enabled: reminder.isEnabled,
+                      onToggle: () async {
                         setState(() => _expandedActionReminderId = null);
-                        await widget.onEdit(reminder);
+                        await widget.onToggle(reminder);
                       },
-                      onSyncAlarm:
-                          defaultTargetPlatform == TargetPlatform.android
+                      onEdit: reminder.channel == 'local'
                           ? () async {
-                              setState(
-                                () => _expandedActionReminderId = null,
-                              );
-                              await widget.onSyncAlarm(reminder);
+                              setState(() => _expandedActionReminderId = null);
+                              await widget.onEdit(reminder);
                             }
                           : null,
+                      onSyncAlarm:
+                          defaultTargetPlatform == TargetPlatform.android &&
+                                  reminder.type == 'medicine' &&
+                                  reminder.isWeekly
+                              ? () async {
+                                  setState(
+                                    () => _expandedActionReminderId = null,
+                                  );
+                                  await widget.onSyncAlarm(reminder);
+                                }
+                              : null,
                       onDelete: () async {
                         setState(() => _expandedActionReminderId = null);
                         await widget.onDelete(reminder);
@@ -1179,12 +1255,16 @@ class _ReminderListState extends State<_ReminderList> {
 
 class _ReminderActionBar extends StatelessWidget {
   const _ReminderActionBar({
+    required this.enabled,
+    required this.onToggle,
     required this.onEdit,
     required this.onSyncAlarm,
     required this.onDelete,
   });
 
-  final Future<void> Function() onEdit;
+  final bool enabled;
+  final Future<void> Function()? onToggle;
+  final Future<void> Function()? onEdit;
   final Future<void> Function()? onSyncAlarm;
   final Future<void> Function() onDelete;
 
@@ -1202,11 +1282,21 @@ class _ReminderActionBar extends StatelessWidget {
           spacing: 4,
           runSpacing: 2,
           children: [
-            TextButton.icon(
-              onPressed: onEdit,
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              label: const Text('编辑'),
-            ),
+            if (onToggle != null)
+              TextButton.icon(
+                onPressed: onToggle,
+                icon: Icon(
+                  enabled ? Icons.pause_outlined : Icons.play_arrow_outlined,
+                  size: 18,
+                ),
+                label: Text(enabled ? '暂停' : '恢复'),
+              ),
+            if (onEdit != null)
+              TextButton.icon(
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                label: const Text('编辑'),
+              ),
             if (onSyncAlarm != null)
               TextButton.icon(
                 onPressed: onSyncAlarm,
@@ -1318,6 +1408,9 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   final _noteCtrl = TextEditingController();
   final _imagePicker = ImagePicker();
   TimeOfDay _time = const TimeOfDay(hour: 7, minute: 0);
+  late DateTime _date;
+  String _scheduleMode = 'weekly';
+  Set<int> _weekdays = {1, 2, 3, 4, 5, 6, 7};
   XFile? _image;
   String? _imageError;
   bool _removeExistingImage = false;
@@ -1326,9 +1419,14 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _date = DateTime(now.year, now.month, now.day);
     final reminder = widget.reminder;
     if (reminder != null) {
       _time = TimeOfDay.fromDateTime(reminder.remindTime);
+      _date = reminder.startDate;
+      _scheduleMode = reminder.isWeekly ? 'weekly' : 'once';
+      _weekdays = reminder.weekdays.toSet();
       _noteCtrl.text = reminder.payload['note']?.toString() ?? '';
     }
     _syncAlarm = reminder?.payload['syncAlarm'] == true ||
@@ -1369,6 +1467,96 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                 controller: _noteCtrl,
                 decoration: const InputDecoration(labelText: '备注（选填）'),
               ),
+              const SizedBox(height: 14),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('单次提醒'),
+                      selected: _scheduleMode == 'once',
+                      onSelected: (_) => setState(() {
+                        _scheduleMode = 'once';
+                        _syncAlarm = false;
+                        final at = DateTime(
+                          _date.year,
+                          _date.month,
+                          _date.day,
+                          _time.hour,
+                          _time.minute,
+                        );
+                        if (!at.isAfter(DateTime.now())) {
+                          _date = _date.add(const Duration(days: 1));
+                        }
+                      }),
+                    ),
+                    ChoiceChip(
+                      label: const Text('每周重复'),
+                      selected: _scheduleMode == 'weekly',
+                      onSelected: (_) =>
+                          setState(() => _scheduleMode = 'weekly'),
+                    ),
+                  ],
+                ),
+              ),
+              if (_scheduleMode == 'once')
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('提醒日期'),
+                  subtitle: Text(_dateText(_date)),
+                  trailing: TextButton(
+                    onPressed: _pickDate,
+                    child: const Text('选择'),
+                  ),
+                ),
+              if (_scheduleMode == 'weekly') ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (var day = 1; day <= 7; day++)
+                        ChoiceChip(
+                          label: Text(_weekdayShort(day)),
+                          selected: _weekdays.contains(day),
+                          onSelected: (selected) => setState(() {
+                            if (selected) {
+                              _weekdays.add(day);
+                            } else {
+                              _weekdays.remove(day);
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: () => setState(
+                          () => _weekdays = {1, 2, 3, 4, 5, 6, 7},
+                        ),
+                        child: const Text('每天'),
+                      ),
+                      TextButton(
+                        onPressed: () =>
+                            setState(() => _weekdays = {1, 2, 3, 4, 5}),
+                        child: const Text('工作日'),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() => _weekdays = {6, 7}),
+                        child: const Text('周末'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               if (widget.type == 'medicine') ...[
                 const SizedBox(height: 14),
                 Align(
@@ -1473,7 +1661,9 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                   child: const Text('选择'),
                 ),
               ),
-              if (defaultTargetPlatform == TargetPlatform.android) ...[
+              if (defaultTargetPlatform == TargetPlatform.android &&
+                  widget.type == 'medicine' &&
+                  _scheduleMode == 'weekly') ...[
                 const Divider(height: 1),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1500,6 +1690,19 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                     style: TextStyle(fontSize: 12, color: AppTheme.ink),
                   ),
                 ),
+              if (_validationMessage != null) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _validationMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1510,19 +1713,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: () => Navigator.pop(
-            context,
-            _ReminderDraft(
-              time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
-              note: _noteCtrl.text.trim().isEmpty
-                  ? _title
-                  : _noteCtrl.text.trim(),
-              syncAlarm: _syncAlarm,
-              image: _image,
-              imageMimeType: _imageMimeType(_image),
-              removeExistingImage: _removeExistingImage,
-            ),
-          ),
+          onPressed: _validationMessage == null ? _save : null,
           child: const Text('保存'),
         ),
       ],
@@ -1533,6 +1724,51 @@ class _ReminderDialogState extends State<_ReminderDialog> {
     final picked = await showTimePicker(context: context, initialTime: _time);
     if (picked == null || !mounted) return;
     setState(() => _time = picked);
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(DateTime.now().year + 10, 12, 31),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _date = picked);
+  }
+
+  String? get _validationMessage {
+    if (_scheduleMode == 'weekly' && _weekdays.isEmpty) {
+      return '请至少选择一个提醒星期';
+    }
+    if (_scheduleMode == 'once') {
+      final at = DateTime(
+        _date.year,
+        _date.month,
+        _date.day,
+        _time.hour,
+        _time.minute,
+      );
+      if (!at.isAfter(DateTime.now())) return '单次提醒时间必须晚于当前时间';
+    }
+    return null;
+  }
+
+  void _save() {
+    Navigator.pop(
+      context,
+      _ReminderDraft(
+        time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
+        date: _date,
+        scheduleMode: _scheduleMode,
+        weekdays: _weekdays.toList()..sort(),
+        note: _noteCtrl.text.trim().isEmpty ? _title : _noteCtrl.text.trim(),
+        syncAlarm: _scheduleMode == 'weekly' && _syncAlarm,
+        image: _image,
+        imageMimeType: _imageMimeType(_image),
+        removeExistingImage: _removeExistingImage,
+      ),
+    );
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -1565,6 +1801,9 @@ class _ReminderDialogState extends State<_ReminderDialog> {
 class _ReminderDraft {
   const _ReminderDraft({
     required this.time,
+    required this.date,
+    required this.scheduleMode,
+    required this.weekdays,
     required this.note,
     this.syncAlarm = false,
     this.image,
@@ -1572,6 +1811,9 @@ class _ReminderDraft {
     this.removeExistingImage = false,
   });
   final TimeOfDayValue time;
+  final DateTime date;
+  final String scheduleMode;
+  final List<int> weekdays;
   final String note;
   final bool syncAlarm;
   final XFile? image;
@@ -1590,7 +1832,7 @@ class _ReminderDetailsDialog extends StatelessWidget {
     final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
     final imageProvider = reportImageProvider(imageObjectKey);
     return AlertDialog(
-      title: Text('${reminder.label} ${reminder.timeText}'),
+      title: Text(reminder.label),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -1613,6 +1855,11 @@ class _ReminderDetailsDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
               ],
+              Text(
+                _reminderScheduleText(reminder),
+                style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
               Text(note),
             ],
           ),
@@ -1646,6 +1893,47 @@ String _imageMimeType(XFile? image) {
     _ => '',
   };
 }
+
+String _weekdayShort(int weekday) => switch (weekday) {
+      1 => '一',
+      2 => '二',
+      3 => '三',
+      4 => '四',
+      5 => '五',
+      6 => '六',
+      7 => '日',
+      _ => '',
+    };
+
+String _dateText(DateTime date) {
+  return '${date.year}年${date.month}月${date.day}日 周${_weekdayShort(date.weekday)}';
+}
+
+String _weekdaysText(List<int> weekdays) {
+  if (weekdays.length == 7) return '每天';
+  if (weekdays.join(',') == '1,2,3,4,5') return '工作日';
+  if (weekdays.join(',') == '6,7') return '周末';
+  return weekdays.map((day) => '周${_weekdayShort(day)}').join('、');
+}
+
+String _reminderScheduleText(ReminderData reminder) {
+  final next = reminder.nextOccurrence(DateTime.now());
+  if (!reminder.isWeekly) {
+    final prefix = next == null ? '结束于' : '下次';
+    return '$prefix ${_dateText(reminder.remindTime)} ${reminder.timeText}';
+  }
+  final nextText = next == null
+      ? '暂无下一次提醒'
+      : '下次 ${next.month}月${next.day}日 周${_weekdayShort(next.weekday)} ${reminder.timeText}';
+  return '$nextText · ${_weekdaysText(reminder.weekdays)}重复';
+}
+
+String _reminderSourceText(ReminderData reminder) => switch (reminder.source) {
+      'manual' => '手动创建',
+      'ai-plan' => 'AI 计划',
+      'risk' => '风险建议',
+      _ => '计划提醒',
+    };
 
 // ── 工具函数 ──────────────────────────────────────────────────
 IconData _typeIcon(String type) => switch (type) {
