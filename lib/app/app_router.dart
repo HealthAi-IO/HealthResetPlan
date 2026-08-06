@@ -148,6 +148,8 @@ class AppRouter {
                   initialReminderId: int.tryParse(
                     state.uri.queryParameters['reminderId'] ?? '',
                   ),
+                  openReminderSettings:
+                      state.uri.queryParameters['manage'] == 'rules',
                 ),
               ),
             ),

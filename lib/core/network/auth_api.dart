@@ -392,15 +392,12 @@ class CaptchaTrajectoryPoint {
 
 /// 把 DioException 转成用户友好的错误文本
 String friendlyAuthError(Object e) {
-  if (e is AuthApiException) return e.message;
+  if (e is AuthApiException) return _friendlyCaptchaError(e.message);
   if (e is DioException) {
     final data = e.response?.data;
     if (data is Map && data['message'] != null) {
       final message = data['message'].toString();
-      if (message.contains('trajectory')) {
-        return '滑动过快，请慢一点再试';
-      }
-      return message;
+      return _friendlyCaptchaError(message);
     }
     if (e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.connectionError) {
@@ -414,6 +411,13 @@ String friendlyAuthError(Object e) {
   if (e is TimeoutException) return '安全验证加载超时，请点击刷新重试';
   if (e is StateError) return e.message;
   return e.toString();
+}
+
+String _friendlyCaptchaError(String message) {
+  if (message.contains('trajectory') || message.contains('滑动过快')) {
+    return '请对准缺口并平稳滑动后再试';
+  }
+  return message;
 }
 
 int? authErrorCode(Object error) {

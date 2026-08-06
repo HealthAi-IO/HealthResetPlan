@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
@@ -144,16 +145,38 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           if (_tgCtrl.text.isNotEmpty) 'tg': double.parse(_tgCtrl.text),
         },
       'body_fat' => {'bodyFatPct': double.parse(_bodyFatCtrl.text)},
-      'waist'    => {'waistCm': double.parse(_waistCtrl.text)},
-      'spo2'     => {'spo2Pct': int.parse(_spo2Ctrl.text)},
-      'sleep'    => {
+      'waist' => {'waistCm': double.parse(_waistCtrl.text)},
+      'spo2' => {'spo2Pct': int.parse(_spo2Ctrl.text)},
+      'sleep' => {
           'sleepHours': double.parse(_sleepHoursCtrl.text),
           'quality': _sleepQualityCtrl.value,
         },
-      'steps'    => {'steps': int.parse(_stepsCtrl.text)},
+      'steps' => {'steps': int.parse(_stepsCtrl.text)},
       _ => {},
     };
   }
+
+  String _confirmationText(Map<String, dynamic> payload) {
+    return switch (_type) {
+      'weight' => '体重：${payload['weightKg']} kg',
+      'bp' => '血压：${payload['systolic']}/${payload['diastolic']} mmHg',
+      'glucose' => '血糖：${payload['glucoseMmol']} mmol/L',
+      'heart_rate' => '心率：${payload['bpm']} bpm',
+      'lipid' =>
+        '血脂：TC ${payload['tc'] ?? '--'}，LDL ${payload['ldl'] ?? '--'} mmol/L',
+      'body_fat' => '体脂率：${payload['bodyFatPct']}%',
+      'waist' => '腰围：${payload['waistCm']} cm',
+      'spo2' => '血氧：${payload['spo2Pct']}%',
+      'sleep' => '睡眠：${payload['sleepHours']}小时',
+      'steps' => '步数：${payload['steps']}步',
+      _ => '健康记录',
+    };
+  }
+
+  String _dateTimeText(DateTime value) =>
+      '${value.year}年${value.month}月${value.day}日 '
+      '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}';
 
   void _clearFields() {
     _weightCtrl.clear();
@@ -177,9 +200,41 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    final payload = _buildPayload();
+    if (appSettingsController.seniorMode) {
+      final critical = HealthSafety.isCriticalIndicator(_type, payload);
+      final abnormal = HealthSafety.isAbnormalIndicator(_type, payload);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            critical
+                ? '数值达到危险范围'
+                : abnormal
+                    ? '数值可能异常'
+                    : '确认保存记录',
+          ),
+          content: Text(
+            '${_confirmationText(payload)}\n'
+            '测量时间：${_dateTimeText(_measuredAt)}'
+            '${critical ? '\n\n请确认没有输错；保存后请立即就医。' : abnormal ? '\n\n请确认测量方法和输入数值没有错误。' : ''}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('返回检查'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认保存'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
     setState(() => _saving = true);
     try {
-      final payload = _buildPayload();
       if (widget.existing?.id != null) {
         await _repo.updateIndicator(widget.existing!.id!, payload);
         if (!mounted) return;
@@ -195,14 +250,23 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         final isCritical = HealthSafety.isCriticalIndicator(_type, payload);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(isCritical
-                ? '检测到紧急健康风险，请立即就医，已停止运动计划'
-                : '已保存，可继续录入下一项'),
+            content:
+                Text(isCritical ? '检测到紧急健康风险，请立即就医，已停止运动计划' : '已保存，可继续录入下一项'),
             duration: Duration(seconds: isCritical ? 6 : 2),
             behavior: SnackBarBehavior.floating,
           ),
         );
-        setState(_clearFields);
+        if (appSettingsController.seniorMode) {
+          Navigator.of(context).pop(true);
+        } else {
+          setState(_clearFields);
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('保存失败，已保留输入内容，请检查网络后重试')),
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -224,7 +288,9 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
     if (!mounted) return;
     setState(() {
       _measuredAt = DateTime(
-        date.year, date.month, date.day,
+        date.year,
+        date.month,
+        date.day,
         time?.hour ?? _measuredAt.hour,
         time?.minute ?? _measuredAt.minute,
       );
@@ -234,18 +300,25 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.existing != null;
+    final seniorMode = appSettingsController.seniorMode;
     return Scaffold(
       appBar: AppBar(
         title: Text(isEdit ? '编辑指标' : '录入健康指标'),
-        actions: [
-          TextButton(
-            onPressed: _saving ? null : _save,
-            child: _saving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('保存', style: TextStyle(fontWeight: FontWeight.w700)),
-          ),
-          const SizedBox(width: 8),
-        ],
+        actions: seniorMode
+            ? null
+            : [
+                TextButton(
+                  onPressed: _saving ? null : _save,
+                  child: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('保存',
+                          style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 8),
+              ],
       ),
       body: Form(
         key: _formKey,
@@ -253,29 +326,84 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           padding: const EdgeInsets.all(20),
           children: [
             if (!isEdit) ...[
-              _SectionLabel('指标类型'),
+              _SectionLabel('选择记录类型', senior: seniorMode),
               const SizedBox(height: 10),
               _TypeSelector(
                 value: _type,
-                types: _typeList,
+                types: seniorMode
+                    ? _typeList
+                        .where((item) => const {
+                              'weight',
+                              'bp',
+                              'glucose',
+                              'spo2',
+                            }.contains(item.$1))
+                        .toList()
+                    : _typeList,
                 onChanged: (v) => setState(() => _type = v),
               ),
+              if (seniorMode) ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue:
+                      const {'weight', 'bp', 'glucose', 'spo2'}.contains(_type)
+                          ? null
+                          : _type,
+                  decoration: const InputDecoration(labelText: '其他记录类型'),
+                  items: _typeList
+                      .where((item) => !const {
+                            'weight',
+                            'bp',
+                            'glucose',
+                            'spo2',
+                          }.contains(item.$1))
+                      .map((item) => DropdownMenuItem(
+                            value: item.$1,
+                            child: Text(item.$2),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) setState(() => _type = value);
+                  },
+                ),
+              ],
               const SizedBox(height: 20),
             ],
-            _SectionLabel('测量时间'),
-            const SizedBox(height: 10),
-            _DatePickerTile(value: _measuredAt, onTap: _pickDate),
-            const SizedBox(height: 20),
-            _SectionLabel('数值录入'),
-            const SizedBox(height: 10),
-            _buildFields(),
+            if (seniorMode) ...[
+              const _SectionLabel('填写测量数值', senior: true),
+              const SizedBox(height: 10),
+              _buildFields(),
+              const SizedBox(height: 22),
+              const _SectionLabel('测量时间', senior: true),
+              const SizedBox(height: 10),
+              _DatePickerTile(value: _measuredAt, onTap: _pickDate),
+              const SizedBox(height: 12),
+              const Text('测量时间默认是现在，如需补录以前的数据再进行修改。'),
+            ] else ...[
+              const _SectionLabel('测量时间'),
+              const SizedBox(height: 10),
+              _DatePickerTile(value: _measuredAt, onTap: _pickDate),
+              const SizedBox(height: 20),
+              const _SectionLabel('数值录入'),
+              const SizedBox(height: 10),
+              _buildFields(),
+            ],
             const SizedBox(height: 32),
             FilledButton(
               onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              style: FilledButton.styleFrom(
+                minimumSize: Size.fromHeight(seniorMode ? 60 : 52),
+              ),
               child: _saving
-                  ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : Text(isEdit ? '保存修改' : '保存记录', style: const TextStyle(fontSize: 16)),
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : Text(
+                      isEdit ? '确认保存修改' : '确认保存记录',
+                      style: TextStyle(fontSize: seniorMode ? 18 : 16),
+                    ),
             ),
             const SizedBox(height: 60),
           ],
@@ -286,7 +414,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
 
   Widget _buildFields() {
     return switch (_type) {
-      'weight' => _Card(child: _NumField(
+      'weight' => _Card(
+            child: _NumField(
           controller: _weightCtrl,
           label: '体重',
           unit: 'kg',
@@ -298,7 +427,14 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         )),
       'bp' => _Card(
           child: Column(children: [
-            _NumField(controller: _systolicCtrl, label: '收缩压（高压）', unit: 'mmHg', hint: '例如 115', min: HealthRanges.minSystolic, max: HealthRanges.maxSystolic, required: true),
+            _NumField(
+                controller: _systolicCtrl,
+                label: '收缩压（高压）',
+                unit: 'mmHg',
+                hint: '例如 115',
+                min: HealthRanges.minSystolic,
+                max: HealthRanges.maxSystolic,
+                required: true),
             const SizedBox(height: 14),
             _NumField(
               controller: _diastolicCtrl,
@@ -317,29 +453,58 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               },
             ),
             const SizedBox(height: 14),
-            _NumField(controller: _bpmCtrl, label: '同测心率（选填）', unit: 'bpm', hint: '例如 72', min: 30, max: 220),
+            _NumField(
+                controller: _bpmCtrl,
+                label: '同测心率（选填）',
+                unit: 'bpm',
+                hint: '例如 72',
+                min: 30,
+                max: 220),
           ]),
         ),
       'glucose' => _Card(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _NumField(controller: _glucoseCtrl, label: '血糖', unit: 'mmol/L', hint: '例如 5.0', min: HealthRanges.minGlucoseMmol, max: HealthRanges.maxGlucoseMmol, decimal: true, required: true),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _NumField(
+                controller: _glucoseCtrl,
+                label: '血糖',
+                unit: 'mmol/L',
+                hint: '例如 5.0',
+                min: HealthRanges.minGlucoseMmol,
+                max: HealthRanges.maxGlucoseMmol,
+                decimal: true,
+                required: true),
             const SizedBox(height: 14),
-            const Text('测量类型', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+            const Text('测量类型',
+                style: TextStyle(fontSize: 13, color: AppTheme.muted)),
             const SizedBox(height: 8),
             ValueListenableBuilder<String>(
               valueListenable: _glucoseTypeCtrl,
               builder: (_, val, __) => Wrap(
                 spacing: 10,
                 children: [
-                  _TypeChip(label: '空腹', value: 'fasting', selected: val == 'fasting', onTap: (v) => _glucoseTypeCtrl.value = v),
-                  _TypeChip(label: '餐后2h', value: 'postmeal', selected: val == 'postmeal', onTap: (v) => _glucoseTypeCtrl.value = v),
-                  _TypeChip(label: '随机', value: 'random', selected: val == 'random', onTap: (v) => _glucoseTypeCtrl.value = v),
+                  _TypeChip(
+                      label: '空腹',
+                      value: 'fasting',
+                      selected: val == 'fasting',
+                      onTap: (v) => _glucoseTypeCtrl.value = v),
+                  _TypeChip(
+                      label: '餐后2h',
+                      value: 'postmeal',
+                      selected: val == 'postmeal',
+                      onTap: (v) => _glucoseTypeCtrl.value = v),
+                  _TypeChip(
+                      label: '随机',
+                      value: 'random',
+                      selected: val == 'random',
+                      onTap: (v) => _glucoseTypeCtrl.value = v),
                 ],
               ),
             ),
           ]),
         ),
-      'heart_rate' => _Card(child: _NumField(
+      'heart_rate' => _Card(
+            child: _NumField(
           controller: _bpmCtrl,
           label: '心率',
           unit: 'bpm',
@@ -350,19 +515,48 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
         )),
       'lipid' => _Card(
           child: Column(children: [
-            _NumField(controller: _tcCtrl, label: '总胆固醇 TC', unit: 'mmol/L', hint: '例如 4.8', min: HealthRanges.minTcMmol, max: HealthRanges.maxTcMmol, decimal: true),
+            _NumField(
+                controller: _tcCtrl,
+                label: '总胆固醇 TC',
+                unit: 'mmol/L',
+                hint: '例如 4.8',
+                min: HealthRanges.minTcMmol,
+                max: HealthRanges.maxTcMmol,
+                decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _ldlCtrl, label: 'LDL 低密度脂蛋白', unit: 'mmol/L', hint: '例如 2.8', min: HealthRanges.minLdlMmol, max: HealthRanges.maxLdlMmol, decimal: true),
+            _NumField(
+                controller: _ldlCtrl,
+                label: 'LDL 低密度脂蛋白',
+                unit: 'mmol/L',
+                hint: '例如 2.8',
+                min: HealthRanges.minLdlMmol,
+                max: HealthRanges.maxLdlMmol,
+                decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _hdlCtrl, label: 'HDL 高密度脂蛋白', unit: 'mmol/L', hint: '例如 1.4', min: 0.3, max: 5, decimal: true),
+            _NumField(
+                controller: _hdlCtrl,
+                label: 'HDL 高密度脂蛋白',
+                unit: 'mmol/L',
+                hint: '例如 1.4',
+                min: 0.3,
+                max: 5,
+                decimal: true),
             const SizedBox(height: 14),
-            _NumField(controller: _tgCtrl, label: '甘油三酯 TG', unit: 'mmol/L', hint: '例如 1.3', min: 0.2, max: 20, decimal: true),
+            _NumField(
+                controller: _tgCtrl,
+                label: '甘油三酯 TG',
+                unit: 'mmol/L',
+                hint: '例如 1.3',
+                min: 0.2,
+                max: 20,
+                decimal: true),
             const SizedBox(height: 8),
             const Text('血脂各项均为选填，录入已有检查报告结果即可。',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
           ]),
         ),
-      'body_fat' => _Card(child: _NumField(
+      'body_fat' => _Card(
+            child: _NumField(
           controller: _bodyFatCtrl,
           label: '体脂率',
           unit: '%',
@@ -372,7 +566,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           decimal: true,
           required: true,
         )),
-      'waist' => _Card(child: _NumField(
+      'waist' => _Card(
+            child: _NumField(
           controller: _waistCtrl,
           label: '腰围',
           unit: 'cm',
@@ -382,7 +577,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           decimal: true,
           required: true,
         )),
-      'spo2' => _Card(child: Column(
+      'spo2' => _Card(
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _NumField(
@@ -400,7 +596,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           ],
         )),
       'sleep' => _Card(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             _NumField(
               controller: _sleepHoursCtrl,
               label: '睡眠时长',
@@ -412,25 +609,36 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               required: true,
             ),
             const SizedBox(height: 14),
-            const Text('睡眠质量', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+            const Text('睡眠质量',
+                style: TextStyle(fontSize: 13, color: AppTheme.muted)),
             const SizedBox(height: 8),
             ValueListenableBuilder<String>(
               valueListenable: _sleepQualityCtrl,
               builder: (_, val, __) => Wrap(
                 spacing: 10,
                 children: [
-                  _TypeChip(label: '好', value: 'good', selected: val == 'good',
+                  _TypeChip(
+                      label: '好',
+                      value: 'good',
+                      selected: val == 'good',
                       onTap: (v) => _sleepQualityCtrl.value = v),
-                  _TypeChip(label: '一般', value: 'fair', selected: val == 'fair',
+                  _TypeChip(
+                      label: '一般',
+                      value: 'fair',
+                      selected: val == 'fair',
                       onTap: (v) => _sleepQualityCtrl.value = v),
-                  _TypeChip(label: '差', value: 'poor', selected: val == 'poor',
+                  _TypeChip(
+                      label: '差',
+                      value: 'poor',
+                      selected: val == 'poor',
                       onTap: (v) => _sleepQualityCtrl.value = v),
                 ],
               ),
             ),
           ]),
         ),
-      'steps' => _Card(child: Column(
+      'steps' => _Card(
+            child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _NumField(
@@ -453,13 +661,20 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
 }
 
 class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
+  const _SectionLabel(this.text, {this.senior = false});
   final String text;
+  final bool senior;
 
   @override
   Widget build(BuildContext context) {
-    return Text(text,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppTheme.muted));
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: senior ? 17 : 13,
+        fontWeight: FontWeight.w700,
+        color: senior ? Colors.black87 : AppTheme.muted,
+      ),
+    );
   }
 }
 
@@ -482,7 +697,8 @@ class _Card extends StatelessWidget {
 }
 
 class _TypeSelector extends StatelessWidget {
-  const _TypeSelector({required this.value, required this.types, required this.onChanged});
+  const _TypeSelector(
+      {required this.value, required this.types, required this.onChanged});
 
   final String value;
   final List<(String, String, IconData)> types;
@@ -504,14 +720,17 @@ class _TypeSelector extends StatelessWidget {
                 color: value == t.$1 ? AppTheme.deepBlue : Colors.white,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: value == t.$1 ? AppTheme.deepBlue : AppTheme.cardBorder,
+                  color:
+                      value == t.$1 ? AppTheme.deepBlue : AppTheme.cardBorder,
                   width: value == t.$1 ? 2 : 1,
                 ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(t.$3, size: 18, color: value == t.$1 ? Colors.white : AppTheme.deepBlue),
+                  Icon(t.$3,
+                      size: 18,
+                      color: value == t.$1 ? Colors.white : AppTheme.deepBlue),
                   const SizedBox(width: 6),
                   Text(t.$2,
                       style: TextStyle(
@@ -547,13 +766,15 @@ class _DatePickerTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today_outlined, color: AppTheme.deepBlue, size: 20),
+            const Icon(Icons.calendar_today_outlined,
+                color: AppTheme.deepBlue, size: 20),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 '${value.year}年${value.month.toString().padLeft(2, '0')}月${value.day.toString().padLeft(2, '0')}日  '
                 '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}',
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                style:
+                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
               ),
             ),
             const Icon(Icons.chevron_right, color: AppTheme.muted),
@@ -593,7 +814,8 @@ class _NumField extends StatelessWidget {
       controller: controller,
       keyboardType: TextInputType.numberWithOptions(decimal: decimal),
       inputFormatters: [
-        FilteringTextInputFormatter.allow(decimal ? RegExp(r'[\d.]') : RegExp(r'\d')),
+        FilteringTextInputFormatter.allow(
+            decimal ? RegExp(r'[\d.]') : RegExp(r'\d')),
       ],
       decoration: InputDecoration(
         labelText: label,

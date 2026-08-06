@@ -34,6 +34,22 @@ abstract final class HealthSafety {
     }
     return false;
   }
+
+  static bool isAbnormalIndicator(String type, Map<String, dynamic> payload) {
+    return switch (type) {
+      'bp' => ((payload['systolic'] as num?)?.toDouble() ?? 0) >= 130 ||
+          ((payload['diastolic'] as num?)?.toDouble() ?? 0) >= 80,
+      'glucose' => ((payload['glucoseMmol'] as num?)?.toDouble() ?? 0) >=
+          (payload['mealType'] == 'postmeal' ? 7.8 : 5.6),
+      'spo2' => ((payload['spo2Pct'] as num?)?.toDouble() ?? 100) < 95,
+      'heart_rate' => ((payload['bpm'] as num?)?.toDouble() ?? 70) < 60 ||
+          ((payload['bpm'] as num?)?.toDouble() ?? 70) > 100,
+      'lipid' => ((payload['tc'] as num?)?.toDouble() ?? 0) >= 5.18 ||
+          ((payload['ldl'] as num?)?.toDouble() ?? 0) >= 3.37,
+      'sleep' => ((payload['sleepHours'] as num?)?.toDouble() ?? 8) < 7,
+      _ => false,
+    };
+  }
 }
 
 class UserProfileData {
@@ -314,6 +330,22 @@ class HealthIndicatorEntry {
       'sync_at': syncAt,
     };
   }
+}
+
+class HealthTrendAlert {
+  const HealthTrendAlert({
+    required this.type,
+    required this.title,
+    required this.message,
+    required this.isCritical,
+    required this.retestAfter,
+  });
+
+  final String type;
+  final String title;
+  final String message;
+  final bool isCritical;
+  final Duration retestAfter;
 }
 
 class HealthReportRecord {
@@ -772,6 +804,20 @@ class ClockRecordData {
   }
 }
 
+class TimeOfDayValue {
+  const TimeOfDayValue({required this.hour, required this.minute});
+
+  final int hour;
+  final int minute;
+
+  @override
+  bool operator ==(Object other) =>
+      other is TimeOfDayValue && other.hour == hour && other.minute == minute;
+
+  @override
+  int get hashCode => Object.hash(hour, minute);
+}
+
 class ReminderData {
   const ReminderData({
     this.id,
@@ -801,11 +847,88 @@ class ReminderData {
 
   DateTime get remindTime => DateTime.fromMillisecondsSinceEpoch(remindAt);
 
-  bool get isEnabled => status != 'paused';
+  bool get isArchived => payload['archived'] == true;
+
+  bool get isEnabled => status != 'paused' && !isArchived;
 
   String get source => channel == 'local' ? 'manual' : channel;
 
   bool get isWeekly => channel == 'local' && payload['scheduleMode'] != 'once';
+
+  String get displayLabel {
+    final medicineName = payload['medicineName']?.toString().trim() ?? '';
+    return type == 'medicine' && medicineName.isNotEmpty ? medicineName : label;
+  }
+
+  List<TimeOfDayValue> get dailyTimes {
+    final raw = payload['dailyTimes'];
+    if (raw is List) {
+      final values = raw
+          .whereType<Map>()
+          .map((item) {
+            final hour = (item['hour'] as num?)?.toInt();
+            final minute = (item['minute'] as num?)?.toInt();
+            if (hour == null || minute == null) return null;
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+            return TimeOfDayValue(hour: hour, minute: minute);
+          })
+          .whereType<TimeOfDayValue>()
+          .toSet()
+          .toList()
+        ..sort((a, b) =>
+            (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute));
+      if (values.isNotEmpty) return values;
+    }
+    return [TimeOfDayValue(hour: remindTime.hour, minute: remindTime.minute)];
+  }
+
+  String doseAt(TimeOfDayValue time) {
+    final values = payload['doseByTime'];
+    final value =
+        values is Map ? values[_timeKey(time)]?.toString().trim() : '';
+    return value?.isNotEmpty == true
+        ? value!
+        : payload['dose']?.toString().trim() ?? '';
+  }
+
+  String instructionsAt(TimeOfDayValue time) {
+    final values = payload['instructionsByTime'];
+    final value =
+        values is Map ? values[_timeKey(time)]?.toString().trim() : '';
+    return value?.isNotEmpty == true
+        ? value!
+        : payload['instructions']?.toString().trim() ?? '';
+  }
+
+  DateTime? get courseEndDate {
+    final value = payload['courseEndAt'];
+    if (value is! num) return null;
+    final date = DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  double? get inventoryRemaining =>
+      (payload['inventoryRemaining'] as num?)?.toDouble();
+
+  double? get refillThreshold =>
+      (payload['refillThreshold'] as num?)?.toDouble();
+
+  bool get refillNeeded {
+    final remaining = inventoryRemaining;
+    final threshold = refillThreshold;
+    return remaining != null && threshold != null && remaining <= threshold;
+  }
+
+  String? actionAt(DateTime occurrence) {
+    final history = payload['actionHistory'];
+    if (history is! Map) return null;
+    return history[_occurrenceKey(occurrence)]?.toString();
+  }
+
+  bool acknowledgedAt(DateTime occurrence) {
+    final history = payload['ackHistory'];
+    return history is Map && history[_occurrenceKey(occurrence)] == true;
+  }
 
   List<int> get weekdays {
     if (!isWeekly) return const [];
@@ -830,7 +953,10 @@ class ReminderData {
   }
 
   bool occursOn(DateTime date) {
+    if (isArchived) return false;
     final day = DateTime(date.year, date.month, date.day);
+    final courseEnd = courseEndDate;
+    if (courseEnd != null && day.isAfter(courseEnd)) return false;
     if (!isWeekly) {
       final reminderDay = DateTime(
         remindTime.year,
@@ -911,6 +1037,9 @@ class ReminderData {
     };
   }
 }
+
+String _timeKey(TimeOfDayValue time) =>
+    '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
 class HealthDashboardData {
   const HealthDashboardData({
@@ -1036,6 +1165,13 @@ double? _asDoubleOrNull(Object? value) {
   final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch('$value');
   return match == null ? null : double.tryParse(match.group(0)!);
 }
+
+String _occurrenceKey(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-'
+    '${value.month.toString().padLeft(2, '0')}-'
+    '${value.day.toString().padLeft(2, '0')} '
+    '${value.hour.toString().padLeft(2, '0')}:'
+    '${value.minute.toString().padLeft(2, '0')}';
 
 String _fmt(Object? value, {int digits = 0}) {
   final number = _asDoubleOrNull(value);

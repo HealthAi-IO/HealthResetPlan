@@ -1,20 +1,27 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
+import '../../core/data/health_data_import_service.dart';
+import '../../core/data/health_pdf_service.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/ai_consent_api.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
+import '../../core/storage/data_sync_status.dart';
 import 'cancel_account_dialog.dart';
 import 'gender_selector.dart';
 
@@ -61,6 +68,8 @@ class _ProfilePageState extends State<ProfilePage> {
   AccountInfo? _accountInfo;
   bool _aiConsentOpened = false;
   bool _profileGuideOpened = false;
+  bool? _notificationsEnabled;
+  bool? _exactAlarmEnabled;
   late bool _profileGuideVisible;
 
   void _markDirty() {
@@ -72,6 +81,8 @@ class _ProfilePageState extends State<ProfilePage> {
     super.initState();
     _profileGuideVisible = widget.guideProfileOnOpen;
     _repo.addListener(_onRepoChanged);
+    appSettingsController.addListener(_onSettingsChanged);
+    dataSyncStatusController.addListener(_onSettingsChanged);
     _load();
     // 任意字段变化则标记为“有未保存改动”，防止后续 repo 变更覆盖用户编辑
     for (final ctrl in [
@@ -89,6 +100,8 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void dispose() {
     _repo.removeListener(_onRepoChanged);
+    appSettingsController.removeListener(_onSettingsChanged);
+    dataSyncStatusController.removeListener(_onSettingsChanged);
     _nicknameController.dispose();
     _birthYearController.dispose();
     _heightController.dispose();
@@ -102,6 +115,10 @@ class _ProfilePageState extends State<ProfilePage> {
     _heightFocusNode.dispose();
     _weightFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onSettingsChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onRepoChanged() {
@@ -119,10 +136,19 @@ class _ProfilePageState extends State<ProfilePage> {
     final accountInfo = UserSession.instance.isAccountLogin
         ? await sl<AuthApi>().fetchAccountInfo()
         : null;
+    final scheduler = sl<ReminderScheduler>();
+    bool? notificationsEnabled;
+    bool? exactAlarmEnabled;
+    try {
+      notificationsEnabled = await scheduler.notificationsEnabled();
+      exactAlarmEnabled = await scheduler.exactAlarmEnabled();
+    } catch (_) {}
     if (!mounted) return;
     _profile = profile;
     _indicators = indicators;
     _accountInfo = accountInfo;
+    _notificationsEnabled = notificationsEnabled;
+    _exactAlarmEnabled = exactAlarmEnabled;
     if (syncForm) _syncControllers(profile);
     _profileGuideVisible =
         widget.guideProfileOnOpen && !_isBasicProfileComplete(profile);
@@ -200,8 +226,8 @@ class _ProfilePageState extends State<ProfilePage> {
     // 同步完成后 dirty 保持 false，下一帧用户操作再触发
   }
 
-  Future<void> _saveProfile() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<bool> _saveProfile() async {
+    if (!_formKey.currentState!.validate()) return false;
     final wasGuided = _profileGuideVisible;
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
@@ -232,7 +258,7 @@ class _ProfilePageState extends State<ProfilePage> {
       if (UserSession.instance.isAccountLogin) {
         await sl<AuthApi>().updateAccountProfile(nickname: nickname);
       }
-      if (!mounted) return;
+      if (!mounted) return false;
       _dirty = false; // 保存成功后清除脏标记，允许后续 repo 变更同步表单
       final profileCompleted = _isCurrentBasicProfileComplete();
       setState(() => _profileGuideVisible = wasGuided && !profileCompleted);
@@ -243,9 +269,11 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ),
       );
+      return true;
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted) return false;
       messenger.showSnackBar(const SnackBar(content: Text('保存失败，请重试')));
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -459,6 +487,380 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> _shareHealthPdf() async {
+    final days = await showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('选择摘要范围'),
+        children: [
+          for (final value in const [7, 30, 90])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, value),
+              child: Text('最近 $value 天'),
+            ),
+        ],
+      ),
+    );
+    if (days == null || !mounted) return;
+    try {
+      final bytes = await HealthPdfService(_repo).build(days);
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename:
+            '健康摘要_$days天_${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('健康摘要生成失败，请重试')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveImportTemplate() async {
+    try {
+      final bytes = HealthDataImportService(_repo).buildTemplate();
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: '保存健康数据导入模板',
+        fileName: '健康数据导入模板.xlsx',
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        bytes: bytes,
+      );
+      if (path != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导入模板已保存')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('模板保存失败，请重试')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importHealthData() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv', 'xlsx'],
+      withData: true,
+    );
+    final file = picked?.files.single;
+    if (file?.bytes == null || !mounted) return;
+    final service = HealthDataImportService(_repo);
+    final preview = await service.preview(
+      file!.bytes!,
+      file.extension ?? '',
+    );
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认导入'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('可导入 ${preview.importCount} 条'),
+                Text('重复跳过 ${preview.duplicateCount} 条'),
+                Text('错误 ${preview.errors.length} 条'),
+                if (preview.errors.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ...preview.errors.take(8).map(Text.new),
+                  if (preview.errors.length > 8)
+                    Text('另有 ${preview.errors.length - 8} 条错误'),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: preview.importCount == 0
+                ? null
+                : () => Navigator.pop(context, true),
+            child: const Text('确认导入'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final count = await service.commit(preview);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已导入 $count 条，重复数据未覆盖')),
+      );
+      await _load(silent: true);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导入未完成，请检查网络后重试')),
+        );
+      }
+    }
+  }
+
+  Future<void> _setSeniorMode(bool value) async {
+    if (!value) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('关闭长辈模式'),
+          content: const Text('关闭后将恢复普通首页和标准字号。确认关闭吗？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('返回'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认关闭'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    await appSettingsController.setSeniorMode(value);
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    await sl<ReminderScheduler>().requestPermission();
+    await _load(silent: true, syncForm: false);
+  }
+
+  Future<void> _requestExactAlarmPermission() async {
+    await sl<ReminderScheduler>().ensureExactAlarmPermission();
+    await _load(silent: true, syncForm: false);
+  }
+
+  Future<void> _showSeniorProfileEditor() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.9,
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+              children: [
+                const Text('编辑健康档案',
+                    style:
+                        TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
+                const SizedBox(height: 18),
+                TextFormField(
+                  controller: _nicknameController,
+                  focusNode: _nicknameFocusNode,
+                  decoration: const InputDecoration(labelText: '姓名或称呼'),
+                  validator: (value) =>
+                      value == null || value.trim().isEmpty ? '请输入姓名或称呼' : null,
+                ),
+                const SizedBox(height: 14),
+                GenderSelector(
+                  value: _gender,
+                  focusNode: _genderFocusNode,
+                  onChanged: (value) {
+                    setSheetState(() => _gender = value);
+                    _markDirty();
+                  },
+                ),
+                const SizedBox(height: 14),
+                _ProfileNumberField(
+                  controller: _birthYearController,
+                  focusNode: _birthYearFocusNode,
+                  keyboardType: TextInputType.number,
+                  label: '出生年份',
+                  onTap: _pickBirthYear,
+                  validator: (value) {
+                    final year = int.tryParse(value?.trim() ?? '');
+                    final age = DateTime.now().year - (year ?? 0);
+                    return age < HealthRanges.minAge ||
+                            age > HealthRanges.maxAge
+                        ? '仅支持 18–100 岁成年人'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 14),
+                _ProfileNumberField(
+                  controller: _heightController,
+                  focusNode: _heightFocusNode,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  label: '身高（cm）',
+                  onTap: _pickHeight,
+                  validator: (value) {
+                    final number = double.tryParse(value?.trim() ?? '');
+                    return number == null ||
+                            number < HealthRanges.minHeightCm ||
+                            number > HealthRanges.maxHeightCm
+                        ? '请输入 100–230 cm'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 14),
+                _ProfileNumberField(
+                  controller: _weightController,
+                  focusNode: _weightFocusNode,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  label: '体重（kg）',
+                  onTap: _pickWeight,
+                  validator: (value) {
+                    final number = double.tryParse(value?.trim() ?? '');
+                    return number == null ||
+                            number < HealthRanges.minWeightKg ||
+                            number > HealthRanges.maxWeightKg
+                        ? '请输入 20–300 kg'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _medicalHistoryController,
+                  maxLines: 2,
+                  decoration: const InputDecoration(labelText: '既往病史（选填）'),
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _medicationsController,
+                  maxLines: 2,
+                  decoration: const InputDecoration(labelText: '长期用药（选填）'),
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _goal,
+                  decoration: const InputDecoration(labelText: '健康目标'),
+                  items: const [
+                    DropdownMenuItem(value: 'maintain', child: Text('保持健康')),
+                    DropdownMenuItem(value: 'fat_loss', child: Text('减脂')),
+                    DropdownMenuItem(
+                        value: 'glucose_control', child: Text('控糖')),
+                    DropdownMenuItem(value: 'bp_control', child: Text('控压')),
+                  ],
+                  onChanged: (value) {
+                    setSheetState(() => _goal = value ?? 'maintain');
+                    _markDirty();
+                  },
+                ),
+                const SizedBox(height: 22),
+                FilledButton.icon(
+                  onPressed: () async {
+                    final saved = await _saveProfile();
+                    if (saved && sheetContext.mounted) {
+                      Navigator.pop(sheetContext);
+                    }
+                  },
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('保存健康档案'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSeniorMoreSettings() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+        child: Column(
+          children: [
+            const ListTile(
+              title: Text('更多设置',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.psychology_outlined,
+              title: 'AI 数据处理授权',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _manageAiConsent();
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.picture_as_pdf_outlined,
+              title: '生成健康摘要 PDF',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _shareHealthPdf();
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.download_outlined,
+              title: '保存数据导入模板',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _saveImportTemplate();
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.upload_file_outlined,
+              title: '导入健康数据',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _importHealthData();
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.privacy_tip_outlined,
+              title: '隐私政策',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/privacy-policy');
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.description_outlined,
+              title: '用户协议',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openLegalDocument(termsOfServiceUrl);
+              },
+            ),
+            if (_accountInfo?.hasPassword == false)
+              _SeniorSettingsTile(
+                icon: Icons.password_outlined,
+                title: '设置登录密码',
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  context.push('/set-password?returnTo=%2Fprofile&required=1');
+                },
+              ),
+            _SeniorSettingsTile(
+              icon: Icons.person_remove_outlined,
+              title: '注销账号',
+              color: Colors.red,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _cancelAccount();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -468,6 +870,28 @@ class _ProfilePageState extends State<ProfilePage> {
     final profile = _profile ?? UserProfileData.empty();
     final bottomPadding = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
+    if (appSettingsController.seniorMode) {
+      return _SeniorProfileView(
+        profile: profile,
+        accountInfo: _accountInfo,
+        seniorMode: appSettingsController.seniorMode,
+        notificationsEnabled: _notificationsEnabled,
+        exactAlarmEnabled: _exactAlarmEnabled,
+        syncStatus: dataSyncStatusController,
+        onEditProfile: _showSeniorProfileEditor,
+        onNotificationPermission: _requestNotificationPermission,
+        onExactAlarmPermission: _requestExactAlarmPermission,
+        onToggleSeniorMode: _setSeniorMode,
+        onReminderSettings: () => context.go('/clock?manage=rules'),
+        onMoreSettings: _showSeniorMoreSettings,
+        onLogin: () => context
+            .push('/login', extra: true)
+            .then((_) => _load(silent: true)),
+        onSignOut: _signOut,
+        onRefresh: () => _load(silent: true),
+      );
+    }
+
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
@@ -475,6 +899,16 @@ class _ProfilePageState extends State<ProfilePage> {
         padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
         children: [
           _OverviewCard(profile: profile, indicators: _indicators),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.alarm_outlined),
+              title: const Text('提醒设置'),
+              subtitle: const Text('管理用药、长期和重复提醒'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.go('/clock?manage=rules'),
+            ),
+          ),
           const SizedBox(height: 16),
           Card(
             child: ListTile(
@@ -792,6 +1226,86 @@ class _ProfilePageState extends State<ProfilePage> {
             },
           ),
           const SizedBox(height: 20),
+          _Panel(
+            title: '显示与数据',
+            subtitle: '简洁显示、健康摘要和模板导入',
+            child: Column(
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.accessibility_new_outlined),
+                  title: const Text('长辈模式'),
+                  subtitle: const Text('放大文字和按钮，首页只保留常用内容'),
+                  value: appSettingsController.seniorMode,
+                  onChanged: _setSeniorMode,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    _notificationsEnabled == true
+                        ? Icons.notifications_active_outlined
+                        : Icons.notifications_off_outlined,
+                  ),
+                  title: const Text('普通通知权限'),
+                  subtitle: Text(
+                    _notificationsEnabled == true ? '已开启' : '未开启，提醒可能无法显示',
+                  ),
+                  trailing: _notificationsEnabled == true
+                      ? const Icon(Icons.check_circle, color: Colors.green)
+                      : TextButton(
+                          onPressed: _requestNotificationPermission,
+                          child: const Text('去开启'),
+                        ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.alarm_on_outlined),
+                  title: const Text('用药准点提醒权限'),
+                  subtitle: Text(
+                    _exactAlarmEnabled == true ? '已允许精确闹钟' : '未允许，保存用药提醒时可以申请',
+                  ),
+                  trailing: _exactAlarmEnabled == true
+                      ? const Icon(Icons.check_circle, color: Colors.green)
+                      : TextButton(
+                          onPressed: _requestExactAlarmPermission,
+                          child: const Text('去开启'),
+                        ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.picture_as_pdf_outlined),
+                  title: const Text('生成健康摘要 PDF'),
+                  subtitle: const Text('可选择最近 7、30 或 90 天并保存或分享'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _shareHealthPdf,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.download_outlined),
+                  title: const Text('保存数据导入模板'),
+                  subtitle: const Text('仅支持使用本 APP 模板填写'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _saveImportTemplate,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.upload_file_outlined),
+                  title: const Text('导入健康数据'),
+                  subtitle: const Text('导入前预览；同类型同测量时间自动跳过'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _importHealthData,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          _SyncStatusPanel(status: dataSyncStatusController),
+          const SizedBox(height: 20),
           _AccountSecurityPanel(
             accountInfo: _accountInfo,
             onLogin: () => context
@@ -884,6 +1398,382 @@ class _ProfileNumberField extends StatelessWidget {
         suffixIcon: onTap == null ? null : const Icon(Icons.unfold_more),
       ),
       validator: validator,
+    );
+  }
+}
+
+class _SeniorProfileView extends StatelessWidget {
+  const _SeniorProfileView({
+    required this.profile,
+    required this.accountInfo,
+    required this.seniorMode,
+    required this.notificationsEnabled,
+    required this.exactAlarmEnabled,
+    required this.syncStatus,
+    required this.onEditProfile,
+    required this.onNotificationPermission,
+    required this.onExactAlarmPermission,
+    required this.onToggleSeniorMode,
+    required this.onReminderSettings,
+    required this.onMoreSettings,
+    required this.onLogin,
+    required this.onSignOut,
+    required this.onRefresh,
+  });
+
+  final UserProfileData profile;
+  final AccountInfo? accountInfo;
+  final bool seniorMode;
+  final bool? notificationsEnabled;
+  final bool? exactAlarmEnabled;
+  final DataSyncStatusController syncStatus;
+  final Future<void> Function() onEditProfile;
+  final Future<void> Function() onNotificationPermission;
+  final Future<void> Function() onExactAlarmPermission;
+  final Future<void> Function(bool) onToggleSeniorMode;
+  final VoidCallback onReminderSettings;
+  final Future<void> Function() onMoreSettings;
+  final VoidCallback onLogin;
+  final Future<void> Function() onSignOut;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final loggedIn = UserSession.instance.isAccountLogin;
+    final nickname = accountInfo?.nickname.trim().isNotEmpty == true
+        ? accountInfo!.nickname
+        : profile.nickname.trim().isNotEmpty
+            ? profile.nickname
+            : '健康用户';
+    final phone = accountInfo?.phoneTail ?? '';
+    final syncText = switch (syncStatus.phase) {
+      DataSyncPhase.syncing => '正在同步健康数据',
+      DataSyncPhase.failed => '同步失败，请重新同步',
+      DataSyncPhase.synced when syncStatus.lastSyncedAt != null =>
+        '已同步 · ${DateFormat('MM月dd日 HH:mm').format(syncStatus.lastSyncedAt!)}',
+      _ => loggedIn ? '登录后自动同步' : '尚未登录',
+    };
+    final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        key: const PageStorageKey('senior-profile-scroll'),
+        padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
+        children: [
+          const Text('我的',
+              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 18),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryBlue.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 30,
+                      child: Icon(Icons.person_outline, size: 34),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(nickname,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 23, fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 4),
+                          Text(
+                            loggedIn
+                                ? (phone.isEmpty ? '账号已登录' : '手机号尾号 $phone')
+                                : '尚未登录账号',
+                            style: const TextStyle(
+                                fontSize: 16, color: AppTheme.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '${profile.age > 0 ? '${profile.age} 岁 · ' : ''}BMI ${profile.bmi > 0 ? profile.bmi.toStringAsFixed(1) : '--'} · ${_seniorGoalLabel(profile.goal)}',
+                  style: const TextStyle(fontSize: 17),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: onEditProfile,
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('编辑健康档案'),
+                ),
+                if (!loggedIn) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: onLogin,
+                    icon: const Icon(Icons.login),
+                    label: const Text('登录账号'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          _SeniorStatusPanel(
+            notificationsEnabled: notificationsEnabled,
+            exactAlarmEnabled: exactAlarmEnabled,
+            syncText: syncText,
+            syncFailed: syncStatus.phase == DataSyncPhase.failed,
+            onNotificationPermission: onNotificationPermission,
+            onExactAlarmPermission: onExactAlarmPermission,
+            onRetrySync: syncStatus.canRetry ? syncStatus.retry : null,
+          ),
+          const SizedBox(height: 16),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: SwitchListTile(
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+              secondary: const Icon(Icons.accessibility_new_outlined),
+              title: const Text('长辈模式',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+              subtitle: const Text('大字、简洁、易操作'),
+              value: seniorMode,
+              onChanged: onToggleSeniorMode,
+            ),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: onReminderSettings,
+            icon: const Icon(Icons.alarm_outlined),
+            label: const Text('提醒设置'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onMoreSettings,
+            icon: const Icon(Icons.settings_outlined),
+            label: const Text('更多设置'),
+          ),
+          if (loggedIn) ...[
+            const SizedBox(height: 24),
+            TextButton.icon(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: onSignOut,
+              icon: const Icon(Icons.logout_outlined),
+              label: const Text('退出登录'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorStatusPanel extends StatelessWidget {
+  const _SeniorStatusPanel({
+    required this.notificationsEnabled,
+    required this.exactAlarmEnabled,
+    required this.syncText,
+    required this.syncFailed,
+    required this.onNotificationPermission,
+    required this.onExactAlarmPermission,
+    required this.onRetrySync,
+  });
+
+  final bool? notificationsEnabled;
+  final bool? exactAlarmEnabled;
+  final String syncText;
+  final bool syncFailed;
+  final Future<void> Function() onNotificationPermission;
+  final Future<void> Function() onExactAlarmPermission;
+  final Future<void> Function()? onRetrySync;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('提醒与数据状态',
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 12),
+          _SeniorPermissionRow(
+            icon: Icons.notifications_active_outlined,
+            title: '普通提醒',
+            enabled: notificationsEnabled == true,
+            enabledText: '通知已开启',
+            disabledText: '通知未开启，普通提醒可能无法显示',
+            onEnable: onNotificationPermission,
+          ),
+          const Divider(height: 24),
+          _SeniorPermissionRow(
+            icon: Icons.alarm_on_outlined,
+            title: '用药准点提醒',
+            enabled: exactAlarmEnabled == true,
+            enabledText: '精确闹钟已允许',
+            disabledText: '尚未允许精确闹钟',
+            onEnable: onExactAlarmPermission,
+          ),
+          const Divider(height: 24),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(syncFailed ? Icons.sync_problem : Icons.cloud_done_outlined,
+                  color: syncFailed ? Colors.red : Colors.green),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('数据同步',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 3),
+                    Text(syncText,
+                        style: const TextStyle(color: AppTheme.muted)),
+                    if (syncFailed && onRetrySync != null) ...[
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: onRetrySync,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重新同步'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorPermissionRow extends StatelessWidget {
+  const _SeniorPermissionRow({
+    required this.icon,
+    required this.title,
+    required this.enabled,
+    required this.enabledText,
+    required this.disabledText,
+    required this.onEnable,
+  });
+
+  final IconData icon;
+  final String title;
+  final bool enabled;
+  final String enabledText;
+  final String disabledText;
+  final Future<void> Function() onEnable;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: enabled ? Colors.green : Colors.orange),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 3),
+              Text(enabled ? enabledText : disabledText,
+                  style: const TextStyle(color: AppTheme.muted)),
+              if (!enabled) ...[
+                const SizedBox(height: 8),
+                OutlinedButton(onPressed: onEnable, child: const Text('去开启')),
+              ],
+            ],
+          ),
+        ),
+        if (enabled) const Icon(Icons.check_circle, color: Colors.green),
+      ],
+    );
+  }
+}
+
+class _SeniorSettingsTile extends StatelessWidget {
+  const _SeniorSettingsTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.color,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(title,
+          style: TextStyle(
+              color: color, fontSize: 18, fontWeight: FontWeight.w700)),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
+  }
+}
+
+String _seniorGoalLabel(String goal) => switch (goal) {
+      'fat_loss' => '减脂',
+      'glucose_control' => '控糖',
+      'bp_control' => '控压',
+      _ => '保持健康',
+    };
+
+class _SyncStatusPanel extends StatelessWidget {
+  const _SyncStatusPanel({required this.status});
+
+  final DataSyncStatusController status;
+
+  @override
+  Widget build(BuildContext context) {
+    final last = status.lastSyncedAt;
+    final subtitle = switch (status.phase) {
+      DataSyncPhase.syncing => '正在同步健康数据…',
+      DataSyncPhase.failed => status.errorMessage ?? '同步失败，请检查网络后重试',
+      DataSyncPhase.synced when last != null =>
+        '上次同步 ${DateFormat('MM-dd HH:mm').format(last)}',
+      _ => '登录后自动同步健康数据',
+    };
+    return _Panel(
+      title: '数据同步',
+      subtitle: subtitle,
+      child: status.phase == DataSyncPhase.failed
+          ? Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: status.canRetry ? status.retry : null,
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新同步'),
+              ),
+            )
+          : const Text('数据正常时无需手动操作。'),
     );
   }
 }
@@ -1256,7 +2146,7 @@ class _IndicatorList extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    DateFormat('MM/dd').format(item.measuredTime),
+                    DateFormat('MM/dd HH:mm').format(item.measuredTime),
                     style: const TextStyle(color: AppTheme.muted, fontSize: 12),
                   ),
                 ],

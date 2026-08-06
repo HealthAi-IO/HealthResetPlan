@@ -1,41 +1,55 @@
-# Gender Selector Design QA
+# 长辈模式设计 QA
 
-- Source: `D:\Temp\codex-clipboard-c362e644-8264-4f79-a914-307d072dbf44.png`
-- Browser open-state screenshot: `design-qa-gender-picker.png`
-- Physical phone open-state screenshot: `design-qa-phone-gender-picker.png`
-- Physical phone selected-state screenshot: `design-qa-phone-gender-selected.png`
-- Physical device: ADY AL10, Android 12, 1256 × 2760 px
+## 对照材料
 
-## Result
+- 视觉基准：`C:\Users\Tong\.codex\generated_images\019fd0e0-a209-7da1-99ea-56aa4b5880ce\exec-fb8d3162-939e-4a32-b17e-6bd8234e972a.png`
+- 基准尺寸：853 × 1844
+- 真机实现：`output/elder-redesign/final-clock.png`
+- 真机尺寸：1256 × 2760（华为 Android 测试机）
+- 同屏对照：`output/elder-redesign/qa-comparison.png`，1160 × 1231
+- 对照方式：两张图等宽缩放后并排，按结构、层级、间距、字号、颜色和操作入口检查；实现图包含真实业务数据。
 
-The previous three-button row was replaced with one full-width gender field. Tapping it opens a bottom selection sheet with “女 / 男 / 暂不填写”.
+## 覆盖页面和状态
 
-- The original gender field remains visible above the sheet.
-- All three choices are complete and untruncated.
-- The selected choice follows the active theme color.
-- Choosing “男” closes the sheet and updates the field.
-- No actionable P0, P1, or P2 findings remain.
+- 首页：今日任务、常用健康数据、测量时间。
+- 计划：当前计划、接下来、已完成、未来计划、无计划状态。
+- 打卡：当前任务、同一时间多种药逐项确认、接下来、已完成、补充记录、提醒管理。
+- 趋势：单指标、最近值、七日趋势、具体测量时间。
+- 我的：健康档案、提醒与同步状态、长辈模式、更多设置。
+- 用药设置：多种药、同一种药多个时间、每次不同剂量、疗程日期、库存和补药阈值。
+- 普通提醒：饮食、运动、称重、饮水类型选择。
 
-final result: passed
+## 视觉核对
 
----
+- 信息层级与基准一致：页面标题 → 当前任务主卡 → 接下来 → 已完成/补充入口。
+- 保留现有品牌蓝紫色体系、圆角卡片、Material 图标和大号触控区域。
+- 真实实现按业务状态使用蓝色普通任务、红色逾期用药提示，没有复制基准图中的演示数据。
+- 底部导航、主要按钮、提醒管理、编辑和新增入口均可操作。
+- 原生 APP 不适用浏览器控制台检查；Flutter Analyze 与真机日志检查代替该项。
 
-# Splash and Home Design QA
+## 文字换行检查与修复记录
 
-- Selected visual: `C:\Users\Tong\.codex\generated_images\019fab86-6bdb-7412-b064-5b08635e7455\call_aiHuxZsego2swGzTmBEJ2dLo.png`
-- Windows desktop capture: `D:\HuaweiMoveData\Users\Tong\Desktop\WeiLingJi\Health\outputs\ui-qa-selected-desktop-home.png`
-- Splash background asset: `assets/images/splash_trajectory_background.png`
-- Brand asset: `assets/images/health_reset_logo.png`
+1. 计划页 `12:00` 曾被压成两行：时间列从 58 调整为 76，并设置 `maxLines: 1`、`softWrap: false`。
+2. 打卡页时间列已加宽，同日提醒时间保持单行。
+3. 用药表单“疗程结束日期”曾被尾部按钮挤成三行：改为上下结构。
+4. “剩余服用次数”和“补药提醒阈值”曾因并排显示被省略：改为纵向全宽输入框。
+5. “我的”页长辈模式说明曾出现孤行“操作”：文案缩短为“大字、简洁、易操作”。
+6. 提醒管理按钮、普通提醒类型、服药时间、剂量说明和底部导航均在测试机大字体下完整显示。
 
-## Result
+## 功能核对
 
-- The splash uses the approved logo, exact slogan, soft trajectory background, non-native loading indicator, and a 1.4-second minimum display duration.
-- Splash trajectory tint follows the persisted theme seed while the logo keeps its brand colors.
-- Mobile and desktop home heroes use the approved “今日进度” copy and modern web-style hierarchy.
-- Hero tint, accent rail, progress ring, action states, CTA, and active navigation follow the selected theme.
-- The existing home actions, progress behavior, welcome letter, navigation, and data panels remain connected.
-- Desktop release capture confirms readable hierarchy, consistent spacing, and no visible clipping in the redesigned hero.
-- `flutter analyze` reports no issues and all 32 automated tests pass.
-- No actionable P0, P1, or P2 findings remain.
+- 同一时间多种药只生成一条汇总精确通知，进入 APP 后逐种药确认，不提供批量已服。
+- 每种药可以设置多个时间点，每个时间点独立保存剂量和用法。
+- 用药提醒申请精确闹钟能力；普通提醒明确标注“近似调度”。
+- 结束的一次性提醒和完成疗程会自动归档清理。
+- 计划、打卡、趋势、我的四个长辈模式页面已在真机检查主要滚动和弹窗状态。
+
+## 验证结果
+
+- `flutter test`：51 项通过。
+- `flutter analyze`：无问题。
+- 测试 APK：`com.jkcqplan.dev`，`1.0.14+15`。
+- APK Signature Scheme v2：通过。
+- 正式包、正式 API 和正式服务未修改。
 
 final result: passed

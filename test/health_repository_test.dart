@@ -1,4 +1,8 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:health_reset_plan/core/data/health_data_import_service.dart';
 import 'package:health_reset_plan/core/data/health_models.dart';
 import 'package:health_reset_plan/core/data/health_repository.dart';
 import 'package:health_reset_plan/core/network/online_data_api.dart';
@@ -52,6 +56,13 @@ void main() {
     );
     expect(
       HealthSafety.isCriticalIndicator('spo2', {'spo2Pct': 89}),
+      isTrue,
+    );
+    expect(
+      HealthSafety.isAbnormalIndicator(
+        'bp',
+        {'systolic': 130, 'diastolic': 79},
+      ),
       isTrue,
     );
   });
@@ -351,6 +362,192 @@ void main() {
     final resumed = (await repo.loadReminders()).single;
     expect(resumed.isEnabled, isTrue);
     expect(resumed.status, 'pending');
+  });
+
+  test('medicine reminder supports daily times, inventory and action history',
+      () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    final reminder = await repo.addReminder(
+      type: 'medicine',
+      time: const TimeOfDayValue(hour: 8, minute: 0),
+      date: DateTime.now(),
+      scheduleMode: 'weekly',
+      weekdays: const [1, 2, 3, 4, 5, 6, 7],
+      note: '降压药',
+      payloadExtras: {
+        'medicineName': '降压药',
+        'dose': '1片',
+        'dailyTimes': [
+          {'hour': 8, 'minute': 0},
+          {'hour': 20, 'minute': 0},
+        ],
+        'doseByTime': {'08:00': '1片', '20:00': '半片'},
+        'instructionsByTime': {'20:00': '饭后服用'},
+        'inventoryRemaining': 3,
+        'refillThreshold': 2,
+      },
+    );
+
+    expect(reminder.dailyTimes, hasLength(2));
+    expect(reminder.displayLabel, '降压药');
+    expect(reminder.doseAt(reminder.dailyTimes.first), '1片');
+    expect(reminder.doseAt(reminder.dailyTimes.last), '半片');
+    expect(reminder.instructionsAt(reminder.dailyTimes.last), '饭后服用');
+    final occurrence = DateTime(2026, 8, 5, 8);
+    final updated = await repo.recordMedicationAction(
+      reminder,
+      'taken',
+      scheduledAt: occurrence,
+    );
+    expect(updated.inventoryRemaining, 2);
+    expect(updated.refillNeeded, isTrue);
+    expect(updated.actionAt(occurrence), 'taken');
+    final duplicate = await repo.recordMedicationAction(
+      updated,
+      'taken',
+      scheduledAt: occurrence,
+    );
+    expect(duplicate.inventoryRemaining, 2);
+    final records = await repo.loadClockRecords();
+    expect(records.single.status, 'done');
+    expect(records.single.note, contains('已服'));
+  });
+
+  test('ordinary reminder acknowledgement is tracked by occurrence', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    final reminder = await repo.addReminder(
+      type: 'water',
+      time: const TimeOfDayValue(hour: 10, minute: 0),
+      date: DateTime(2026, 8, 5),
+      scheduleMode: 'weekly',
+      weekdays: const [1, 2, 3, 4, 5, 6, 7],
+    );
+    final occurrence = DateTime(2026, 8, 5, 10);
+
+    final updated = await repo.acknowledgeReminder(reminder, occurrence);
+    expect(updated.acknowledgedAt(occurrence), isTrue);
+    expect((await repo.loadClockRecords()).single.status, 'done');
+  });
+
+  test('clock record can be removed after correction confirmation', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.addClockRecord(type: 'exercise', note: '晚间散步');
+    final record = (await repo.loadClockRecords()).single;
+
+    await repo.deleteClockRecord(record.id!);
+
+    expect(await repo.loadClockRecords(), isEmpty);
+  });
+
+  test('completed medication course is archived without deleting history',
+      () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.addReminder(
+      type: 'medicine',
+      time: const TimeOfDayValue(hour: 8, minute: 0),
+      date: DateTime(2026, 8, 1),
+      scheduleMode: 'weekly',
+      weekdays: const [1, 2, 3, 4, 5, 6, 7],
+      payloadExtras: {
+        'medicineName': '疗程药物',
+        'courseEndAt': DateTime(2026, 8, 3).millisecondsSinceEpoch,
+      },
+    );
+
+    final archived =
+        await repo.archiveCompletedMedicationCourses(DateTime(2026, 8, 5));
+    final stored = (await repo.loadReminders()).single;
+    expect(archived, hasLength(1));
+    expect(stored.isArchived, isTrue);
+    expect(stored.occursOn(DateTime(2026, 8, 5)), isFalse);
+  });
+
+  test('critical alert wins over consecutive ordinary abnormalities', () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    final now = DateTime.now();
+    await repo.addIndicator(
+      type: 'glucose',
+      payload: {'glucoseMmol': 6.2, 'mealType': 'fasting'},
+      measuredAt: now.subtract(const Duration(days: 2)),
+    );
+    await repo.addIndicator(
+      type: 'glucose',
+      payload: {'glucoseMmol': 6.5, 'mealType': 'fasting'},
+      measuredAt: now.subtract(const Duration(days: 1)),
+    );
+    await repo.addIndicator(
+      type: 'spo2',
+      payload: {'spo2Pct': 89},
+      measuredAt: now,
+    );
+
+    final alert = await repo.loadPriorityHealthAlert();
+    expect(alert?.type, 'spo2');
+    expect(alert?.isCritical, isTrue);
+  });
+
+  test('template import previews errors and skips duplicate type and time',
+      () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    final measuredAt = DateTime.now().subtract(const Duration(hours: 1));
+    String stamp(DateTime value) =>
+        '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+    final csv = '${HealthDataImportService.headers.join(',')}\n'
+        '${stamp(measuredAt)},血压,128,82,,,,,,,\n'
+        '${stamp(measuredAt)},血压,130,84,,,,,,,\n'
+        '${stamp(measuredAt)},未知指标,,,,,,,,,\n';
+    final service = HealthDataImportService(repo);
+    final preview = await service.preview(
+      Uint8List.fromList(utf8.encode(csv)),
+      'csv',
+    );
+
+    expect(preview.validRows, hasLength(2));
+    expect(preview.duplicateCount, 1);
+    expect(preview.errors, hasLength(1));
+    expect(await service.commit(preview), 1);
+    expect(await service.commit(preview), 0);
+  });
+
+  test('expired one-time reminders are deleted but weekly rules remain',
+      () async {
+    final repo = HealthRepository(database: _MemoryAppDatabase());
+    await repo.initialize();
+    await repo.addReminder(
+      type: 'medicine',
+      time: const TimeOfDayValue(hour: 8, minute: 0),
+      date: DateTime(2026, 8, 4),
+      scheduleMode: 'once',
+      weekdays: const [],
+    );
+    await repo.addReminder(
+      type: 'water',
+      time: const TimeOfDayValue(hour: 18, minute: 0),
+      date: DateTime(2026, 8, 5),
+      scheduleMode: 'once',
+      weekdays: const [],
+    );
+    await repo.addReminder(
+      type: 'weight',
+      time: const TimeOfDayValue(hour: 7, minute: 0),
+      date: DateTime(2026, 8, 1),
+      scheduleMode: 'weekly',
+      weekdays: const [3],
+    );
+
+    final deleted =
+        await repo.cleanupExpiredOnceReminders(DateTime(2026, 8, 5, 12));
+    final remaining = await repo.loadReminders();
+
+    expect(deleted, hasLength(1));
+    expect(
+        remaining.map((item) => item.type), containsAll(['water', 'weight']));
   });
 
   test('AI plan keeps four daily reminders and queues every replaced row',

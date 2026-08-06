@@ -5,11 +5,13 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/notification/reminder_scheduler.dart';
 import '../meals/meal_input_args.dart';
 import '../meals/macro_ring.dart';
 
@@ -45,6 +47,7 @@ class _HomePageState extends State<HomePage> {
   List<MealRecordData> _mealRecords = const [];
   List<MealRecordData> _todayMealRecords = const [];
   List<HealthReportRecord> _recentReports = const [];
+  HealthTrendAlert? _healthAlert;
   DateTime _selectedMealDate = DateTime.now();
   bool _loading = true;
   bool _promptOpen = false;
@@ -54,12 +57,14 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _repo.addListener(_onChanged);
+    appSettingsController.addListener(_onChanged);
     _load();
   }
 
   @override
   void dispose() {
     _repo.removeListener(_onChanged);
+    appSettingsController.removeListener(_onChanged);
     super.dispose();
   }
 
@@ -75,6 +80,7 @@ class _HomePageState extends State<HomePage> {
       _repo.loadMealsForDate(_selectedMealDate),
       _repo.loadReportRecords(limit: 3),
       _repo.loadMealsForDate(DateTime.now()),
+      _repo.loadPriorityHealthAlert(),
     ]);
     if (!mounted) return;
     setState(() {
@@ -83,6 +89,7 @@ class _HomePageState extends State<HomePage> {
       _mealRecords = results[2] as List<MealRecordData>;
       _recentReports = results[3] as List<HealthReportRecord>;
       _todayMealRecords = results[4] as List<MealRecordData>;
+      _healthAlert = results[5] as HealthTrendAlert?;
       _loading = false;
     });
     _runEntryPrompts(results[0] as HealthDashboardData);
@@ -285,6 +292,58 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _openIndicator([String? type]) {
+    context.push('/indicators/input', extra: type).then((_) {
+      if (mounted) _load(silent: true);
+    });
+  }
+
+  Future<void> _takeSeniorMedicine(
+    ReminderData reminder,
+    DateTime occurrence,
+  ) async {
+    try {
+      final updated = await _repo.recordMedicationAction(
+        reminder,
+        'taken',
+        scheduledAt: occurrence,
+      );
+      await sl<ReminderScheduler>().syncReminder(updated);
+      if (!mounted) return;
+      final refill = updated.refillNeeded ? '，库存不足，请及时补充' : '';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已记录服药$refill')),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('记录失败，请检查网络后重试')),
+        );
+      }
+    }
+  }
+
+  Future<void> _acknowledgeSeniorReminder(
+    ReminderData reminder,
+    DateTime occurrence,
+  ) async {
+    try {
+      final updated = await _repo.acknowledgeReminder(reminder, occurrence);
+      await sl<ReminderScheduler>().syncReminder(updated);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已完成今天这项提醒')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('记录失败，请检查网络后重试')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading && _data == null) {
@@ -314,6 +373,49 @@ class _HomePageState extends State<HomePage> {
         todayClocks.where((r) => r.status == 'done').map((r) => r.type).toSet();
     final completion = data?.todayCompletion ?? 0;
     final desktop = MediaQuery.sizeOf(context).width >= 1100;
+    final seniorMode = appSettingsController.seniorMode;
+
+    if (seniorMode) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          key: const PageStorageKey('senior-home-scroll'),
+          padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
+          children: [
+            if (_healthAlert != null) ...[
+              _HealthAlertCard(
+                alert: _healthAlert!,
+                onRecord: () => context.push('/indicators/input'),
+              ),
+              const SizedBox(height: 14),
+            ],
+            _SeniorTodayTasks(
+              plans: todayPlans,
+              reminders: data?.reminders ?? const [],
+              doneTypes: doneTypes,
+              onTakeMedicine: _takeSeniorMedicine,
+              onAcknowledge: _acknowledgeSeniorReminder,
+              onOpenClock: () => context.go('/clock'),
+            ),
+            const SizedBox(height: 14),
+            _SeniorMetrics(
+              data: data,
+              onRecord: _openIndicator,
+            ),
+            const SizedBox(height: 14),
+            _SeniorQuickRecord(onRecord: _openIndicator),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/clock'),
+              icon: const Icon(Icons.task_alt_outlined),
+              label: Text(
+                '今日已完成 ${todayClocks.where((item) => item.status == 'done').length} 项　查看记录',
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     if (desktop) {
       return _DesktopHomeDashboard(
@@ -348,6 +450,13 @@ class _HomePageState extends State<HomePage> {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         cacheExtent: 900,
         children: [
+          if (_healthAlert != null) ...[
+            _HealthAlertCard(
+              alert: _healthAlert!,
+              onRecord: () => context.push('/indicators/input'),
+            ),
+            const SizedBox(height: 14),
+          ],
           // 顶部仪表盘 Hero
           _DashboardHero(
             profile: profile,
@@ -1452,7 +1561,7 @@ class _DesktopIndicators extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  DateFormat('MM/dd').format(indicators[i].measuredTime),
+                  DateFormat('MM/dd HH:mm').format(indicators[i].measuredTime),
                   style: const TextStyle(color: AppTheme.muted, fontSize: 12),
                 ),
               ],
@@ -2005,7 +2114,7 @@ class _TodayMetricsRow extends StatelessWidget {
                   value: latestBp?.displayValue ?? '--',
                   sub: latestBp == null
                       ? '未录入'
-                      : DateFormat('MM/dd').format(latestBp.measuredTime),
+                      : DateFormat('MM/dd HH:mm').format(latestBp.measuredTime),
                   icon: Icons.favorite_outline,
                   color: Colors.redAccent),
               _MetricTile(
@@ -2013,7 +2122,8 @@ class _TodayMetricsRow extends StatelessWidget {
                   value: latestWeight?.displayValue ?? '--',
                   sub: latestWeight == null
                       ? '未录入'
-                      : DateFormat('MM/dd').format(latestWeight.measuredTime),
+                      : DateFormat('MM/dd HH:mm')
+                          .format(latestWeight.measuredTime),
                   icon: Icons.scale_outlined,
                   color: AppTheme.deepBlue),
               _MetricTile(
@@ -2021,7 +2131,8 @@ class _TodayMetricsRow extends StatelessWidget {
                   value: latestGlucose?.displayValue ?? '--',
                   sub: latestGlucose == null
                       ? '未录入'
-                      : DateFormat('MM/dd').format(latestGlucose.measuredTime),
+                      : DateFormat('MM/dd HH:mm')
+                          .format(latestGlucose.measuredTime),
                   icon: Icons.water_drop_outlined,
                   color: Colors.orange),
             ],
@@ -2919,6 +3030,428 @@ class _RecentIndicatorsPanel extends StatelessWidget {
 }
 
 // ── 面板容器 ──────────────────────────────────────────────────
+class _SeniorTodayTasks extends StatelessWidget {
+  const _SeniorTodayTasks({
+    required this.plans,
+    required this.reminders,
+    required this.doneTypes,
+    required this.onTakeMedicine,
+    required this.onAcknowledge,
+    required this.onOpenClock,
+  });
+
+  final List<PlanRecordData> plans;
+  final List<ReminderData> reminders;
+  final Set<String> doneTypes;
+  final Future<void> Function(ReminderData, DateTime) onTakeMedicine;
+  final Future<void> Function(ReminderData, DateTime) onAcknowledge;
+  final VoidCallback onOpenClock;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final occurrences = <_SeniorReminderOccurrence>[];
+    for (final reminder in reminders) {
+      if (!reminder.isEnabled || !reminder.occursOn(now)) continue;
+      for (final time in reminder.dailyTimes) {
+        final occurrence = DateTime(
+          now.year,
+          now.month,
+          now.day,
+          time.hour,
+          time.minute,
+        );
+        if (reminder.type == 'medicine') {
+          if (reminder.actionAt(occurrence) == null) {
+            occurrences.add(_SeniorReminderOccurrence(reminder, occurrence));
+          }
+        } else if (occurrence.isAfter(now) &&
+            !reminder.acknowledgedAt(occurrence)) {
+          occurrences.add(_SeniorReminderOccurrence(reminder, occurrence));
+        }
+      }
+    }
+    occurrences.sort((a, b) => a.occurrence.compareTo(b.occurrence));
+    final pendingPlans = plans
+        .where((plan) =>
+            (plan.type == 'meal' || plan.type == 'exercise') &&
+            !doneTypes.contains(plan.type))
+        .toList();
+    const visibleLimit = 3;
+    final visibleOccurrences = occurrences.take(visibleLimit).toList();
+    final remainingSlots = visibleLimit - visibleOccurrences.length;
+    final visiblePlans = pendingPlans.take(remainingSlots).toList();
+    final hiddenCount = occurrences.length +
+        pendingPlans.length -
+        visibleOccurrences.length -
+        visiblePlans.length;
+
+    return _Panel(
+      title: '今天要做',
+      action: TextButton(onPressed: onOpenClock, child: const Text('全部')),
+      child: occurrences.isEmpty && pendingPlans.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Row(
+                children: [
+                  Icon(Icons.task_alt, color: Colors.green),
+                  SizedBox(width: 10),
+                  Expanded(child: Text('今天暂时没有未完成事项。')),
+                ],
+              ),
+            )
+          : Column(
+              children: [
+                for (final item in visibleOccurrences)
+                  _SeniorReminderTask(
+                    item: item,
+                    onTakeMedicine: onTakeMedicine,
+                    onAcknowledge: onAcknowledge,
+                    onOpenClock: onOpenClock,
+                  ),
+                for (final plan in visiblePlans)
+                  _SeniorPlanTask(plan: plan, onTap: onOpenClock),
+                if (hiddenCount > 0)
+                  TextButton.icon(
+                    onPressed: onOpenClock,
+                    icon: const Icon(Icons.list_alt),
+                    label: Text('还有 $hiddenCount 项，查看全部'),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _SeniorReminderOccurrence {
+  const _SeniorReminderOccurrence(this.reminder, this.occurrence);
+
+  final ReminderData reminder;
+  final DateTime occurrence;
+}
+
+class _SeniorReminderTask extends StatelessWidget {
+  const _SeniorReminderTask({
+    required this.item,
+    required this.onTakeMedicine,
+    required this.onAcknowledge,
+    required this.onOpenClock,
+  });
+
+  final _SeniorReminderOccurrence item;
+  final Future<void> Function(ReminderData, DateTime) onTakeMedicine;
+  final Future<void> Function(ReminderData, DateTime) onAcknowledge;
+  final VoidCallback onOpenClock;
+
+  @override
+  Widget build(BuildContext context) {
+    final reminder = item.reminder;
+    final overdue = item.occurrence.isBefore(DateTime.now());
+    final dose = reminder.payload['dose']?.toString().trim() ?? '';
+    final instructions =
+        reminder.payload['instructions']?.toString().trim() ?? '';
+    final detail =
+        [dose, instructions].where((value) => value.isNotEmpty).join('，');
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: overdue && reminder.type == 'medicine'
+            ? Colors.orange.withValues(alpha: 0.08)
+            : AppTheme.pageBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                DateFormat('HH:mm').format(item.occurrence),
+                style: const TextStyle(
+                  fontSize: 23,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.deepBlue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      reminder.displayLabel,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (detail.isNotEmpty) Text(detail),
+                    Text(
+                      overdue && reminder.type == 'medicine' ? '尚未确认' : '待完成',
+                      style: TextStyle(
+                        color: overdue && reminder.type == 'medicine'
+                            ? Colors.orange.shade800
+                            : AppTheme.muted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => reminder.type == 'medicine'
+                      ? onTakeMedicine(reminder, item.occurrence)
+                      : onAcknowledge(reminder, item.occurrence),
+                  child: Text(reminder.type == 'medicine' ? '已服' : '知道了'),
+                ),
+              ),
+              if (reminder.type == 'medicine') ...[
+                const SizedBox(width: 10),
+                TextButton(onPressed: onOpenClock, child: const Text('更多操作')),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorPlanTask extends StatelessWidget {
+  const _SeniorPlanTask({required this.plan, required this.onTap});
+
+  final PlanRecordData plan;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+      leading: Icon(
+        plan.type == 'exercise'
+            ? Icons.directions_walk_outlined
+            : Icons.restaurant_outlined,
+        size: 30,
+        color: AppTheme.deepBlue,
+      ),
+      title: Text(
+        plan.label,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+      ),
+      subtitle: Text(plan.summary.isEmpty ? '今天的健康计划' : plan.summary),
+      trailing: FilledButton(onPressed: onTap, child: const Text('去完成')),
+    );
+  }
+}
+
+class _SeniorMetrics extends StatelessWidget {
+  const _SeniorMetrics({required this.data, required this.onRecord});
+
+  final HealthDashboardData? data;
+  final ValueChanged<String?> onRecord;
+
+  @override
+  Widget build(BuildContext context) {
+    const types = [
+      ('bp', '血压', Icons.favorite_outline),
+      ('glucose', '血糖', Icons.water_drop_outlined),
+      ('weight', '体重', Icons.scale_outlined),
+      ('spo2', '血氧', Icons.air_outlined),
+    ];
+    return _Panel(
+      title: '常用健康数据',
+      child: Column(
+        children: [
+          for (final type in types)
+            _SeniorMetricRow(
+              label: type.$2,
+              icon: type.$3,
+              entry: data?.latestIndicator(type.$1),
+              onTap: () => onRecord(type.$1),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorMetricRow extends StatelessWidget {
+  const _SeniorMetricRow({
+    required this.label,
+    required this.icon,
+    required this.entry,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final HealthIndicatorEntry? entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final abnormal = entry != null &&
+        HealthSafety.isAbnormalIndicator(entry!.type, entry!.payload);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.pageBg,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 28, color: AppTheme.deepBlue),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text(
+                  entry?.displayValue ?? '尚未记录',
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.w900),
+                ),
+                if (entry != null)
+                  Text(
+                    '${DateFormat('MM/dd HH:mm').format(entry!.measuredTime)}${abnormal ? '　超出参考范围' : ''}',
+                    style: TextStyle(
+                      color: abnormal ? Colors.orange.shade800 : AppTheme.muted,
+                      fontWeight:
+                          abnormal ? FontWeight.w700 : FontWeight.normal,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          TextButton(onPressed: onTap, child: const Text('重新记录')),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorQuickRecord extends StatelessWidget {
+  const _SeniorQuickRecord({required this.onRecord});
+
+  final ValueChanged<String?> onRecord;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      title: '快速记录',
+      child: GridView.count(
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 2.25,
+        children: [
+          _SeniorQuickButton(
+              '测血压', Icons.favorite_outline, () => onRecord('bp')),
+          _SeniorQuickButton(
+              '测血糖', Icons.water_drop_outlined, () => onRecord('glucose')),
+          _SeniorQuickButton(
+              '记体重', Icons.scale_outlined, () => onRecord('weight')),
+          _SeniorQuickButton(
+              '其他记录', Icons.add_chart_outlined, () => onRecord(null)),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorQuickButton extends StatelessWidget {
+  const _SeniorQuickButton(this.label, this.icon, this.onTap);
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon),
+      label: Text(label, textAlign: TextAlign.center),
+    );
+  }
+}
+
+class _HealthAlertCard extends StatelessWidget {
+  const _HealthAlertCard({required this.alert, required this.onRecord});
+
+  final HealthTrendAlert alert;
+  final VoidCallback onRecord;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        alert.isCritical ? Colors.red.shade700 : Colors.orange.shade800;
+    final actionText = alert.isCritical
+        ? '立即就医'
+        : alert.type == 'bp'
+            ? '30分钟后复测'
+            : '次日复测';
+    return Card(
+      color: color.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              alert.isCritical
+                  ? Icons.warning_amber_rounded
+                  : Icons.monitor_heart_outlined,
+              color: color,
+              size: 30,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    alert.title,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(alert.message),
+                  const SizedBox(height: 10),
+                  TextButton.icon(
+                    onPressed: alert.isCritical ? null : onRecord,
+                    icon: Icon(alert.isCritical
+                        ? Icons.local_hospital_outlined
+                        : Icons.add_chart_outlined),
+                    label: Text(actionText),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Panel extends StatelessWidget {
   const _Panel({required this.title, required this.child, this.action});
   final String title;

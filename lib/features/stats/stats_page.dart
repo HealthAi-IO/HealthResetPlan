@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/health_models.dart';
@@ -19,7 +20,8 @@ ImageProvider<Object>? _authenticatedAvatarProvider(AccountInfo? info) {
   final objectKey = Uri.tryParse(info.avatarUrl)?.queryParameters['objectKey'];
   final token = UserSession.instance.accessToken;
   if (objectKey == null || objectKey.isEmpty || token == null) return null;
-  final baseUrl = sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
+  final baseUrl =
+      sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
   return NetworkImage(
     '$baseUrl/files/content?objectKey=${Uri.encodeQueryComponent(objectKey)}'
     '&contentType=image%2Fjpeg',
@@ -45,6 +47,8 @@ class _StatsPageState extends State<StatsPage> {
   List<HealthIndicatorEntry> _weightEntries = const [];
   List<HealthIndicatorEntry> _bpEntries = const [];
   List<HealthIndicatorEntry> _glucoseEntries = const [];
+  List<HealthIndicatorEntry> _spo2Entries = const [];
+  String _seniorMetric = 'bp';
 
   @override
   void initState() {
@@ -76,6 +80,7 @@ class _StatsPageState extends State<StatsPage> {
         _repo.loadIndicators(type: 'weight', limit: 20),
         _repo.loadIndicators(type: 'bp', limit: 20),
         _repo.loadIndicators(type: 'glucose', limit: 20),
+        _repo.loadIndicators(type: 'spo2', limit: 20),
       ];
       final results = await Future.wait(futures);
       if (!mounted) return;
@@ -88,6 +93,8 @@ class _StatsPageState extends State<StatsPage> {
             (results[3] as List<HealthIndicatorEntry>).reversed.toList();
         _glucoseEntries =
             (results[4] as List<HealthIndicatorEntry>).reversed.toList();
+        _spo2Entries =
+            (results[5] as List<HealthIndicatorEntry>).reversed.toList();
         _loading = false;
       });
     } catch (e) {
@@ -128,6 +135,28 @@ class _StatsPageState extends State<StatsPage> {
       context.push('/indicators/input', extra: type).then((_) {
         if (mounted) _load(silent: true);
       });
+    }
+
+    if (appSettingsController.seniorMode) {
+      final entries = switch (_seniorMetric) {
+        'weight' => _weightEntries,
+        'glucose' => _glucoseEntries,
+        'spo2' => _spo2Entries,
+        _ => _bpEntries,
+      };
+      return _SeniorStatsView(
+        data: data,
+        metric: _seniorMetric,
+        entries: entries,
+        clockStats: _clockStats,
+        onSelectMetric: (value) => setState(() => _seniorMetric = value),
+        onRecord: () => pushInput(_seniorMetric),
+        onMore: () => context.push('/indicators').then((_) {
+          if (mounted) _load(silent: true);
+        }),
+        onClock: () => context.go('/clock'),
+        onRefresh: () => _load(silent: true),
+      );
     }
 
     return RefreshIndicator(
@@ -213,6 +242,289 @@ class _StatsPageState extends State<StatsPage> {
     );
   }
 }
+
+class _SeniorStatsView extends StatelessWidget {
+  const _SeniorStatsView({
+    required this.data,
+    required this.metric,
+    required this.entries,
+    required this.clockStats,
+    required this.onSelectMetric,
+    required this.onRecord,
+    required this.onMore,
+    required this.onClock,
+    required this.onRefresh,
+  });
+
+  final HealthDashboardData data;
+  final String metric;
+  final List<HealthIndicatorEntry> entries;
+  final ClockStats? clockStats;
+  final ValueChanged<String> onSelectMetric;
+  final VoidCallback onRecord;
+  final VoidCallback onMore;
+  final VoidCallback onClock;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(days: 7));
+    final visibleEntries =
+        entries.where((entry) => entry.measuredTime.isAfter(cutoff)).toList();
+    final latest = entries.lastOrNull;
+    final abnormal = latest != null &&
+        HealthSafety.isAbnormalIndicator(latest.type, latest.payload);
+    final critical = latest != null &&
+        HealthSafety.isCriticalIndicator(latest.type, latest.payload);
+    final stateColor = critical
+        ? Colors.redAccent
+        : abnormal
+            ? Colors.orange
+            : Colors.green;
+    final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        key: const PageStorageKey('senior-stats-scroll'),
+        padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
+        children: [
+          const Text('健康变化',
+              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 4),
+          const Text(
+            '一次查看一个指标，更容易看清变化',
+            style: TextStyle(fontSize: 17, color: AppTheme.muted),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final item in const [
+                ('bp', '血压', Icons.favorite_outline),
+                ('glucose', '血糖', Icons.water_drop_outlined),
+                ('weight', '体重', Icons.scale_outlined),
+                ('spo2', '血氧', Icons.air_outlined),
+              ])
+                ChoiceChip(
+                  selected: metric == item.$1,
+                  onSelected: (_) => onSelectMetric(item.$1),
+                  avatar: Icon(item.$3, size: 21),
+                  label: Text(item.$2),
+                  labelStyle: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: stateColor.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: latest == null
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '${_seniorMetricLabel(metric)}还没有记录',
+                        style: const TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        onPressed: onRecord,
+                        icon: const Icon(Icons.add),
+                        label: const Text('记录第一次测量'),
+                      ),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '最新${latest.label}',
+                              style: const TextStyle(
+                                  fontSize: 18, color: AppTheme.muted),
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Icon(
+                                critical
+                                    ? Icons.warning_amber_rounded
+                                    : abnormal
+                                        ? Icons.info_outline
+                                        : Icons.check_circle_outline,
+                                color: stateColor,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                critical
+                                    ? '明显异常'
+                                    : abnormal
+                                        ? '需要留意'
+                                        : '正常',
+                                style: TextStyle(
+                                  color: stateColor,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        latest.displayValue,
+                        style: TextStyle(
+                          color: critical || abnormal
+                              ? stateColor
+                              : AppTheme.deepBlue,
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '测量时间 ${DateFormat('MM月dd日 HH:mm').format(latest.measuredTime)}',
+                        style: const TextStyle(
+                            fontSize: 16, color: AppTheme.muted),
+                      ),
+                      if (abnormal) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          critical
+                              ? '如同时感到不适，请及时联系医生或就医。'
+                              : '建议按平时方式复测，并继续观察变化。',
+                          style: const TextStyle(fontSize: 16, height: 1.45),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      FilledButton.icon(
+                        onPressed: onRecord,
+                        icon: const Icon(Icons.add),
+                        label: const Text('记录新的测量'),
+                      ),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '最近 7 天${_seniorMetricLabel(metric)}趋势',
+                  style: const TextStyle(
+                      fontSize: 21, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 4),
+                const Text('触摸折线可查看具体测量时间',
+                    style: TextStyle(color: AppTheme.muted)),
+                const SizedBox(height: 16),
+                if (visibleEntries.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 36),
+                    child: Center(child: Text('最近 7 天暂无记录')),
+                  )
+                else
+                  _SeniorMetricChart(metric: metric, entries: visibleEntries),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: onMore,
+            icon: const Icon(Icons.list_alt_outlined),
+            label: const Text('查看更多健康指标'),
+          ),
+          if (clockStats != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: ExpansionTile(
+                shape: const Border(),
+                collapsedShape: const Border(),
+                title: const Text('查看打卡统计',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                trailing: const Icon(Icons.expand_more),
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                    child: Column(
+                      children: [
+                        _ClockRateSection(stats: clockStats),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: onClock,
+                          child: const Text('前往打卡页'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorMetricChart extends StatelessWidget {
+  const _SeniorMetricChart({required this.metric, required this.entries});
+
+  final String metric;
+  final List<HealthIndicatorEntry> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    if (metric == 'bp') return _BpChart(entries: entries);
+    if (metric == 'glucose') return _GlucoseChart(entries: entries);
+    if (metric == 'weight') return _WeightChart(entries: entries);
+    final values = entries
+        .map((entry) => (entry.payload['spo2Pct'] as num?)?.toDouble() ?? 0)
+        .toList();
+    return _TouchableLineChart(
+      seriesList: [_Series(values: values, color: AppTheme.primaryBlue)],
+      axisLabels: _trendAxisLabels(entries),
+      tooltipLabels: _trendTooltipLabels(entries),
+      unit: '%',
+    );
+  }
+}
+
+String _seniorMetricLabel(String type) => switch (type) {
+      'bp' => '血压',
+      'glucose' => '血糖',
+      'weight' => '体重',
+      'spo2' => '血氧',
+      _ => '健康指标',
+    };
 
 class _StatsLoadingView extends StatelessWidget {
   const _StatsLoadingView();
@@ -1298,14 +1610,14 @@ class _SummaryRow extends StatelessWidget {
               value: latestWeight?.displayValue ?? '--',
               sub: latestWeight == null
                   ? ''
-                  : DateFormat('MM/dd').format(latestWeight.measuredTime),
+                  : DateFormat('MM/dd HH:mm').format(latestWeight.measuredTime),
               color: AppTheme.deepBlue),
           _SummaryCard(
               title: '最新血压',
               value: latestBp?.displayValue ?? '--',
               sub: latestBp == null
                   ? ''
-                  : DateFormat('MM/dd').format(latestBp.measuredTime),
+                  : DateFormat('MM/dd HH:mm').format(latestBp.measuredTime),
               color: Colors.redAccent),
           _SummaryCard(
               title: '今日完成',
@@ -1485,6 +1797,23 @@ class _RateBar extends StatelessWidget {
 }
 
 // ── 体重图表 ─────────────────────────────────────────────────
+List<String> _trendAxisLabels(List<HealthIndicatorEntry> entries) {
+  final counts = <String, int>{};
+  for (final entry in entries) {
+    final day = DateFormat('yyyy-MM-dd').format(entry.measuredTime);
+    counts[day] = (counts[day] ?? 0) + 1;
+  }
+  return entries.map((entry) {
+    final day = DateFormat('yyyy-MM-dd').format(entry.measuredTime);
+    return DateFormat(counts[day]! > 1 ? 'HH:mm' : 'MM/dd')
+        .format(entry.measuredTime);
+  }).toList();
+}
+
+List<String> _trendTooltipLabels(List<HealthIndicatorEntry> entries) => entries
+    .map((entry) => DateFormat('MM/dd HH:mm').format(entry.measuredTime))
+    .toList();
+
 class _WeightChart extends StatelessWidget {
   const _WeightChart({required this.entries});
   final List<HealthIndicatorEntry> entries;
@@ -1494,11 +1823,10 @@ class _WeightChart extends StatelessWidget {
     final values = entries
         .map((e) => (e.payload['weightKg'] as num?)?.toDouble() ?? 0)
         .toList();
-    final dates =
-        entries.map((e) => DateFormat('MM/dd').format(e.measuredTime)).toList();
     return _TouchableLineChart(
       seriesList: [_Series(values: values, color: AppTheme.deepBlue)],
-      dates: dates,
+      axisLabels: _trendAxisLabels(entries),
+      tooltipLabels: _trendTooltipLabels(entries),
       unit: 'kg',
     );
   }
@@ -1517,15 +1845,14 @@ class _BpChart extends StatelessWidget {
     final diastolic = entries
         .map((e) => (e.payload['diastolic'] as num?)?.toDouble() ?? 0)
         .toList();
-    final dates =
-        entries.map((e) => DateFormat('MM/dd').format(e.measuredTime)).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _TouchableLineChart(
         seriesList: [
           _Series(values: systolic, color: Colors.redAccent, label: '收缩压'),
           _Series(values: diastolic, color: AppTheme.deepBlue, label: '舒张压'),
         ],
-        dates: dates,
+        axisLabels: _trendAxisLabels(entries),
+        tooltipLabels: _trendTooltipLabels(entries),
         unit: 'mmHg',
       ),
       const SizedBox(height: 8),
@@ -1551,8 +1878,6 @@ class _GlucoseChart extends StatelessWidget {
     final values = entries
         .map((e) => (e.payload['glucoseMmol'] as num?)?.toDouble() ?? 0)
         .toList();
-    final dates =
-        entries.map((e) => DateFormat('MM/dd').format(e.measuredTime)).toList();
     final mealTypes = entries
         .map((e) => e.payload['mealType'] as String? ?? 'fasting')
         .toList();
@@ -1568,7 +1893,8 @@ class _GlucoseChart extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _TouchableLineChart(
         seriesList: [_Series(values: values, color: Colors.orange)],
-        dates: dates,
+        axisLabels: _trendAxisLabels(entries),
+        tooltipLabels: _trendTooltipLabels(entries),
         unit: 'mmol/L',
         tooltipExtras: mealTypes
             .map((t) => t == 'postmeal'
@@ -1598,13 +1924,15 @@ class _GlucoseChart extends StatelessWidget {
 class _TouchableLineChart extends StatefulWidget {
   const _TouchableLineChart({
     required this.seriesList,
-    required this.dates,
+    required this.axisLabels,
+    required this.tooltipLabels,
     required this.unit,
     this.tooltipExtras,
   });
 
   final List<_Series> seriesList;
-  final List<String> dates;
+  final List<String> axisLabels;
+  final List<String> tooltipLabels;
   final String unit;
   final List<String>? tooltipExtras;
 
@@ -1653,7 +1981,7 @@ class _TouchableLineChartState extends State<_TouchableLineChart> {
               CustomPaint(
                 painter: _LineChartPainter(
                   seriesList: widget.seriesList,
-                  dates: widget.dates,
+                  dates: widget.axisLabels,
                   unit: widget.unit,
                   selectedIndex: _selectedIndex,
                 ),
@@ -1675,7 +2003,8 @@ class _TouchableLineChartState extends State<_TouchableLineChart> {
     final dx = _padL + w * (n == 1 ? 0.5 : idx / (n - 1));
     const tooltipW = 118.0;
     final left = (dx - tooltipW / 2).clamp(0.0, chartWidth - tooltipW);
-    final date = idx < widget.dates.length ? widget.dates[idx] : '';
+    final date =
+        idx < widget.tooltipLabels.length ? widget.tooltipLabels[idx] : '';
     final extra =
         widget.tooltipExtras != null && idx < widget.tooltipExtras!.length
             ? widget.tooltipExtras![idx]
@@ -1998,8 +2327,26 @@ class _RecentIndicators extends StatelessWidget {
                         style: const TextStyle(
                             color: AppTheme.muted, fontSize: 13)),
                   ])),
-              Text(DateFormat('MM/dd').format(item.measuredTime),
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '测量 ${DateFormat('MM/dd HH:mm').format(item.measuredTime)}',
+                    style: const TextStyle(
+                      color: AppTheme.muted,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (item.updatedAt > item.createdAt)
+                    Text(
+                      '修改 ${DateFormat('MM/dd HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.updatedAt))}',
+                      style: const TextStyle(
+                        color: AppTheme.muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
+              ),
             ]),
           ),
         ),

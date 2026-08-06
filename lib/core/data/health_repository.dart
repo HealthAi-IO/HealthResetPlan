@@ -34,7 +34,15 @@ class HealthRepository extends ChangeNotifier {
 
   Future<HealthDashboardData> loadDashboard() async {
     // 每种指标类型各取最新 5 条，确保「今日数据」每类都能找到最新值
-    const types = ['weight', 'bp', 'glucose', 'heart_rate', 'lipid', 'bmi'];
+    const types = [
+      'weight',
+      'bp',
+      'glucose',
+      'heart_rate',
+      'lipid',
+      'spo2',
+      'bmi',
+    ];
     final perType = await Future.wait(
       types.map((t) => loadIndicators(type: t, limit: 5)),
     );
@@ -109,6 +117,99 @@ class HealthRepository extends ChangeNotifier {
     );
     return rows.map(HealthIndicatorEntry.fromRow).toList();
   }
+
+  Future<HealthTrendAlert?> loadPriorityHealthAlert() async {
+    final entries = await loadIndicatorsSince(
+      DateTime.now().subtract(const Duration(days: 7)),
+    );
+    if (entries.isEmpty) return null;
+    final profile = await loadProfile();
+
+    for (final entry in entries) {
+      if (HealthSafety.isCriticalIndicator(entry.type, entry.payload)) {
+        return HealthTrendAlert(
+          type: entry.type,
+          title: '检测到紧急健康风险',
+          message: entry.type == 'bp'
+              ? '本次血压达到危险范围，请立即就医，不要等待复测结果。'
+              : '本次血氧达到危险范围，请立即就医。',
+          isCritical: true,
+          retestAfter: Duration.zero,
+        );
+      }
+    }
+
+    const priority = [
+      'bp',
+      'glucose',
+      'spo2',
+      'heart_rate',
+      'lipid',
+      'weight',
+      'sleep',
+      'steps',
+    ];
+    for (final type in priority) {
+      final recent =
+          entries.where((entry) => entry.type == type).take(2).toList();
+      if (recent.length < 2 ||
+          !recent.every((entry) => _isAbnormalEntry(entry, profile))) {
+        continue;
+      }
+      return HealthTrendAlert(
+        type: type,
+        title: '${recent.first.label}连续异常',
+        message: _trendAlertMessage(type),
+        isCritical: false,
+        retestAfter: type == 'bp'
+            ? const Duration(minutes: 30)
+            : const Duration(days: 1),
+      );
+    }
+    return null;
+  }
+
+  bool _isAbnormalEntry(
+    HealthIndicatorEntry entry,
+    UserProfileData? profile,
+  ) {
+    final payload = entry.payload;
+    return switch (entry.type) {
+      'bp' => ((payload['systolic'] as num?)?.toDouble() ?? 0) >= 130 ||
+          ((payload['diastolic'] as num?)?.toDouble() ?? 0) >= 80,
+      'glucose' => (payload['mealType'] == 'postmeal'
+          ? ((payload['glucoseMmol'] as num?)?.toDouble() ?? 0) >= 7.8
+          : ((payload['glucoseMmol'] as num?)?.toDouble() ?? 0) >= 5.6),
+      'spo2' => ((payload['spo2Pct'] as num?)?.toDouble() ?? 100) < 95,
+      'heart_rate' => ((payload['bpm'] as num?)?.toDouble() ?? 70) < 60 ||
+          ((payload['bpm'] as num?)?.toDouble() ?? 70) > 100,
+      'lipid' => ((payload['tc'] as num?)?.toDouble() ?? 0) >= 5.18 ||
+          ((payload['ldl'] as num?)?.toDouble() ?? 0) >= 3.37,
+      'weight' => profile == null || profile.heightCm <= 0
+          ? false
+          : (() {
+              final weight = (payload['weightKg'] as num?)?.toDouble() ?? 0;
+              final height = profile.heightCm / 100;
+              final bmi = height <= 0 ? 0 : weight / (height * height);
+              return bmi > 0 && (bmi < 18.5 || bmi >= 24);
+            })(),
+      'sleep' => ((payload['sleepHours'] as num?)?.toDouble() ?? 8) < 7,
+      'steps' => ((payload['steps'] as num?)?.toInt() ?? 7500) < 7500,
+      _ => false,
+    };
+  }
+
+  String _trendAlertMessage(String type) => switch (type) {
+        'bp' => '7天内最近两次血压均偏高。请静坐5分钟，以正确姿势重新测量；如持续异常请咨询医生。',
+        'glucose' => '7天内最近两次血糖均超出参考范围。请确认测量时段并于次日复测，持续异常请就医。',
+        'spo2' => '7天内最近两次血氧偏低。请保持手指温暖、静止后复测，若伴呼吸困难请及时就医。',
+        'heart_rate' => '7天内最近两次静息心率异常。请在安静状态下复测，若伴胸痛、晕厥请及时就医。',
+        'lipid' => '最近两次血脂记录均超出参考范围，建议携带检查结果咨询医生。',
+        'weight' => '最近两次体重对应的BMI超出参考范围，请结合长期趋势调整计划。',
+        'sleep' => '最近两次睡眠均少于7小时，建议优先恢复规律作息。',
+        'steps' => '最近两次步数均低于目标，可从短时步行开始逐步增加活动量。',
+        _ => '最近两次记录均超出参考范围，建议复测并持续观察。',
+      };
 
   Future<void> addIndicator({
     required String type,
@@ -1070,6 +1171,19 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deleteClockRecord(int id) async {
+    final db = await database.open();
+    await db.transaction((txn) async {
+      await _deleteSyncedRow(
+        txn,
+        table: 'clock_record',
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, kLocalUserId],
+      );
+    });
+    notifyListeners();
+  }
+
   Future<List<ReminderData>> loadReminders() async {
     final db = await database.open();
     final rows = await db.query(
@@ -1136,6 +1250,7 @@ class HealthRepository extends ChangeNotifier {
     String imageObjectKey = '',
     String imageMimeType = '',
     bool syncAlarm = false,
+    Map<String, Object?> payloadExtras = const {},
   }) async {
     final db = await database.open();
     final now = DateTime.now();
@@ -1159,6 +1274,7 @@ class HealthRepository extends ChangeNotifier {
       'weekdays': scheduleMode == 'weekly'
           ? (weekdays.toSet().toList()..sort())
           : <int>[],
+      ...payloadExtras,
     };
     if (imageObjectKey.isNotEmpty) {
       payload['imageObjectKey'] = imageObjectKey;
@@ -1197,6 +1313,7 @@ class HealthRepository extends ChangeNotifier {
     required String imageObjectKey,
     required String imageMimeType,
     required bool syncAlarm,
+    Map<String, Object?> payloadExtras = const {},
   }) async {
     final id = reminder.id;
     if (id == null) throw StateError('提醒记录无效');
@@ -1220,7 +1337,8 @@ class HealthRepository extends ChangeNotifier {
       ).millisecondsSinceEpoch
       ..['weekdays'] = scheduleMode == 'weekly'
           ? (weekdays.toSet().toList()..sort())
-          : <int>[];
+          : <int>[]
+      ..addAll(payloadExtras);
     if (imageObjectKey.isEmpty) {
       payload
         ..remove('imageObjectKey')
@@ -1298,6 +1416,247 @@ class HealthRepository extends ChangeNotifier {
       );
     });
     notifyListeners();
+  }
+
+  Future<List<ReminderData>> cleanupExpiredOnceReminders(DateTime now) async {
+    final db = await database.open();
+    final expired = <ReminderData>[];
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'reminder',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+      for (final row in rows) {
+        final reminder = ReminderData.fromRow(row);
+        final latestTime = reminder.dailyTimes.last;
+        final expiresAt = DateTime(
+          reminder.remindTime.year,
+          reminder.remindTime.month,
+          reminder.remindTime.day,
+          latestTime.hour,
+          latestTime.minute,
+        ).add(Duration(minutes: reminder.type == 'medicine' ? 30 : 0));
+        if (reminder.isWeekly || expiresAt.isAfter(now)) continue;
+        await _deleteSyncedRow(
+          txn,
+          table: 'reminder',
+          where: 'id = ?',
+          whereArgs: [reminder.id],
+        );
+        expired.add(reminder);
+      }
+    });
+    if (expired.isNotEmpty) notifyListeners();
+    return expired;
+  }
+
+  Future<List<ReminderData>> archiveCompletedMedicationCourses(
+    DateTime now,
+  ) async {
+    final db = await database.open();
+    final archived = <ReminderData>[];
+    final today = DateTime(now.year, now.month, now.day);
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'reminder',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+      for (final row in rows) {
+        final reminder = ReminderData.fromRow(row);
+        final courseEnd = reminder.courseEndDate;
+        if (reminder.type != 'medicine' ||
+            reminder.isArchived ||
+            courseEnd == null ||
+            !courseEnd.isBefore(today)) {
+          continue;
+        }
+        final payload = Map<String, dynamic>.from(reminder.payload)
+          ..['archived'] = true
+          ..['archivedAt'] = now.millisecondsSinceEpoch;
+        final updated = ReminderData(
+          id: reminder.id,
+          userId: reminder.userId,
+          type: reminder.type,
+          remindAt: reminder.remindAt,
+          payload: payload,
+          channel: reminder.channel,
+          status: reminder.status,
+          createdAt: reminder.createdAt,
+          updatedAt: now.millisecondsSinceEpoch,
+          version: reminder.version + 1,
+          isDirty: 1,
+        );
+        await txn.update(
+          'reminder',
+          updated.toRow(),
+          where: 'id = ? AND user_id = ?',
+          whereArgs: [reminder.id, kLocalUserId],
+        );
+        archived.add(updated);
+      }
+    });
+    if (archived.isNotEmpty) notifyListeners();
+    return archived;
+  }
+
+  Future<ReminderData> recordMedicationAction(
+    ReminderData reminder,
+    String action, {
+    DateTime? scheduledAt,
+  }) async {
+    final id = reminder.id;
+    if (id == null || reminder.type != 'medicine') {
+      throw StateError('用药提醒记录无效');
+    }
+    if (action != 'taken' && action != 'skipped') {
+      throw ArgumentError.value(action, 'action', '不支持的用药状态');
+    }
+    final db = await database.open();
+    final now = DateTime.now();
+    final occurrence = scheduledAt ?? now;
+    final occurrenceKey = _reminderOccurrenceKey(occurrence);
+    final rawHistory = reminder.payload['actionHistory'];
+    final history = rawHistory is Map
+        ? rawHistory.map((key, value) => MapEntry(key.toString(), value))
+        : <String, dynamic>{};
+    final previousAction = history[occurrenceKey]?.toString();
+    if (previousAction == action) return reminder;
+    history[occurrenceKey] = action;
+    while (history.length > 120) {
+      final oldest = history.keys.toList()..sort();
+      history.remove(oldest.first);
+    }
+    final payload = Map<String, dynamic>.from(reminder.payload)
+      ..['lastAction'] = action
+      ..['lastActionAt'] = now.millisecondsSinceEpoch
+      ..['actionHistory'] = history;
+    final remaining = reminder.inventoryRemaining;
+    if (remaining != null && previousAction != action) {
+      if (action == 'taken') {
+        payload['inventoryRemaining'] =
+            (remaining - 1).clamp(0, double.infinity);
+      } else if (previousAction == 'taken') {
+        payload['inventoryRemaining'] = remaining + 1;
+      }
+    }
+    final updated = ReminderData(
+      id: id,
+      userId: reminder.userId,
+      type: reminder.type,
+      remindAt: reminder.remindAt,
+      payload: payload,
+      channel: reminder.channel,
+      status: reminder.status,
+      createdAt: reminder.createdAt,
+      updatedAt: now.millisecondsSinceEpoch,
+      version: reminder.version + 1,
+      isDirty: 1,
+    );
+    await db.transaction((txn) async {
+      await txn.update(
+        'reminder',
+        updated.toRow(),
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, kLocalUserId],
+      );
+      await txn.insert(
+        'clock_record',
+        ClockRecordData(
+          type: 'medicine',
+          status: action == 'taken' ? 'done' : 'skip',
+          clockAt: now.millisecondsSinceEpoch,
+          note:
+              '${reminder.displayLabel} · ${action == 'taken' ? '已服' : '已跳过'}',
+          photoPath: '',
+          createdAt: now.millisecondsSinceEpoch,
+          updatedAt: now.millisecondsSinceEpoch,
+        ).toRow(),
+      );
+    });
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ReminderData> acknowledgeReminder(
+    ReminderData reminder,
+    DateTime scheduledAt,
+  ) async {
+    final id = reminder.id;
+    if (id == null || reminder.type == 'medicine') {
+      throw StateError('提醒记录无效');
+    }
+    final key = _reminderOccurrenceKey(scheduledAt);
+    final rawHistory = reminder.payload['ackHistory'];
+    final history = rawHistory is Map
+        ? rawHistory.map((key, value) => MapEntry(key.toString(), value))
+        : <String, dynamic>{};
+    if (history[key] == true) return reminder;
+    history[key] = true;
+    while (history.length > 120) {
+      final oldest = history.keys.toList()..sort();
+      history.remove(oldest.first);
+    }
+    final now = DateTime.now();
+    final updated = ReminderData(
+      id: id,
+      userId: reminder.userId,
+      type: reminder.type,
+      remindAt: reminder.remindAt,
+      payload: Map<String, dynamic>.from(reminder.payload)
+        ..['ackHistory'] = history,
+      channel: reminder.channel,
+      status: reminder.status,
+      createdAt: reminder.createdAt,
+      updatedAt: now.millisecondsSinceEpoch,
+      version: reminder.version + 1,
+      isDirty: 1,
+    );
+    final db = await database.open();
+    await db.transaction((txn) async {
+      await txn.update(
+        'reminder',
+        updated.toRow(),
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, kLocalUserId],
+      );
+      await txn.insert(
+        'clock_record',
+        ClockRecordData(
+          type: reminder.type,
+          status: 'done',
+          clockAt: now.millisecondsSinceEpoch,
+          note: reminder.displayLabel,
+          photoPath: '',
+          createdAt: now.millisecondsSinceEpoch,
+          updatedAt: now.millisecondsSinceEpoch,
+        ).toRow(),
+      );
+    });
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ReminderData> archiveMedication(ReminderData reminder) async {
+    final payload = Map<String, dynamic>.from(reminder.payload)
+      ..['archived'] = true
+      ..['archivedAt'] = DateTime.now().millisecondsSinceEpoch;
+    return updateReminder(
+      reminder: reminder,
+      time: TimeOfDayValue(
+        hour: reminder.remindTime.hour,
+        minute: reminder.remindTime.minute,
+      ),
+      date: reminder.startDate,
+      scheduleMode: reminder.isWeekly ? 'weekly' : 'once',
+      weekdays: reminder.weekdays,
+      note: reminder.payload['note']?.toString() ?? reminder.displayLabel,
+      imageObjectKey: reminder.payload['imageObjectKey']?.toString() ?? '',
+      imageMimeType: reminder.payload['imageMimeType']?.toString() ?? '',
+      syncAlarm: false,
+      payloadExtras: payload,
+    );
   }
 
   Future<void> deleteIndicator(int id) async {
@@ -2085,13 +2444,13 @@ class _RiskResult {
   }
 }
 
-class TimeOfDayValue {
-  const TimeOfDayValue({required this.hour, required this.minute});
-
-  final int hour;
-  final int minute;
-}
-
 extension _IterableX<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
+
+String _reminderOccurrenceKey(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-'
+    '${value.month.toString().padLeft(2, '0')}-'
+    '${value.day.toString().padLeft(2, '0')} '
+    '${value.hour.toString().padLeft(2, '0')}:'
+    '${value.minute.toString().padLeft(2, '0')}';

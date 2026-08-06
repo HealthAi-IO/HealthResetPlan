@@ -12,7 +12,7 @@ HealthResetPlan/
  │    ├── core/
  │    │    ├── crypto/        # AES-256-GCM 加密、UMK 管理、BIP39 备份
  │    │    ├── data/          # 健康档案、指标、计划、打卡领域模型与仓库
- │    │    ├── storage/       # 本地数据库：移动/桌面 SQLite，Web SharedPreferences
+ │    │    ├── storage/       # 在线数据的会话内存缓存
  │    │    ├── network/       # Dio API 客户端
  │    │    ├── di/            # GetIt 服务定位器
  │    │    └── platform/      # 平台差异封装（文件、系统健康平台、通知）
@@ -35,7 +35,7 @@ HealthResetPlan/
 
 ## 核心约束
 
-1. **本地存储优先**：移动端和桌面端使用 SQLite；Web 端使用 `shared_preferences` 持久化，云同步是可选项。
+1. **在线存储**：业务数据必须登录后通过 HTTPS API 保存到服务端 MySQL；客户端只保留会话内存缓存。
 2. **端到端加密**：上传到服务端的敏感字段必须经过 `CryptoService` 用 AES-256-GCM 加密。
 3. **私钥本地保存**：UMK 仅写入 `flutter_secure_storage`（macOS/iOS Keychain、Android Keystore、Windows Credential Manager），**不上传任何服务端**。
 4. **备份强制**：用户开通云同步前必须确认完成助记词备份。

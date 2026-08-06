@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../app/app_messenger.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
@@ -129,18 +128,19 @@ class _LoginPageState extends State<LoginPage> {
       passwordPromptRequired: false,
     );
     sl<ApiClient>().setAccessToken(result.accessToken);
-    await sl<OnlineDataService>().activateAccount(result.userId);
+    try {
+      await sl<OnlineDataService>().bindToAccount(result.userId);
+    } catch (_) {
+      await UserSession.instance.signOut();
+      sl<ApiClient>().setAccessToken(null);
+      rethrow;
+    }
     if (mounted) context.go(widget.returnTo);
     unawaited(_finishLoginInBackground(result));
   }
 
   Future<void> _finishLoginInBackground(AuthResult result) async {
     final accountFuture = sl<AuthApi>().fetchAccountInfo();
-    try {
-      await sl<OnlineDataService>().syncAccount();
-    } catch (_) {
-      _showSyncFailure();
-    }
     try {
       final account = await accountFuture;
       if (account != null && account.nickname.isNotEmpty) {
@@ -152,24 +152,6 @@ class _LoginPageState extends State<LoginPage> {
         );
       }
     } catch (_) {}
-  }
-
-  void _showSyncFailure() {
-    appMessengerKey.currentState?.showSnackBar(
-      SnackBar(
-        content: const Text('云端数据同步失败，本次登录仍可使用'),
-        action: SnackBarAction(
-          label: '重试',
-          onPressed: () async {
-            try {
-              await sl<OnlineDataService>().syncAccount();
-            } catch (_) {
-              _showSyncFailure();
-            }
-          },
-        ),
-      ),
-    );
   }
 
   Future<void> _openAccountRecovery() async {
@@ -329,8 +311,8 @@ class _LoginPageState extends State<LoginPage> {
                           TextButton(
                             onPressed:
                                 _submitting || _sendingCode || _countdown > 0
-                                ? null
-                                : _sendCode,
+                                    ? null
+                                    : _sendCode,
                             child: Text(
                               _countdown > 0 ? '$_countdown 秒' : '获取验证码',
                             ),

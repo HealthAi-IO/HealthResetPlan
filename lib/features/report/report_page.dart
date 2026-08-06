@@ -472,7 +472,6 @@ class _ReportPageState extends State<ReportPage> {
         const SnackBar(content: Text('报告已保存'), backgroundColor: Colors.green),
       );
       _load(silent: true);
-
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -793,9 +792,6 @@ class _PickCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pickedFile =
-        pickedImage == null ? null : reportImageProvider(pickedImage!.path);
-
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -863,16 +859,61 @@ class _PickCard extends StatelessWidget {
               ),
             ),
           ]),
-          if (pickedFile != null) ...[
+          if (pickedImage != null) ...[
             const SizedBox(height: 12),
-            InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => _showImagePreview(context, pickedFile),
-              child: _ReportImagePreview(file: pickedFile, height: 220),
-            ),
+            _PickedReportImage(file: pickedImage!),
           ],
         ],
       ]),
+    );
+  }
+}
+
+class _PickedReportImage extends StatefulWidget {
+  const _PickedReportImage({required this.file});
+
+  final XFile file;
+
+  @override
+  State<_PickedReportImage> createState() => _PickedReportImageState();
+}
+
+class _PickedReportImageState extends State<_PickedReportImage> {
+  late Future<Uint8List> _bytes = widget.file.readAsBytes();
+
+  @override
+  void didUpdateWidget(covariant _PickedReportImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.file, widget.file)) {
+      _bytes = widget.file.readAsBytes();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List>(
+      future: _bytes,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const SizedBox(
+            height: 220,
+            child: Center(child: Text('无法预览所选图片')),
+          );
+        }
+        final bytes = snapshot.data;
+        if (bytes == null || bytes.isEmpty) {
+          return const SizedBox(
+            height: 220,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final image = MemoryImage(bytes);
+        return InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _showImagePreview(context, image),
+          child: _ReportImagePreview(file: image, height: 220),
+        );
+      },
     );
   }
 }

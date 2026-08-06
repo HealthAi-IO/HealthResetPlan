@@ -23,7 +23,7 @@ Future<String> restoreReportImage(
 }
 
 ImageProvider<Object>? reportImageProvider(String objectKey) {
-  if (objectKey.isEmpty) return null;
+  if (!objectKey.startsWith('files/')) return null;
   return NetworkImage(
     '${apiUrl('files/content')}'
     '?objectKey=${Uri.encodeQueryComponent(objectKey)}',

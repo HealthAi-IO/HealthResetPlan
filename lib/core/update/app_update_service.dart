@@ -91,7 +91,6 @@ class AppUpdateService {
   String? _supportedPlatform() {
     if (kIsWeb) return null;
     return switch (defaultTargetPlatform) {
-      TargetPlatform.android => 'android',
       TargetPlatform.windows => 'windows',
       _ => null,
     };

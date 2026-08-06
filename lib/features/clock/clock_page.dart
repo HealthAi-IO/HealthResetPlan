@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
@@ -19,9 +20,14 @@ import '../../core/network/telemetry_api.dart';
 import '../../core/storage/report_image_storage.dart';
 
 class ClockPage extends StatefulWidget {
-  const ClockPage({super.key, this.initialReminderId});
+  const ClockPage({
+    super.key,
+    this.initialReminderId,
+    this.openReminderSettings = false,
+  });
 
   final int? initialReminderId;
+  final bool openReminderSettings;
 
   @override
   State<ClockPage> createState() => _ClockPageState();
@@ -36,6 +42,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
   List<ReminderData> _reminders = const [];
   List<PlanRecordData> _plans = const [];
   int? _openedReminderId;
+  bool _openedReminderSettings = false;
   bool _notificationPermissionChecked = false;
   Timer? _dayRefreshTimer;
 
@@ -68,12 +75,25 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     _dayRefreshTimer?.cancel();
     final now = DateTime.now();
     final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    var refreshAt = tomorrow;
+    for (final reminder in _reminders) {
+      if (!reminder.occursOn(now)) continue;
+      for (final time in reminder.dailyTimes) {
+        final reminderEnd = DateTime(
+          now.year,
+          now.month,
+          now.day,
+          time.hour,
+          time.minute,
+        ).add(const Duration(seconds: 1));
+        if (reminderEnd.isAfter(now) && reminderEnd.isBefore(refreshAt)) {
+          refreshAt = reminderEnd;
+        }
+      }
+    }
     _dayRefreshTimer = Timer(
-      tomorrow.difference(now) + const Duration(seconds: 1),
-      () {
-        _load(silent: true);
-        _scheduleDayRefresh();
-      },
+      refreshAt.difference(now),
+      () => _load(silent: true),
     );
   }
 
@@ -83,6 +103,10 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     if (widget.initialReminderId != oldWidget.initialReminderId) {
       _openInitialReminderIfNeeded();
     }
+    if (!widget.openReminderSettings) _openedReminderSettings = false;
+    if (widget.openReminderSettings != oldWidget.openReminderSettings) {
+      _openReminderSettingsIfNeeded();
+    }
   }
 
   void _onRepoChanged() => _load(silent: true);
@@ -91,7 +115,31 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     if (!mounted) return;
     if (!silent) setState(() => _loading = true);
     final records = await _repo.loadClockRecords(limit: 60);
-    final reminders = await _repo.loadReminders();
+    var reminders = await _repo.loadReminders();
+    List<ReminderData> expired = const [];
+    List<ReminderData> archived = const [];
+    try {
+      expired = await _repo.cleanupExpiredOnceReminders(DateTime.now());
+      archived = await _repo.archiveCompletedMedicationCourses(DateTime.now());
+    } catch (_) {}
+    if (expired.isNotEmpty || archived.isNotEmpty) {
+      for (final reminder in [...expired, ...archived]) {
+        final id = reminder.id;
+        if (id != null) {
+          try {
+            await _scheduler.cancelReminder(id);
+          } catch (_) {}
+        }
+        final imageObjectKey =
+            reminder.payload['imageObjectKey']?.toString() ?? '';
+        if (imageObjectKey.isNotEmpty) {
+          try {
+            await sl<FileApi>().delete(imageObjectKey);
+          } catch (_) {}
+        }
+      }
+      reminders = await _repo.loadReminders();
+    }
     final plans = await _repo.loadPlans(limit: 40);
     if (!mounted) return;
     setState(() {
@@ -100,8 +148,20 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       _plans = plans.where((p) => p.type != 'risk').toList(growable: false);
       _loading = false;
     });
+    _scheduleDayRefresh();
     _openInitialReminderIfNeeded();
+    _openReminderSettingsIfNeeded();
     await _checkNotificationPermission();
+  }
+
+  void _openReminderSettingsIfNeeded() {
+    if (!widget.openReminderSettings || _openedReminderSettings || !mounted) {
+      return;
+    }
+    _openedReminderSettings = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _showLongTermReminderManager();
+    });
   }
 
   void _openInitialReminderIfNeeded() {
@@ -207,6 +267,283 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     _showSnack('称重 $result kg 已记录 ✓');
   }
 
+  Future<void> _completeSeniorTask(_SeniorClockTask task) async {
+    final reminder = task.reminder;
+    if (reminder?.type == 'medicine') {
+      final updated = await _repo.recordMedicationAction(
+        reminder!,
+        'taken',
+        scheduledAt: task.scheduledAt,
+      );
+      await _scheduler.syncReminder(updated);
+    } else if (reminder != null) {
+      final updated = await _repo.acknowledgeReminder(
+        reminder,
+        task.scheduledAt,
+      );
+      await _scheduler.syncReminder(updated);
+    } else {
+      await _repo.addClockRecord(type: task.type, status: 'done');
+    }
+    if (mounted) _showSnack('${task.title}已完成');
+  }
+
+  Future<void> _changeSeniorTask(_SeniorClockTask task) async {
+    final reminder = task.reminder;
+    if (reminder?.type == 'medicine') {
+      final action = await _showSmoothDialog<String>(
+        builder: (ctx) => AlertDialog(
+          title: Text(task.completed ? '更正本次用药记录' : '本次用药操作'),
+          content: const Text('请选择本次实际用药情况。更正后库存数量也会同步调整。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('返回'),
+            ),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(ctx, 'skipped'),
+              child: const Text('跳过本次'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'taken'),
+              child: const Text('确认已服'),
+            ),
+          ],
+        ),
+      );
+      if (action == null) return;
+      final confirmed = await _showSmoothDialog<bool>(
+        builder: (ctx) => AlertDialog(
+          title: const Text('确认更正吗？'),
+          content: Text(
+              action == 'taken' ? '本次记录将改为“已服药”。' : '本次记录将改为“已跳过”，之后的提醒不受影响。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('返回'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确认更正'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      final updated = await _repo.recordMedicationAction(
+        reminder!,
+        action,
+        scheduledAt: task.scheduledAt,
+      );
+      await _scheduler.syncReminder(updated);
+      return;
+    }
+
+    final record = task.record;
+    if (record?.id == null) return;
+    final confirmed = await _showSmoothDialog<bool>(
+      builder: (ctx) => AlertDialog(
+        title: const Text('撤销本次完成记录吗？'),
+        content: const Text('撤销后，这项任务会重新显示为待完成。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('返回'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认撤销'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _repo.deleteClockRecord(record!.id!);
+  }
+
+  Future<void> _showSeniorSupplement() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '补充记录',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _clockWithNote('meal');
+                },
+                icon: const Icon(Icons.restaurant_outlined),
+                label: const Text('记录饮食'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _clockWithNote('water');
+                },
+                icon: const Icon(Icons.water_drop_outlined),
+                label: const Text('记录饮水'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _clockWithNote('exercise');
+                },
+                icon: const Icon(Icons.directions_walk_outlined),
+                label: const Text('记录临时运动'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _clockMedicine();
+                },
+                icon: const Icon(Icons.medication_outlined),
+                label: const Text('补记用药'),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _clockWeight();
+                },
+                icon: const Icon(Icons.scale_outlined),
+                label: const Text('记录体重'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showTodayRecords(List<ClockRecordData> records) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.78,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '今天全部记录',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${DateFormat('M月d日 EEEE', 'zh_CN').format(DateTime.now())} · ${records.length} 条',
+                  style: const TextStyle(color: AppTheme.muted),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      _RecordList(
+                        records: records,
+                        onDelete: (record) {
+                          Navigator.pop(sheetContext);
+                          _confirmDeleteRecord(record);
+                        },
+                        onCorrectMedicine: () {
+                          Navigator.pop(sheetContext);
+                          _showTodayMedicineCorrection();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteRecord(ClockRecordData record) async {
+    final confirmed = await _showSmoothDialog<bool>(
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这条记录吗？'),
+        content: Text(
+            '${record.label} · ${DateFormat('HH:mm').format(record.clockTime)}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && record.id != null) {
+      await _repo.deleteClockRecord(record.id!);
+      if (mounted) _showSnack('记录已删除');
+    }
+  }
+
+  Future<void> _showTodayMedicineCorrection() async {
+    final now = DateTime.now();
+    final todayRecords = _records.where((record) {
+      final time = record.clockTime;
+      return time.year == now.year &&
+          time.month == now.month &&
+          time.day == now.day;
+    }).toList();
+    final tasks = _buildSeniorClockTasks(now, todayRecords)
+        .where((task) => task.type == 'medicine' && task.completed)
+        .toList();
+    if (tasks.isEmpty) {
+      _showSnack('没有可更正的定时用药记录');
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '更正用药记录',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              for (final task in tasks)
+                _SeniorCompletedTask(
+                  task: task,
+                  onChange: () {
+                    Navigator.pop(sheetContext);
+                    _changeSeniorTask(task);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openSystemAlarm(
     int hour,
     int minute,
@@ -256,6 +593,12 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       builder: (_) => _ReminderDialog(type: type),
     );
     if (result == null) return;
+    if (type == 'medicine' && !await _scheduler.ensureExactAlarmPermission()) {
+      if (mounted) {
+        _showSnack('请允许“闹钟和提醒”权限后再保存用药提醒');
+      }
+      return;
+    }
     var imageObjectKey = '';
     if (result.image != null) {
       try {
@@ -280,6 +623,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
         imageObjectKey: imageObjectKey,
         imageMimeType: result.imageMimeType,
         syncAlarm: result.syncAlarm,
+        payloadExtras: result.payloadExtras,
       );
     } catch (_) {
       if (imageObjectKey.isNotEmpty) {
@@ -290,16 +634,22 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       if (mounted) _showSnack('提醒保存失败，请重试');
       return;
     }
+    var scheduled = true;
     try {
       await _scheduler.syncReminder(reminder);
     } catch (error, stackTrace) {
+      scheduled = false;
       debugPrint('Reminder scheduling failed: $error');
       debugPrintStack(stackTrace: stackTrace);
     }
     if (!mounted) return;
-    _showSnack(
-      result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存',
-    );
+    if (!scheduled) {
+      _showSnack('规则已保存，但系统通知未创建，可在提醒操作中重新同步');
+    } else {
+      _showSnack(
+        result.syncAlarm ? '提醒规则已保存，请在系统闹钟界面确认创建' : '提醒规则已保存',
+      );
+    }
     if (result.syncAlarm) {
       await _syncReminderToSystemAlarm(reminder);
     }
@@ -310,6 +660,13 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       builder: (_) => _ReminderDialog(type: reminder.type, reminder: reminder),
     );
     if (result == null) return;
+    if (reminder.type == 'medicine' &&
+        !await _scheduler.ensureExactAlarmPermission()) {
+      if (mounted) {
+        _showSnack('请允许“闹钟和提醒”权限后再保存用药提醒');
+      }
+      return;
+    }
 
     final oldImageObjectKey =
         reminder.payload['imageObjectKey']?.toString() ?? '';
@@ -344,6 +701,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
         imageObjectKey: imageObjectKey,
         imageMimeType: imageMimeType,
         syncAlarm: result.syncAlarm,
+        payloadExtras: result.payloadExtras,
       );
     } catch (_) {
       if (uploadedImageObjectKey.isNotEmpty) {
@@ -360,10 +718,19 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
         await sl<FileApi>().delete(oldImageObjectKey);
       } catch (_) {}
     }
+    var scheduled = true;
     try {
       await _scheduler.syncReminder(updated);
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      scheduled = false;
+      debugPrint('Reminder scheduling failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
     if (!mounted) return;
+    if (!scheduled) {
+      _showSnack('规则已保存，但系统通知未创建，可在提醒操作中重新同步');
+      return;
+    }
     bool? notificationsEnabled;
     try {
       notificationsEnabled = await _scheduler.notificationsEnabled();
@@ -384,6 +751,25 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
   Future<void> _deleteReminder(ReminderData reminder) async {
     final id = reminder.id;
     if (id == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除提醒'),
+        content: Text('确认删除“${reminder.displayLabel}”吗？已经产生的记录会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('返回'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await _repo.deleteReminder(id);
     final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
     if (imageObjectKey.isNotEmpty) {
@@ -392,18 +778,39 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       } catch (_) {}
     }
     try {
-      await _scheduler.cancelReminder(id);
+      await _scheduler.syncAll();
     } catch (_) {}
   }
 
   Future<void> _toggleReminder(ReminderData reminder) async {
     final updated =
         await _repo.setReminderEnabled(reminder, !reminder.isEnabled);
+    var scheduled = true;
     try {
       await _scheduler.syncReminder(updated);
-    } catch (_) {}
+    } catch (_) {
+      scheduled = false;
+    }
     if (mounted) {
-      _showSnack(reminder.isEnabled ? '提醒已暂停' : '提醒已恢复');
+      _showSnack(
+        scheduled
+            ? (reminder.isEnabled ? '提醒已暂停' : '提醒已恢复')
+            : '规则已保存，但系统通知未创建，可在提醒操作中重新同步',
+      );
+    }
+  }
+
+  Future<void> _resyncReminder(ReminderData reminder) async {
+    if (reminder.type == 'medicine' &&
+        !await _scheduler.ensureExactAlarmPermission()) {
+      if (mounted) _showSnack('请先允许“闹钟和提醒”权限');
+      return;
+    }
+    try {
+      await _scheduler.syncReminder(reminder);
+      if (mounted) _showSnack('系统通知已重新同步');
+    } catch (_) {
+      if (mounted) _showSnack('系统通知同步失败，请检查权限后重试');
     }
   }
 
@@ -414,6 +821,183 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     if (edit == true && reminder.channel == 'local' && mounted) {
       await _editReminder(reminder);
     }
+  }
+
+  Future<void> _showTodayReminderManager() =>
+      _showReminderManager(todayOnly: true);
+
+  Future<void> _showLongTermReminderManager() =>
+      _showReminderManager(todayOnly: false);
+
+  Future<void> _showReminderManager({required bool todayOnly}) async {
+    final now = DateTime.now();
+    final reminders = (todayOnly
+            ? _reminders.where(
+                (reminder) => reminder.isEnabled && reminder.occursOn(now),
+              )
+            : _reminders)
+        .toList()
+      ..sort((a, b) {
+        if (a.type != b.type) return a.type == 'medicine' ? -1 : 1;
+        return (a.remindTime.hour * 60 + a.remindTime.minute)
+            .compareTo(b.remindTime.hour * 60 + b.remindTime.minute);
+      });
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.78,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  todayOnly ? '今天的用药和提醒' : '提醒设置',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  todayOnly
+                      ? '${DateFormat('M月d日 EEEE', 'zh_CN').format(now)} · 只显示今天'
+                      : '在这里管理长期和重复提醒规则。',
+                  style: const TextStyle(fontSize: 16, color: AppTheme.muted),
+                ),
+                const SizedBox(height: 14),
+                Expanded(
+                  child: reminders.isEmpty
+                      ? Center(
+                          child: Text(
+                            todayOnly ? '今天没有提醒' : '还没有提醒规则',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              color: AppTheme.muted,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: reminders.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final reminder = reminders[index];
+                            final times = reminder.dailyTimes
+                                .map((time) =>
+                                    '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')
+                                .join('、');
+                            final schedule = reminder.type == 'medicine'
+                                ? '精确闹钟'
+                                : '普通提醒（近似调度）';
+                            final detail = reminder.type == 'medicine'
+                                ? '$times · ${_medicineDoseSummary(reminder)}'
+                                : times;
+                            return Material(
+                              color: AppTheme.pageBg,
+                              borderRadius: BorderRadius.circular(16),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 5,
+                                ),
+                                leading: Icon(
+                                  reminder.type == 'medicine'
+                                      ? Icons.medication_outlined
+                                      : Icons.notifications_active_outlined,
+                                  color: AppTheme.primaryBlue,
+                                ),
+                                title: Text(
+                                  reminder.displayLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '$detail\n$schedule',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                                onTap: () {
+                                  Navigator.pop(sheetContext);
+                                  _showReminderDetails(reminder);
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _addReminder('medicine');
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('添加用药（精确闹钟）'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _showSeniorReminderTypePicker();
+                  },
+                  icon: const Icon(Icons.notifications_active_outlined),
+                  label: const Text('添加普通提醒'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSeniorReminderTypePicker() async {
+    final type = await _showSmoothDialog<String>(
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('添加普通提醒'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _SeniorReminderTypeTile(
+              icon: Icons.restaurant_outlined,
+              label: '饮食提醒',
+              onTap: () => Navigator.pop(dialogContext, 'meal'),
+            ),
+            _SeniorReminderTypeTile(
+              icon: Icons.directions_run_outlined,
+              label: '运动提醒',
+              onTap: () => Navigator.pop(dialogContext, 'exercise'),
+            ),
+            _SeniorReminderTypeTile(
+              icon: Icons.scale_outlined,
+              label: '称重提醒',
+              onTap: () => Navigator.pop(dialogContext, 'weight'),
+            ),
+            _SeniorReminderTypeTile(
+              icon: Icons.water_drop_outlined,
+              label: '饮水提醒',
+              onTap: () => Navigator.pop(dialogContext, 'water'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    if (type != null && mounted) await _addReminder(type);
   }
 
   Future<String?> _showNoteDialog({
@@ -528,6 +1112,101 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     }
   }
 
+  List<_SeniorClockTask> _buildSeniorClockTasks(
+    DateTime now,
+    List<ClockRecordData> todayRecords,
+  ) {
+    final tasks = <_SeniorClockTask>[];
+    final reminderTypes = <String>{};
+    ClockRecordData? recordFor(String type) {
+      for (final record in todayRecords) {
+        if (record.type == type && record.status == 'done') return record;
+      }
+      return null;
+    }
+
+    for (final reminder in _reminders) {
+      if (!reminder.isEnabled || !reminder.occursOn(now)) continue;
+      reminderTypes.add(reminder.type);
+      for (final time in reminder.dailyTimes) {
+        final occurrence = DateTime(
+          now.year,
+          now.month,
+          now.day,
+          time.hour,
+          time.minute,
+        );
+        final action = reminder.type == 'medicine'
+            ? reminder.actionAt(occurrence)
+            : reminder.acknowledgedAt(occurrence)
+                ? 'done'
+                : null;
+        final record = action == null ? null : recordFor(reminder.type);
+        final dose = reminder.doseAt(time);
+        final instructions = reminder.instructionsAt(time);
+        tasks.add(_SeniorClockTask(
+          type: reminder.type,
+          title: reminder.displayLabel,
+          detail: [dose, instructions]
+              .where((value) => value.isNotEmpty)
+              .join(' · '),
+          scheduledAt: occurrence,
+          completed: action != null,
+          skipped: action == 'skipped',
+          record: record,
+          reminder: reminder,
+        ));
+      }
+    }
+
+    final today = DateTime(now.year, now.month, now.day);
+    for (final plan in _plans) {
+      final date = plan.date;
+      if (DateTime(date.year, date.month, date.day) != today) continue;
+      final target = _targetFromPlan(plan.type);
+      if (target == null || reminderTypes.contains(target.type)) continue;
+      final record = recordFor(target.type);
+      final scheduledAt = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        switch (target.type) {
+          'weight' => 7,
+          'meal' => 12,
+          _ => 18,
+        },
+        target.type == 'exercise' ? 30 : 0,
+      );
+      tasks.add(_SeniorClockTask(
+        type: target.type,
+        title: switch (target.type) {
+          'meal' => '今日饮食',
+          'exercise' => '今日运动',
+          'weight' => '健康测量',
+          _ => plan.label,
+        },
+        detail: plan.summary,
+        scheduledAt: scheduledAt,
+        completed: record != null,
+        record: record,
+        plan: plan,
+      ));
+    }
+
+    tasks.sort((a, b) {
+      if (a.completed != b.completed) return a.completed ? 1 : -1;
+      final aOverdue = a.scheduledAt.isBefore(now);
+      final bOverdue = b.scheduledAt.isBefore(now);
+      if (aOverdue != bOverdue) return aOverdue ? -1 : 1;
+      if (aOverdue && a.type != b.type) {
+        if (a.type == 'medicine') return -1;
+        if (b.type == 'medicine') return 1;
+      }
+      return a.scheduledAt.compareTo(b.scheduledAt);
+    });
+    return tasks;
+  }
+
   List<_ClockTarget> _buildTodayTargets(DateTime now) {
     final today = DateTime(now.year, now.month, now.day);
     final targets = <String, _ClockTarget>{};
@@ -566,6 +1245,17 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       return t.year == now.year && t.month == now.month && t.day == now.day;
     }).toList();
 
+    if (appSettingsController.seniorMode) {
+      return _SeniorClockView(
+        tasks: _buildSeniorClockTasks(now, todayRecords),
+        onComplete: _completeSeniorTask,
+        onChange: _changeSeniorTask,
+        onSupplement: _showSeniorSupplement,
+        onManageReminders: _showTodayReminderManager,
+        onRefresh: () => _load(silent: true),
+      );
+    }
+
     final todayTargets = _buildTodayTargets(now);
     final doneTypes = todayRecords
         .where((r) => r.status == 'done')
@@ -574,6 +1264,12 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     final todayDone =
         todayTargets.where((target) => doneTypes.contains(target.type)).length;
     final todayTotal = todayTargets.length;
+    final medicineTasks = _buildSeniorClockTasks(now, todayRecords)
+        .where((task) => task.type == 'medicine' && task.reminder != null)
+        .toList();
+    final medicineScheduledCount = medicineTasks.length;
+    final medicineTakenCount =
+        medicineTasks.where((task) => task.completed && !task.skipped).length;
     final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
     return RefreshIndicator(
@@ -685,20 +1381,26 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                 title: '今日打卡记录',
                 subtitle:
                     '${DateFormat('MM月dd日').format(now)} · 共 ${todayRecords.length} 条',
-                child: _RecordList(
-                  records: todayRecords.isEmpty
-                      ? _records.take(8).toList()
-                      : todayRecords,
+                child: _TodayRecordSummary(
+                  records: todayRecords,
+                  medicineScheduledCount: medicineScheduledCount,
+                  medicineTakenCount: medicineTakenCount,
+                  onViewAll: () => _showTodayRecords(todayRecords),
                 ),
               );
+              final todayReminders = _reminders
+                  .where((reminder) =>
+                      reminder.isEnabled && reminder.occursOn(now))
+                  .toList();
               final reminderPanel = _Panel(
-                title: '我的提醒',
-                subtitle: '${DateFormat('MM月dd日').format(now)} · 只显示今天',
+                title: '今日提醒',
+                subtitle: '${DateFormat('MM月dd日').format(now)} · 今日提醒',
                 child: _ReminderList(
-                  reminders: _reminders,
+                  reminders: todayReminders,
                   onDelete: _deleteReminder,
                   onEdit: _editReminder,
                   onToggle: _toggleReminder,
+                  onResync: _resyncReminder,
                   onSyncAlarm: _syncReminderToSystemAlarm,
                   onOpen: _showReminderDetails,
                 ),
@@ -743,6 +1445,477 @@ class _ClockLoadingView extends StatelessWidget {
         SizedBox(height: 14),
         _ClockSkeletonBlock(height: 132),
       ],
+    );
+  }
+}
+
+class _SeniorClockTask {
+  const _SeniorClockTask({
+    required this.type,
+    required this.title,
+    required this.detail,
+    required this.scheduledAt,
+    required this.completed,
+    this.skipped = false,
+    this.record,
+    this.reminder,
+    this.plan,
+  });
+
+  final String type;
+  final String title;
+  final String detail;
+  final DateTime scheduledAt;
+  final bool completed;
+  final bool skipped;
+  final ClockRecordData? record;
+  final ReminderData? reminder;
+  final PlanRecordData? plan;
+
+  DateTime? get completedAt => record?.clockTime;
+}
+
+class _SeniorReminderTypeTile extends StatelessWidget {
+  const _SeniorReminderTypeTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: AppTheme.primaryBlue),
+      title: Text(
+        label,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
+  }
+}
+
+class _SeniorClockView extends StatelessWidget {
+  const _SeniorClockView({
+    required this.tasks,
+    required this.onComplete,
+    required this.onChange,
+    required this.onSupplement,
+    required this.onManageReminders,
+    required this.onRefresh,
+  });
+
+  final List<_SeniorClockTask> tasks;
+  final Future<void> Function(_SeniorClockTask) onComplete;
+  final Future<void> Function(_SeniorClockTask) onChange;
+  final Future<void> Function() onSupplement;
+  final Future<void> Function() onManageReminders;
+  final Future<void> Function() onRefresh;
+
+  Future<void> _showCompletedTasks(
+    BuildContext context,
+    List<_SeniorClockTask> completed,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '今天已完成',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '如记录有误，可在这里更正。',
+                  style: TextStyle(fontSize: 16, color: AppTheme.muted),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      for (final task in completed)
+                        _SeniorCompletedTask(
+                          task: task,
+                          onChange: () {
+                            Navigator.pop(sheetContext);
+                            onChange(task);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = tasks.where((task) => !task.completed).toList();
+    final completed = tasks.where((task) => task.completed).toList();
+    final current = pending.firstOrNull;
+    final currentTasks = current == null
+        ? <_SeniorClockTask>[]
+        : current.type == 'medicine'
+            ? pending
+                .where((task) =>
+                    task.type == 'medicine' &&
+                    task.scheduledAt == current.scheduledAt)
+                .toList()
+            : [current];
+    final upcoming =
+        pending.where((task) => !currentTasks.contains(task)).take(2).toList();
+    final now = DateTime.now();
+    final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        key: const PageStorageKey('senior-clock-scroll'),
+        padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
+        children: [
+          const Text(
+            '今天完成情况',
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            DateFormat('yyyy年M月d日 EEEE', 'zh_CN').format(now),
+            style: const TextStyle(fontSize: 17, color: AppTheme.muted),
+          ),
+          const SizedBox(height: 18),
+          if (current == null)
+            Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.task_alt, color: Colors.green, size: 36),
+                  SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      '今天的计划都完成了',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            _SeniorCurrentTask(
+              tasks: currentTasks,
+              overdue: current.scheduledAt.isBefore(now),
+              onComplete: onComplete,
+              onChange: onChange,
+            ),
+          if (upcoming.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _SeniorTaskSection(
+              title: '接下来',
+              tasks: upcoming,
+              onComplete: onComplete,
+              onChange: onChange,
+            ),
+          ],
+          if (completed.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: ListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+                title: Text(
+                  '今天已完成 ${completed.length} 项',
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                subtitle: const Text('点此更正记录'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _showCompletedTasks(context, completed),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: onSupplement,
+            icon: const Icon(Icons.add_circle_outline),
+            label: const Text('补充记录'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onManageReminders,
+            icon: const Icon(Icons.medication_outlined),
+            label: const Text('今天的用药和提醒'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorCurrentTask extends StatelessWidget {
+  const _SeniorCurrentTask({
+    required this.tasks,
+    required this.overdue,
+    required this.onComplete,
+    required this.onChange,
+  });
+
+  final List<_SeniorClockTask> tasks;
+  final bool overdue;
+  final Future<void> Function(_SeniorClockTask) onComplete;
+  final Future<void> Function(_SeniorClockTask) onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final task = tasks.first;
+    final medicine = task.type == 'medicine';
+    final multipleMedicines = medicine && tasks.length > 1;
+    final warning = overdue && medicine;
+    final color = warning ? Colors.redAccent : AppTheme.primaryBlue;
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(warning ? Icons.error_outline : Icons.schedule,
+                  color: color),
+              const SizedBox(width: 8),
+              Text(
+                warning ? '当前任务 · 已逾时' : '当前任务',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            DateFormat('HH:mm').format(task.scheduledAt),
+            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(_typeIcon(task.type), size: 34, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  multipleMedicines ? '用药 · 共 ${tasks.length} 种药' : task.title,
+                  style: const TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!multipleMedicines && task.detail.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(task.detail,
+                style: const TextStyle(fontSize: 17, color: AppTheme.muted)),
+          ],
+          const SizedBox(height: 18),
+          if (multipleMedicines)
+            for (final medicineTask in tasks)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      medicineTask.title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (medicineTask.detail.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          medicineTask.detail,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: AppTheme.muted,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: color,
+                            ),
+                            onPressed: () => onComplete(medicineTask),
+                            child: const Text('确认已服'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () => onChange(medicineTask),
+                          child: const Text('跳过'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              )
+          else ...[
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: color,
+                minimumSize: const Size.fromHeight(62),
+              ),
+              onPressed: () => onComplete(task),
+              icon: const Icon(Icons.check_circle_outline),
+              label: Text(medicine ? '确认已服' : '确认完成'),
+            ),
+            if (medicine) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: () => onChange(task),
+                icon: const Icon(Icons.edit_outlined),
+                label: const Text('更正 / 跳过'),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorTaskSection extends StatelessWidget {
+  const _SeniorTaskSection({
+    required this.title,
+    required this.tasks,
+    required this.onComplete,
+    required this.onChange,
+  });
+
+  final String title;
+  final List<_SeniorClockTask> tasks;
+  final Future<void> Function(_SeniorClockTask) onComplete;
+  final Future<void> Function(_SeniorClockTask) onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          for (final task in tasks)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 78,
+                    child: Text(
+                      DateFormat('HH:mm').format(task.scheduledAt),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  Icon(_typeIcon(task.type), color: _typeColor(task.type)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(task.title,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  FilledButton(
+                    onPressed: () => onComplete(task),
+                    child: Text(task.type == 'medicine' ? '已服' : '完成'),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorCompletedTask extends StatelessWidget {
+  const _SeniorCompletedTask({required this.task, required this.onChange});
+
+  final _SeniorClockTask task;
+  final VoidCallback onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final time = task.completedAt == null
+        ? ''
+        : ' · ${DateFormat('HH:mm').format(task.completedAt!)}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 0, 10, 12),
+      child: Row(
+        children: [
+          Icon(
+            task.skipped ? Icons.remove_circle_outline : Icons.check_circle,
+            color: task.skipped ? Colors.orange : Colors.green,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${task.title}${task.skipped ? ' · 已跳过' : time}',
+              style: const TextStyle(fontSize: 17),
+            ),
+          ),
+          TextButton(onPressed: onChange, child: const Text('更正')),
+        ],
+      ),
     );
   }
 }
@@ -928,8 +2101,14 @@ class _ReminderChip extends StatelessWidget {
 
 // ── 打卡记录列表 ──────────────────────────────────────────────
 class _RecordList extends StatelessWidget {
-  const _RecordList({required this.records});
+  const _RecordList({
+    required this.records,
+    required this.onDelete,
+    required this.onCorrectMedicine,
+  });
   final List<ClockRecordData> records;
+  final ValueChanged<ClockRecordData> onDelete;
+  final VoidCallback onCorrectMedicine;
 
   @override
   Widget build(BuildContext context) {
@@ -944,7 +2123,7 @@ class _RecordList extends StatelessWidget {
     }
     return Column(
       children: [
-        for (final r in records.take(20))
+        for (final r in records)
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Container(
@@ -1019,15 +2198,136 @@ class _RecordList extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Text(
-                    DateFormat('HH:mm').format(r.clockTime),
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                  PopupMenuButton<String>(
+                    tooltip: '记录操作',
+                    onSelected: (value) {
+                      if (value == 'correct') {
+                        onCorrectMedicine();
+                      } else {
+                        onDelete(r);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: r.type == 'medicine' ? 'correct' : 'delete',
+                        child: Text(r.type == 'medicine' ? '更正用药' : '删除记录'),
+                      ),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 0, 8),
+                      child: Text(
+                        DateFormat('HH:mm').format(r.clockTime),
+                        style: const TextStyle(
+                          color: AppTheme.muted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
           ),
       ],
+    );
+  }
+}
+
+class _TodayRecordSummary extends StatelessWidget {
+  const _TodayRecordSummary({
+    required this.records,
+    required this.medicineScheduledCount,
+    required this.medicineTakenCount,
+    required this.onViewAll,
+  });
+
+  final List<ClockRecordData> records;
+  final int medicineScheduledCount;
+  final int medicineTakenCount;
+  final VoidCallback onViewAll;
+
+  @override
+  Widget build(BuildContext context) {
+    if (records.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Text(
+          '今天还没有打卡记录。',
+          style: TextStyle(color: AppTheme.muted),
+        ),
+      );
+    }
+    const order = ['meal', 'exercise', 'medicine', 'weight', 'water'];
+    final groups = <String, List<ClockRecordData>>{};
+    for (final record in records) {
+      groups.putIfAbsent(record.type, () => []).add(record);
+    }
+    final visibleTypes = order.where(groups.containsKey);
+
+    return Column(
+      children: [
+        for (final type in visibleTypes)
+          _TodayRecordSummaryRow(
+            type: type,
+            records: groups[type]!,
+            medicineScheduledCount: medicineScheduledCount,
+            medicineTakenCount: medicineTakenCount,
+          ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: onViewAll,
+            icon: const Icon(Icons.receipt_long_outlined),
+            label: const Text('查看今天全部记录'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TodayRecordSummaryRow extends StatelessWidget {
+  const _TodayRecordSummaryRow({
+    required this.type,
+    required this.records,
+    required this.medicineScheduledCount,
+    required this.medicineTakenCount,
+  });
+
+  final String type;
+  final List<ClockRecordData> records;
+  final int medicineScheduledCount;
+  final int medicineTakenCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final latest = records.first;
+    final summary = switch (type) {
+      'medicine' when medicineScheduledCount > 0 =>
+        '已服 $medicineTakenCount/$medicineScheduledCount 次',
+      'weight' when latest.note.isNotEmpty => latest.note,
+      _ => '今天 ${records.length} 次',
+    };
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: _typeColor(type).withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(_typeIcon(type), color: _typeColor(type), size: 21),
+      ),
+      title: Text(
+        latest.label,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+      subtitle: Text(summary, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: Text(
+        DateFormat('HH:mm').format(latest.clockTime),
+        style: const TextStyle(color: AppTheme.muted),
+      ),
     );
   }
 }
@@ -1039,6 +2339,7 @@ class _ReminderList extends StatefulWidget {
     required this.onDelete,
     required this.onEdit,
     required this.onToggle,
+    required this.onResync,
     required this.onSyncAlarm,
     required this.onOpen,
   });
@@ -1046,6 +2347,7 @@ class _ReminderList extends StatefulWidget {
   final Future<void> Function(ReminderData) onDelete;
   final Future<void> Function(ReminderData) onEdit;
   final Future<void> Function(ReminderData) onToggle;
+  final Future<void> Function(ReminderData) onResync;
   final Future<void> Function(ReminderData) onSyncAlarm;
   final Future<void> Function(ReminderData) onOpen;
 
@@ -1061,16 +2363,17 @@ class _ReminderListState extends State<_ReminderList> {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-    final reminders = widget.reminders.where((reminder) {
-      if (!reminder.occursOn(now)) return false;
-      final todayAt = DateTime(
-        now.year,
-        now.month,
-        now.day,
-        reminder.remindTime.hour,
-        reminder.remindTime.minute,
-      );
-      return todayAt.isAfter(now);
+    final reminders = widget.reminders.where((item) {
+      return item.occursOn(now) &&
+          item.dailyTimes.any(
+            (time) => DateTime(
+              now.year,
+              now.month,
+              now.day,
+              time.hour,
+              time.minute,
+            ).isAfter(now),
+          );
     }).toList()
       ..sort((a, b) {
         if (a.isEnabled != b.isEnabled) return a.isEnabled ? -1 : 1;
@@ -1085,7 +2388,7 @@ class _ReminderListState extends State<_ReminderList> {
         children: [
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text('今天暂无待提醒事项。', style: TextStyle(color: AppTheme.muted)),
+            child: Text('今天暂无提醒。', style: TextStyle(color: AppTheme.muted)),
           ),
           const _ReminderSafetyNotice(),
         ],
@@ -1114,6 +2417,20 @@ class _ReminderListState extends State<_ReminderList> {
   }
 
   Widget _buildReminder(ReminderData reminder) {
+    final now = DateTime.now();
+    final timeText = reminder.dailyTimes
+        .where(
+          (time) => DateTime(
+            now.year,
+            now.month,
+            now.day,
+            time.hour,
+            time.minute,
+          ).isAfter(now),
+        )
+        .map((time) =>
+            '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')
+        .join('、');
     final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
     final imageProvider = reportImageProvider(imageObjectKey);
     final showActions =
@@ -1165,7 +2482,7 @@ class _ReminderListState extends State<_ReminderList> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  reminder.label,
+                                  reminder.displayLabel,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w700,
                                     fontSize: 14,
@@ -1183,7 +2500,7 @@ class _ReminderListState extends State<_ReminderList> {
                             ],
                           ),
                           Text(
-                            '${_reminderScheduleText(reminder)} · ${_reminderSourceText(reminder)} · ${reminder.payload['note'] as String? ?? reminder.label}',
+                            '今天 $timeText · ${_reminderSourceText(reminder)} · ${reminder.type == 'medicine' ? _medicineDoseSummary(reminder) : reminder.payload['note'] as String? ?? reminder.label}',
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1193,6 +2510,15 @@ class _ReminderListState extends State<_ReminderList> {
                               fontSize: 12,
                             ),
                           ),
+                          if (reminder.refillNeeded)
+                            Text(
+                              '库存不足，请及时补充',
+                              style: TextStyle(
+                                color: Colors.orange.shade800,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -1228,6 +2554,10 @@ class _ReminderListState extends State<_ReminderList> {
                               await widget.onEdit(reminder);
                             }
                           : null,
+                      onResync: () async {
+                        setState(() => _expandedActionReminderId = null);
+                        await widget.onResync(reminder);
+                      },
                       onSyncAlarm:
                           defaultTargetPlatform == TargetPlatform.android &&
                                   reminder.type == 'medicine' &&
@@ -1258,6 +2588,7 @@ class _ReminderActionBar extends StatelessWidget {
     required this.enabled,
     required this.onToggle,
     required this.onEdit,
+    required this.onResync,
     required this.onSyncAlarm,
     required this.onDelete,
   });
@@ -1265,6 +2596,7 @@ class _ReminderActionBar extends StatelessWidget {
   final bool enabled;
   final Future<void> Function()? onToggle;
   final Future<void> Function()? onEdit;
+  final Future<void> Function() onResync;
   final Future<void> Function()? onSyncAlarm;
   final Future<void> Function() onDelete;
 
@@ -1297,6 +2629,11 @@ class _ReminderActionBar extends StatelessWidget {
                 icon: const Icon(Icons.edit_outlined, size: 18),
                 label: const Text('编辑'),
               ),
+            TextButton.icon(
+              onPressed: onResync,
+              icon: const Icon(Icons.sync_outlined, size: 18),
+              label: const Text('重新同步'),
+            ),
             if (onSyncAlarm != null)
               TextButton.icon(
                 onPressed: onSyncAlarm,
@@ -1395,6 +2732,30 @@ class _Panel extends StatelessWidget {
 }
 
 // ── 提醒弹窗 ──────────────────────────────────────────────────
+class _MedicineTimeDraft {
+  const _MedicineTimeDraft({
+    required this.time,
+    required this.dose,
+    required this.instructions,
+  });
+
+  final TimeOfDay time;
+  final String dose;
+  final String instructions;
+
+  _MedicineTimeDraft copyWith({
+    TimeOfDay? time,
+    String? dose,
+    String? instructions,
+  }) {
+    return _MedicineTimeDraft(
+      time: time ?? this.time,
+      dose: dose ?? this.dose,
+      instructions: instructions ?? this.instructions,
+    );
+  }
+}
+
 class _ReminderDialog extends StatefulWidget {
   const _ReminderDialog({required this.type, this.reminder});
   final String type;
@@ -1406,9 +2767,20 @@ class _ReminderDialog extends StatefulWidget {
 
 class _ReminderDialogState extends State<_ReminderDialog> {
   final _noteCtrl = TextEditingController();
+  final _strengthCtrl = TextEditingController();
+  final _inventoryCtrl = TextEditingController();
+  final _refillThresholdCtrl = TextEditingController();
   final _imagePicker = ImagePicker();
   TimeOfDay _time = const TimeOfDay(hour: 7, minute: 0);
+  List<_MedicineTimeDraft> _medicineTimes = const [
+    _MedicineTimeDraft(
+      time: TimeOfDay(hour: 7, minute: 0),
+      dose: '1 片',
+      instructions: '',
+    ),
+  ];
   late DateTime _date;
+  DateTime? _courseEndDate;
   String _scheduleMode = 'weekly';
   Set<int> _weekdays = {1, 2, 3, 4, 5, 6, 7};
   XFile? _image;
@@ -1428,6 +2800,19 @@ class _ReminderDialogState extends State<_ReminderDialog> {
       _scheduleMode = reminder.isWeekly ? 'weekly' : 'once';
       _weekdays = reminder.weekdays.toSet();
       _noteCtrl.text = reminder.payload['note']?.toString() ?? '';
+      _medicineTimes = reminder.dailyTimes
+          .map((time) => _MedicineTimeDraft(
+                time: TimeOfDay(hour: time.hour, minute: time.minute),
+                dose: reminder.doseAt(time),
+                instructions: reminder.instructionsAt(time),
+              ))
+          .toList();
+      _strengthCtrl.text = reminder.payload['strength']?.toString() ?? '';
+      _inventoryCtrl.text =
+          reminder.inventoryRemaining?.toStringAsFixed(0) ?? '';
+      _refillThresholdCtrl.text =
+          reminder.refillThreshold?.toStringAsFixed(0) ?? '';
+      _courseEndDate = reminder.courseEndDate;
     }
     _syncAlarm = reminder?.payload['syncAlarm'] == true ||
         (reminder == null &&
@@ -1438,6 +2823,9 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   @override
   void dispose() {
     _noteCtrl.dispose();
+    _strengthCtrl.dispose();
+    _inventoryCtrl.dispose();
+    _refillThresholdCtrl.dispose();
     super.dispose();
   }
 
@@ -1465,8 +2853,21 @@ class _ReminderDialogState extends State<_ReminderDialog> {
             children: [
               TextField(
                 controller: _noteCtrl,
-                decoration: const InputDecoration(labelText: '备注（选填）'),
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: widget.type == 'medicine' ? '药品名称' : '备注（选填）',
+                ),
               ),
+              if (widget.type == 'medicine') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _strengthCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '药品规格（选填）',
+                    hintText: '例如 10mg/片',
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               Align(
                 alignment: Alignment.centerLeft,
@@ -1479,12 +2880,15 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                       onSelected: (_) => setState(() {
                         _scheduleMode = 'once';
                         _syncAlarm = false;
+                        final selectedTime = widget.type == 'medicine'
+                            ? _medicineTimes.first.time
+                            : _time;
                         final at = DateTime(
                           _date.year,
                           _date.month,
                           _date.day,
-                          _time.hour,
-                          _time.minute,
+                          selectedTime.hour,
+                          selectedTime.minute,
                         );
                         if (!at.isAfter(DateTime.now())) {
                           _date = _date.add(const Duration(days: 1));
@@ -1558,6 +2962,53 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                 ),
               ],
               if (widget.type == 'medicine') ...[
+                const SizedBox(height: 14),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '疗程结束日期（选填）',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _courseEndDate == null
+                            ? '未设置'
+                            : _dateText(_courseEndDate!),
+                      ),
+                    ),
+                    if (_courseEndDate != null)
+                      IconButton(
+                        tooltip: '清除',
+                        onPressed: () => setState(() => _courseEndDate = null),
+                        icon: const Icon(Icons.clear),
+                      ),
+                    TextButton(
+                      onPressed: _pickCourseEndDate,
+                      child: const Text('选择'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _inventoryCtrl,
+                  onChanged: (_) => setState(() {}),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '剩余服用次数（选填）',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _refillThresholdCtrl,
+                  onChanged: (_) => setState(() {}),
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '补药提醒阈值（选填）',
+                  ),
+                ),
                 const SizedBox(height: 14),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -1652,15 +3103,80 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                 ],
               ],
               const SizedBox(height: 14),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('提醒时间'),
-                subtitle: Text(_time.format(context)),
-                trailing: TextButton(
-                  onPressed: _pickTime,
-                  child: const Text('选择'),
+              if (widget.type == 'medicine')
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '服药时间和剂量',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '每个时间点可以设置不同剂量和用法',
+                        style: TextStyle(color: AppTheme.muted, fontSize: 12),
+                      ),
+                      const SizedBox(height: 8),
+                      for (var index = 0;
+                          index < _medicineTimes.length;
+                          index++)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          decoration: BoxDecoration(
+                            color: AppTheme.pageBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: ListTile(
+                            contentPadding:
+                                const EdgeInsets.only(left: 12, right: 4),
+                            title: Text(
+                              _medicineTimes[index].time.format(context),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            subtitle: Text([
+                              _medicineTimes[index].dose,
+                              _medicineTimes[index].instructions,
+                            ].where((value) => value.isNotEmpty).join(' · ')),
+                            trailing: Wrap(
+                              children: [
+                                IconButton(
+                                  tooltip: '编辑时间和剂量',
+                                  onPressed: () => _editMedicineTime(index),
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
+                                if (_medicineTimes.length > 1)
+                                  IconButton(
+                                    tooltip: '删除这个时间',
+                                    onPressed: () => setState(
+                                      () => _medicineTimes.removeAt(index),
+                                    ),
+                                    icon: const Icon(Icons.delete_outline),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      OutlinedButton.icon(
+                        onPressed: _addMedicineTime,
+                        icon: const Icon(Icons.add),
+                        label: const Text('添加服药时间'),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('提醒时间'),
+                  subtitle: Text(_time.format(context)),
+                  trailing: TextButton(
+                    onPressed: _pickTime,
+                    child: const Text('选择'),
+                  ),
                 ),
-              ),
               if (defaultTargetPlatform == TargetPlatform.android &&
                   widget.type == 'medicine' &&
                   _scheduleMode == 'weekly') ...[
@@ -1737,17 +3253,165 @@ class _ReminderDialogState extends State<_ReminderDialog> {
     setState(() => _date = picked);
   }
 
+  Future<void> _pickCourseEndDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _courseEndDate ?? _date,
+      firstDate: _date,
+      lastDate: DateTime(DateTime.now().year + 10, 12, 31),
+    );
+    if (picked != null && mounted) setState(() => _courseEndDate = picked);
+  }
+
+  Future<void> _addMedicineTime() async {
+    if (_medicineTimes.length >= 6) return;
+    final draft = await _showMedicineTimeEditor(
+      _MedicineTimeDraft(
+        time: _medicineTimes.last.time,
+        dose: _medicineTimes.last.dose,
+        instructions: _medicineTimes.last.instructions,
+      ),
+    );
+    if (draft == null || !mounted) return;
+    setState(() {
+      _medicineTimes = [..._medicineTimes, draft]..sort((a, b) =>
+          (a.time.hour * 60 + a.time.minute)
+              .compareTo(b.time.hour * 60 + b.time.minute));
+    });
+  }
+
+  Future<void> _editMedicineTime(int index) async {
+    final draft = await _showMedicineTimeEditor(_medicineTimes[index]);
+    if (draft == null || !mounted) return;
+    setState(() {
+      _medicineTimes[index] = draft;
+      _medicineTimes.sort((a, b) => (a.time.hour * 60 + a.time.minute)
+          .compareTo(b.time.hour * 60 + b.time.minute));
+    });
+  }
+
+  Future<_MedicineTimeDraft?> _showMedicineTimeEditor(
+    _MedicineTimeDraft initial,
+  ) async {
+    var selectedTime = initial.time;
+    final doseController = TextEditingController(text: initial.dose);
+    final instructionsController =
+        TextEditingController(text: initial.instructions);
+    try {
+      return await showDialog<_MedicineTimeDraft>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('服药时间和剂量'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('服药时间'),
+                  subtitle: Text(selectedTime.format(context)),
+                  trailing: TextButton(
+                    onPressed: () async {
+                      final picked = await showTimePicker(
+                        context: context,
+                        initialTime: selectedTime,
+                      );
+                      if (picked != null) {
+                        setDialogState(() => selectedTime = picked);
+                      }
+                    },
+                    child: const Text('选择'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: doseController,
+                  decoration: const InputDecoration(
+                    labelText: '本次剂量',
+                    hintText: '例如 1 片',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: instructionsController,
+                  decoration: const InputDecoration(
+                    labelText: '本次用法（选填）',
+                    hintText: '例如 饭后服用',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final dose = doseController.text.trim();
+                  if (dose.isEmpty) return;
+                  Navigator.pop(
+                    dialogContext,
+                    initial.copyWith(
+                      time: selectedTime,
+                      dose: dose,
+                      instructions: instructionsController.text.trim(),
+                    ),
+                  );
+                },
+                child: const Text('保存'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      doseController.dispose();
+      instructionsController.dispose();
+    }
+  }
+
   String? get _validationMessage {
+    if (widget.type == 'medicine') {
+      if (_noteCtrl.text.trim().isEmpty) return '请输入药品名称';
+      if (_medicineTimes.any((item) => item.dose.trim().isEmpty)) {
+        return '请为每个服药时间填写剂量';
+      }
+      final timeKeys = _medicineTimes
+          .map((item) => '${item.time.hour}:${item.time.minute}')
+          .toSet();
+      if (timeKeys.length != _medicineTimes.length) {
+        return '服药时间不能重复';
+      }
+      if (_courseEndDate != null && _courseEndDate!.isBefore(_date)) {
+        return '疗程结束日期不能早于开始日期';
+      }
+      final inventory = double.tryParse(_inventoryCtrl.text.trim());
+      final threshold = double.tryParse(_refillThresholdCtrl.text.trim());
+      if (_inventoryCtrl.text.trim().isNotEmpty &&
+          (inventory == null || inventory < 0)) {
+        return '剩余服用次数必须为非负数字';
+      }
+      if (_refillThresholdCtrl.text.trim().isNotEmpty &&
+          (threshold == null || threshold < 0)) {
+        return '补药提醒阈值必须为非负数字';
+      }
+      if (inventory != null && threshold != null && threshold > inventory) {
+        return '补药提醒阈值不能大于当前剩余次数';
+      }
+    }
     if (_scheduleMode == 'weekly' && _weekdays.isEmpty) {
       return '请至少选择一个提醒星期';
     }
     if (_scheduleMode == 'once') {
+      final primaryTime =
+          widget.type == 'medicine' ? _medicineTimes.first.time : _time;
       final at = DateTime(
         _date.year,
         _date.month,
         _date.day,
-        _time.hour,
-        _time.minute,
+        primaryTime.hour,
+        primaryTime.minute,
       );
       if (!at.isAfter(DateTime.now())) return '单次提醒时间必须晚于当前时间';
     }
@@ -1755,10 +3419,17 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   }
 
   void _save() {
+    final primaryTime =
+        widget.type == 'medicine' ? _medicineTimes.first.time : _time;
+    final inventory = double.tryParse(_inventoryCtrl.text.trim());
+    final threshold = double.tryParse(_refillThresholdCtrl.text.trim());
     Navigator.pop(
       context,
       _ReminderDraft(
-        time: TimeOfDayValue(hour: _time.hour, minute: _time.minute),
+        time: TimeOfDayValue(
+          hour: primaryTime.hour,
+          minute: primaryTime.minute,
+        ),
         date: _date,
         scheduleMode: _scheduleMode,
         weekdays: _weekdays.toList()..sort(),
@@ -1767,6 +3438,40 @@ class _ReminderDialogState extends State<_ReminderDialog> {
         image: _image,
         imageMimeType: _imageMimeType(_image),
         removeExistingImage: _removeExistingImage,
+        payloadExtras: widget.type == 'medicine'
+            ? {
+                'medicineName': _noteCtrl.text.trim(),
+                'strength': _strengthCtrl.text.trim(),
+                'dose': _medicineTimes.first.dose,
+                'instructions': _medicineTimes.first.instructions,
+                'dailyTimes': _medicineTimes
+                    .map((item) => {
+                          'hour': item.time.hour,
+                          'minute': item.time.minute,
+                        })
+                    .toList(),
+                'doseByTime': {
+                  for (final item in _medicineTimes)
+                    '${item.time.hour.toString().padLeft(2, '0')}:${item.time.minute.toString().padLeft(2, '0')}':
+                        item.dose,
+                },
+                'instructionsByTime': {
+                  for (final item in _medicineTimes)
+                    if (item.instructions.isNotEmpty)
+                      '${item.time.hour.toString().padLeft(2, '0')}:${item.time.minute.toString().padLeft(2, '0')}':
+                          item.instructions,
+                },
+                if (_courseEndDate != null)
+                  'courseEndAt': DateTime(
+                    _courseEndDate!.year,
+                    _courseEndDate!.month,
+                    _courseEndDate!.day,
+                  ).millisecondsSinceEpoch,
+                if (inventory != null) 'inventoryRemaining': inventory,
+                if (threshold != null) 'refillThreshold': threshold,
+                'archived': false,
+              }
+            : const {},
       ),
     );
   }
@@ -1809,6 +3514,7 @@ class _ReminderDraft {
     this.image,
     this.imageMimeType = '',
     this.removeExistingImage = false,
+    this.payloadExtras = const {},
   });
   final TimeOfDayValue time;
   final DateTime date;
@@ -1819,6 +3525,7 @@ class _ReminderDraft {
   final XFile? image;
   final String imageMimeType;
   final bool removeExistingImage;
+  final Map<String, Object?> payloadExtras;
 }
 
 class _ReminderDetailsDialog extends StatelessWidget {
@@ -1861,6 +3568,29 @@ class _ReminderDetailsDialog extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(note),
+              if (reminder.type == 'medicine') ...[
+                const SizedBox(height: 10),
+                if ((reminder.payload['strength']?.toString() ?? '').isNotEmpty)
+                  Text('规格：${reminder.payload['strength']}'),
+                const SizedBox(height: 6),
+                for (final time in reminder.dailyTimes)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 5),
+                    child: Text(
+                      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}  ${[
+                        reminder.doseAt(time),
+                        reminder.instructionsAt(time),
+                      ].where((value) => value.isNotEmpty).join(' · ')}',
+                    ),
+                  ),
+                if (reminder.inventoryRemaining != null)
+                  Text(
+                      '剩余库存：${reminder.inventoryRemaining!.toStringAsFixed(0)}'),
+                if (reminder.courseEndDate != null)
+                  Text(
+                    '疗程结束：${DateFormat('yyyy-MM-dd').format(reminder.courseEndDate!)}',
+                  ),
+              ],
             ],
           ),
         ),
@@ -1879,6 +3609,15 @@ class _ReminderDetailsDialog extends StatelessWidget {
       ],
     );
   }
+}
+
+String _medicineDoseSummary(ReminderData reminder) {
+  final values = reminder.dailyTimes
+      .map((time) => reminder.doseAt(time))
+      .where((value) => value.isNotEmpty)
+      .toSet();
+  if (values.isEmpty) return '按医嘱服用';
+  return values.length == 1 ? values.first : '各时间剂量不同';
 }
 
 String _imageMimeType(XFile? image) {
@@ -1917,15 +3656,14 @@ String _weekdaysText(List<int> weekdays) {
 }
 
 String _reminderScheduleText(ReminderData reminder) {
-  final next = reminder.nextOccurrence(DateTime.now());
+  final times = reminder.dailyTimes
+      .map((time) =>
+          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')
+      .join('、');
   if (!reminder.isWeekly) {
-    final prefix = next == null ? '结束于' : '下次';
-    return '$prefix ${_dateText(reminder.remindTime)} ${reminder.timeText}';
+    return '${_dateText(reminder.remindTime)} $times';
   }
-  final nextText = next == null
-      ? '暂无下一次提醒'
-      : '下次 ${next.month}月${next.day}日 周${_weekdayShort(next.weekday)} ${reminder.timeText}';
-  return '$nextText · ${_weekdaysText(reminder.weekdays)}重复';
+  return '${_weekdaysText(reminder.weekdays)} $times';
 }
 
 String _reminderSourceText(ReminderData reminder) => switch (reminder.source) {

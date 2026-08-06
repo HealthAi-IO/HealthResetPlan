@@ -19,9 +19,7 @@ dependencies:
   # 网络
   dio: ^5.7.0
 
-  # 运行时内存数据库 + 非业务偏好
-  sqflite: ^2.4.1
-  sqflite_common_ffi: ^2.3.4+4
+  # 非业务偏好
   shared_preferences: ^2.3.3
 
   # Token 安全存储
@@ -42,11 +40,14 @@ dependencies:
   # UI / 工具
   intl: ^0.20.2
   flutter_staggered_grid_view: ^0.7.0
-  flutter_widget_from_html: ^0.17.2
+  flutter_widget_from_html_core: ^0.17.2
   logger: ^2.4.0
   uuid: ^4.5.1
   url_launcher: ^6.3.1
   package_info_plus: ^9.0.1
+  pdf: ^3.12.0
+  printing: ^5.14.3
+  excel: ^4.0.6
 
 dev_dependencies:
   flutter_test:
@@ -66,9 +67,3 @@ flutter:
     - family: NotoSansSC
       fonts:
         - asset: assets/fonts/NotoSansSC-Variable-1.0.12.ttf
-
-hooks:
-  user_defines:
-    sqlite3:
-      source: test-sqlite3
-      directory: native/sqlite3/

@@ -1,9 +1,17 @@
 import '../network/online_data_api.dart';
+import 'data_sync_status.dart';
+
+class OnlineDataRequiredException implements Exception {
+  const OnlineDataRequiredException();
+
+  @override
+  String toString() => '请先登录并保持网络连接';
+}
 
 abstract class AppDatabase {
   AppDatabase._();
 
-  static final AppDatabase instance = _WebAppDatabase();
+  static final AppDatabase instance = _MemoryAppDatabase();
 
   Future<AppDatabase> open();
   Future<void> close();
@@ -58,8 +66,8 @@ abstract class AppDatabase {
   Future<void> unbindOnline() async {}
 }
 
-class _WebAppDatabase extends AppDatabase {
-  _WebAppDatabase() : super._();
+class _MemoryAppDatabase extends AppDatabase {
+  _MemoryAppDatabase() : super._();
 
   static const _tables = [
     'user_profile',
@@ -81,6 +89,9 @@ class _WebAppDatabase extends AppDatabase {
   };
   bool _opened = false;
   bool _inTransaction = false;
+  bool _transactionChanged = false;
+  bool _loadingOnline = false;
+  Future<void>? _saveTail;
   String _activeSpace = 'local';
 
   @override
@@ -103,6 +114,11 @@ class _WebAppDatabase extends AppDatabase {
   Future<void> moveSpace(String from, String to) async {
     if (from == to) return;
     await open();
+    final hasRows = _data.values.any(
+      (rows) => rows.any((row) => (row['space_id'] ?? 'local') == from),
+    );
+    if (!hasRows) return;
+    _requireOnline();
     var changed = false;
     for (final rows in _data.values) {
       for (final row in rows) {
@@ -131,42 +147,79 @@ class _WebAppDatabase extends AppDatabase {
   List<Map<String, Object?>> _table(String name) =>
       _data.putIfAbsent(name, () => <Map<String, Object?>>[]);
 
-  Future<void> _persist() async {
-    final api = _onlineApi;
-    if (api == null) return;
-    final tables = <String, List<Map<String, Object?>>>{};
-    for (final table in _onlineTables) {
-      tables[table] = _table(table)
-          .where((row) => (row['space_id'] ?? 'online') == _activeSpace)
-          .map((row) => Map<String, Object?>.from(row)..remove('space_id'))
-          .toList();
+  Future<void> _persist() {
+    if (_loadingOnline) return Future.value();
+    _requireOnline();
+    final api = _onlineApi!;
+    dataSyncStatusController.markSyncing();
+    final space = _activeSpace;
+    Future<void> save() async {
+      try {
+        final tables = <String, List<Map<String, Object?>>>{};
+        for (final table in _onlineTables) {
+          tables[table] = _table(table)
+              .where((row) => (row['space_id'] ?? 'online') == space)
+              .map((row) => Map<String, Object?>.from(row)..remove('space_id'))
+              .toList();
+        }
+        final saved = await api.save(_onlineVersion, tables);
+        if (!identical(_onlineApi, api) || _activeSpace != space) return;
+        _onlineVersion = saved.version;
+        dataSyncStatusController.markSynced();
+      } catch (error) {
+        dataSyncStatusController.markFailed(error);
+        rethrow;
+      }
     }
-    try {
-      final saved = await api.save(_onlineVersion, tables);
-      _onlineVersion = saved.version;
-    } catch (_) {
-      await _loadOnline();
-      rethrow;
-    }
+
+    final previous = _saveTail;
+    final operation = previous == null
+        ? save()
+        : previous.then<void>((_) {}, onError: (_) {}).then((_) => save());
+    late final Future<void> tracked;
+    tracked = operation.whenComplete(() {
+      if (identical(_saveTail, tracked)) _saveTail = null;
+    });
+    _saveTail = tracked;
+    return tracked;
   }
 
   Future<void> _persistIfNeeded() async {
-    if (_inTransaction) return;
+    if (_inTransaction) {
+      _transactionChanged = true;
+      return;
+    }
     await _persist();
+  }
+
+  void _requireOnline() {
+    if (_onlineApi == null) throw const OnlineDataRequiredException();
   }
 
   @override
   Future<void> bindOnline(OnlineDataApi api) async {
     _onlineApi = api;
-    await _loadOnline();
+    dataSyncStatusController.attachRetry(_persist);
+    dataSyncStatusController.markSyncing();
+    try {
+      await _loadOnline();
+      dataSyncStatusController.markSynced();
+    } catch (error) {
+      dataSyncStatusController.markFailed(error);
+      if (identical(_onlineApi, api)) _onlineApi = null;
+      rethrow;
+    }
   }
 
   @override
   Future<void> unbindOnline() async {
+    final space = _activeSpace;
     _onlineApi = null;
     _onlineVersion = 0;
+    _saveTail = null;
+    dataSyncStatusController.attachRetry(null);
     for (final table in _onlineTables) {
-      _data[table] = [];
+      _table(table).removeWhere((row) => row['space_id'] == space);
     }
   }
 
@@ -176,12 +229,20 @@ class _WebAppDatabase extends AppDatabase {
     final space = _activeSpace;
     final snapshot = await api.load();
     if (!identical(_onlineApi, api) || _activeSpace != space) return;
-    for (final table in _onlineTables) {
-      _data[table] = (snapshot.tables[table] ?? const [])
-          .map((row) => {...row, 'space_id': space})
-          .toList();
+    _loadingOnline = true;
+    try {
+      for (final table in _onlineTables) {
+        final rows = _table(table);
+        rows.removeWhere((row) => row['space_id'] == space);
+        rows.addAll(
+          (snapshot.tables[table] ?? const [])
+              .map((row) => {...row, 'space_id': space}),
+        );
+      }
+      _onlineVersion = snapshot.version;
+    } finally {
+      _loadingOnline = false;
     }
-    _onlineVersion = snapshot.version;
   }
 
   static const _onlineTables = [
@@ -227,21 +288,33 @@ class _WebAppDatabase extends AppDatabase {
     bool replace = false,
   }) async {
     await open();
+    _requireOnline();
     final rows = _table(table);
     final row = Map<String, Object?>.from(values)..['space_id'] = _activeSpace;
     final id = _intValue(row['id']);
     if (replace && id != null) {
       final index = rows.indexWhere((entry) => _intValue(entry['id']) == id);
       if (index >= 0) {
+        final previous = Map<String, Object?>.from(rows[index]);
         rows[index] = row;
-        await _persistIfNeeded();
+        try {
+          await _persistIfNeeded();
+        } catch (_) {
+          rows[index] = previous;
+          rethrow;
+        }
         return id;
       }
     }
     final nextId = id ?? _nextId(rows);
     row['id'] = nextId;
     rows.add(row);
-    await _persistIfNeeded();
+    try {
+      await _persistIfNeeded();
+    } catch (_) {
+      rows.remove(row);
+      rethrow;
+    }
     return nextId;
   }
 
@@ -254,18 +327,32 @@ class _WebAppDatabase extends AppDatabase {
   }) async {
     await open();
     final rows = _table(table);
-    var updated = 0;
+    final indexes = <int>[];
     for (var i = 0; i < rows.length; i++) {
       final row = rows[i];
       if (row['space_id'] == _activeSpace &&
           (where == null || _matchesWhere(row, where, whereArgs))) {
-        row.addAll(values);
-        rows[i] = row;
-        updated++;
+        indexes.add(i);
       }
     }
-    if (updated > 0) {
+    if (indexes.isEmpty) return 0;
+    _requireOnline();
+    final previous = {
+      for (final index in indexes)
+        index: Map<String, Object?>.from(rows[index]),
+    };
+    var updated = 0;
+    for (final index in indexes) {
+      rows[index].addAll(values);
+      updated++;
+    }
+    try {
       await _persistIfNeeded();
+    } catch (_) {
+      for (final entry in previous.entries) {
+        rows[entry.key] = entry.value;
+      }
+      rethrow;
     }
     return updated;
   }
@@ -278,6 +365,16 @@ class _WebAppDatabase extends AppDatabase {
   }) async {
     await open();
     final rows = _table(table);
+    final hasMatches = rows.any(
+      (row) =>
+          row['space_id'] == _activeSpace &&
+          (where == null ||
+              where.trim().isEmpty ||
+              _matchesWhere(row, where, whereArgs)),
+    );
+    if (!hasMatches) return 0;
+    _requireOnline();
+    final snapshot = rows.map(Map<String, Object?>.from).toList();
     final original = rows.length;
     if (where == null || where.trim().isEmpty) {
       rows.removeWhere((row) => row['space_id'] == _activeSpace);
@@ -290,7 +387,14 @@ class _WebAppDatabase extends AppDatabase {
     }
     final deleted = original - rows.length;
     if (deleted > 0) {
-      await _persistIfNeeded();
+      try {
+        await _persistIfNeeded();
+      } catch (_) {
+        rows
+          ..clear()
+          ..addAll(snapshot);
+        rethrow;
+      }
     }
     return deleted;
   }
@@ -309,20 +413,34 @@ class _WebAppDatabase extends AppDatabase {
     await open();
     final snapshot = _deepCopy(_data);
     final previous = _inTransaction;
+    final previousChanged = _transactionChanged;
     _inTransaction = true;
+    _transactionChanged = false;
+    late T result;
     try {
-      final result = await action(this);
-      _inTransaction = previous;
-      await _persist();
-      return result;
-    } catch (e) {
+      result = await action(this);
+    } catch (_) {
       _data
         ..clear()
         ..addAll(_deepCopy(snapshot));
       _inTransaction = previous;
-      await _persist();
+      _transactionChanged = previousChanged;
       rethrow;
     }
+    final changed = _transactionChanged;
+    _inTransaction = previous;
+    _transactionChanged = previousChanged || changed;
+    if (changed && !previous) {
+      try {
+        await _persist();
+      } catch (_) {
+        _data
+          ..clear()
+          ..addAll(_deepCopy(snapshot));
+        rethrow;
+      }
+    }
+    return result;
   }
 
   bool _matchesWhere(

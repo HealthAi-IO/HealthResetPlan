@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'app/app_router.dart';
+import 'app/app_settings_controller.dart';
 import 'app/app_messenger.dart';
 import 'app/app_theme.dart';
 import 'app/theme_controller.dart';
@@ -25,6 +26,7 @@ ThemeMode get _themeMode => ThemeMode.light;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await themeController.load();
+  await appSettingsController.load();
   runApp(const PrivacyConsentGate(child: _AppLoader()));
 }
 
@@ -256,6 +258,8 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     with WidgetsBindingObserver {
   StreamSubscription<ReminderData>? _reminderSubscription;
   StreamSubscription<int>? _notificationTapSubscription;
+  StreamSubscription<MedicationNotificationAction>?
+      _medicationActionSubscription;
   StreamSubscription<SiteMessage>? _siteMessageSubscription;
   late final AiPlanGenerationController _aiPlanController;
   bool _updateChecked = false;
@@ -273,6 +277,14 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     _notificationTapSubscription = scheduler.notificationTapEvents.listen(
       _openReminder,
     );
+    _medicationActionSubscription =
+        scheduler.medicationActionEvents.listen(_handleMedicationAction);
+    final pendingMedicationAction = scheduler.takePendingMedicationAction();
+    if (pendingMedicationAction != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _handleMedicationAction(pendingMedicationAction),
+      );
+    }
     final pendingReminderId = scheduler.takePendingNotificationReminderId();
     if (pendingReminderId != null) {
       WidgetsBinding.instance.addPostFrameCallback(
@@ -292,6 +304,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     _aiPlanController.removeListener(_onAiPlanGenerationChanged);
     _reminderSubscription?.cancel();
     _notificationTapSubscription?.cancel();
+    _medicationActionSubscription?.cancel();
     _siteMessageSubscription?.cancel();
     _reminderRefreshTimer?.cancel();
     super.dispose();
@@ -396,6 +409,62 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     AppRouter.router.go('/clock?reminderId=$reminderId');
   }
 
+  Future<void> _handleMedicationAction(
+    MedicationNotificationAction event,
+  ) async {
+    final repository = sl<HealthRepository>();
+    final reminders = await repository.loadReminders();
+    final reminder =
+        reminders.where((item) => item.id == event.reminderId).firstOrNull;
+    if (reminder == null) return;
+    try {
+      if (event.action == 'snooze') {
+        await sl<ReminderScheduler>().snoozeMedication(reminder);
+        appMessengerKey.currentState?.showSnackBar(
+          const SnackBar(content: Text('已延后 10 分钟')),
+        );
+        return;
+      }
+      if (event.action == 'skipped') {
+        final context = AppRouter.navigatorKey.currentContext;
+        if (context == null || !context.mounted) return;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('确认跳过本次用药吗？'),
+            content: const Text('本次将记录为“已跳过”，不会影响后续提醒。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('返回'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('确认跳过'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+      }
+      final updated = await repository.recordMedicationAction(
+        reminder,
+        event.action,
+        scheduledAt: event.scheduledAt,
+      );
+      await sl<ReminderScheduler>().syncReminder(updated);
+      final actionText = event.action == 'taken' ? '已记录服药' : '已记录跳过';
+      final refillText = updated.refillNeeded ? '，药量不足，请及时补药' : '';
+      appMessengerKey.currentState?.showSnackBar(
+        SnackBar(content: Text('$actionText$refillText')),
+      );
+    } catch (_) {
+      appMessengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text('记录失败，请检查网络后重试')),
+      );
+    }
+  }
+
   Future<void> _checkForUpdate() async {
     if (_updateChecked) return;
     _updateChecked = true;
@@ -463,22 +532,63 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: themeController,
-      builder: (context, _) => MaterialApp.router(
-        scaffoldMessengerKey: appMessengerKey,
-        title: '健康重启计划',
-        theme: AppTheme.lightFor(themeController.colorTheme.seed),
-        darkTheme: AppTheme.dark,
-        themeMode: _themeMode,
-        routerConfig: AppRouter.router,
-        debugShowCheckedModeBanner: false,
-        supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
-        localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-      ),
+      animation: Listenable.merge([themeController, appSettingsController]),
+      builder: (context, _) {
+        final seniorMode = appSettingsController.seniorMode;
+        final baseTheme = AppTheme.lightFor(themeController.colorTheme.seed);
+        return MaterialApp.router(
+          scaffoldMessengerKey: appMessengerKey,
+          title: '健康重启计划',
+          theme: seniorMode
+              ? baseTheme.copyWith(
+                  filledButtonTheme: FilledButtonThemeData(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(72, 56),
+                    ),
+                  ),
+                  outlinedButtonTheme: OutlinedButtonThemeData(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(72, 56),
+                    ),
+                  ),
+                  textButtonTheme: TextButtonThemeData(
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(64, 52),
+                    ),
+                  ),
+                  iconButtonTheme: IconButtonThemeData(
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(52, 52),
+                    ),
+                  ),
+                  inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 18,
+                    ),
+                  ),
+                )
+              : baseTheme,
+          darkTheme: AppTheme.dark,
+          themeMode: _themeMode,
+          routerConfig: AppRouter.router,
+          debugShowCheckedModeBanner: false,
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          builder: (context, child) {
+            if (!seniorMode) return child ?? const SizedBox.shrink();
+            final media = MediaQuery.of(context);
+            return MediaQuery(
+              data: media.copyWith(textScaler: const TextScaler.linear(1.22)),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
+        );
+      },
     );
   }
 }

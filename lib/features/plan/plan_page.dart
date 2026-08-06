@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_router.dart';
+import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/ai/ai_plan_generation_controller.dart';
 import '../../core/data/health_models.dart';
@@ -51,6 +52,7 @@ class _PlanPageState extends State<PlanPage> {
   String _selectedProvider = 'qwen';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
+  List<ClockRecordData> _clockRecords = const [];
   PlanRecordData? _riskPlan;
   String _filter = 'all';
   int? _aiRemaining;
@@ -107,6 +109,7 @@ class _PlanPageState extends State<PlanPage> {
     }
     final profile = await _repo.loadProfile();
     final plans = await _repo.loadPlans(limit: 40);
+    final clockRecords = await _repo.loadClockRecords(limit: 40);
     if (!mounted) return;
     setState(() {
       _profile = profile;
@@ -115,6 +118,7 @@ class _PlanPageState extends State<PlanPage> {
       final isCritical = _isCriticalRiskPlan(_riskPlan);
       _plans =
           isCritical ? const [] : plans.where((p) => p.type != 'risk').toList();
+      _clockRecords = clockRecords;
       _loading = false;
     });
   }
@@ -133,6 +137,7 @@ class _PlanPageState extends State<PlanPage> {
       );
       return;
     }
+    if (!await _confirmReplacePlans()) return;
     try {
       await _repo.generateWeeklyPlan();
       sl<TelemetryApi>().record('plan_generated');
@@ -148,6 +153,28 @@ class _PlanPageState extends State<PlanPage> {
             .showSnackBar(const SnackBar(content: Text('计划生成失败，请检查档案后重试')));
       }
     }
+  }
+
+  Future<bool> _confirmReplacePlans() async {
+    if (_plans.isEmpty) return true;
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('替换现有计划吗？'),
+            content: const Text('新的 7 天计划会替换当前计划。已经完成的打卡记录会保留。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('返回'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确认替换'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _generateWithAi() async {
@@ -430,6 +457,8 @@ class _PlanPageState extends State<PlanPage> {
                       onPressed: !hasExecutablePlan
                           ? null
                           : () async {
+                              if (!await _confirmReplacePlans()) return;
+                              if (!mounted) return;
                               final reminderConsent = await confirmReminderUse(
                                 context,
                                 _reminderScheduler,
@@ -460,7 +489,8 @@ class _PlanPageState extends State<PlanPage> {
                                       ),
                                       action: SnackBarAction(
                                         label: '去打卡',
-                                        onPressed: () => context.push('/clock'),
+                                        onPressed: () =>
+                                            AppRouter.router.go('/clock'),
                                       ),
                                     ),
                                   );
@@ -610,6 +640,73 @@ class _PlanPageState extends State<PlanPage> {
     return 'AI 生成暂时不可用，已为你保留本地规则计划。';
   }
 
+  Future<void> _showSeniorPlanTools() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '调整计划',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                '重新生成会先让你确认，不会静默覆盖现有计划。',
+                style: TextStyle(color: AppTheme.muted),
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: _aiPlanController.isGenerating
+                    ? null
+                    : () {
+                        Navigator.pop(ctx);
+                        _generateWithAi();
+                      },
+                icon: const Icon(Icons.psychology_outlined),
+                label: Text(_aiPlanController.isGenerating
+                    ? 'AI 正在生成'
+                    : 'AI 智能生成 7 天计划'),
+              ),
+              if (_aiRemaining != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '今天还可使用 $_aiRemaining 次',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppTheme.muted),
+                  ),
+                ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _generate();
+                },
+                icon: const Icon(Icons.auto_awesome_outlined),
+                label: const Text('按本地规则生成 7 天计划'),
+              ),
+              const SizedBox(height: 10),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _editPlan(date: DateTime.now());
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('手动添加今天的计划'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -620,6 +717,36 @@ class _PlanPageState extends State<PlanPage> {
     final riskPayload = _riskPlan?.payload;
     final targetKcal = riskPayload?['targetKcal'] as int? ?? 0;
     final bottomPadding = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+
+    if (appSettingsController.seniorMode) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final todayPlans = _plans.where((plan) {
+        final date = plan.date;
+        return DateTime(date.year, date.month, date.day) == today;
+      }).toList();
+      final futurePlans = _plans.where((plan) {
+        final date = plan.date;
+        return DateTime(date.year, date.month, date.day).isAfter(today);
+      }).toList();
+      final todayRecords = _clockRecords.where((record) {
+        final date = record.clockTime;
+        return date.year == now.year &&
+            date.month == now.month &&
+            date.day == now.day &&
+            record.status == 'done';
+      }).toList();
+      return _SeniorPlanView(
+        todayPlans: todayPlans,
+        futurePlans: futurePlans,
+        doneTypes: todayRecords.map((record) => record.type).toSet(),
+        riskPlan: _riskPlan,
+        onGoClock: () => context.go('/clock'),
+        onAdjust: _showSeniorPlanTools,
+        onEdit: _editPlan,
+        onRefresh: () => _load(silent: true),
+      );
+    }
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -808,6 +935,552 @@ class _PlanLoadingView extends StatelessWidget {
       ],
     );
   }
+}
+
+class _SeniorPlanView extends StatelessWidget {
+  const _SeniorPlanView({
+    required this.todayPlans,
+    required this.futurePlans,
+    required this.doneTypes,
+    required this.riskPlan,
+    required this.onGoClock,
+    required this.onAdjust,
+    required this.onEdit,
+    required this.onRefresh,
+  });
+
+  final List<PlanRecordData> todayPlans;
+  final List<PlanRecordData> futurePlans;
+  final Set<String> doneTypes;
+  final PlanRecordData? riskPlan;
+  final VoidCallback onGoClock;
+  final Future<void> Function() onAdjust;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final items = todayPlans.map((plan) {
+      final clockType = plan.type == 'measurement' ? 'weight' : plan.type;
+      return _SeniorPlanItem(
+        plan: plan,
+        completed: doneTypes.contains(clockType),
+        hour: switch (plan.type) {
+          'measurement' => 7,
+          'meal' => 12,
+          _ => 18,
+        },
+        minute: plan.type == 'exercise' ? 30 : 0,
+      );
+    }).toList()
+      ..sort((a, b) {
+        if (a.completed != b.completed) return a.completed ? 1 : -1;
+        return (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute);
+      });
+    final current = items.where((item) => !item.completed).firstOrNull;
+    final upcoming = items
+        .where((item) => !item.completed && item != current)
+        .take(2)
+        .toList();
+    final completed = items.where((item) => item.completed).toList();
+    final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
+
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        key: const PageStorageKey('senior-plan-scroll'),
+        padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text('今日计划',
+                    style:
+                        TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+              ),
+              TextButton.icon(
+                onPressed: onAdjust,
+                icon: const Icon(Icons.tune),
+                label: const Text('调整计划'),
+              ),
+            ],
+          ),
+          Text(
+            DateFormat('yyyy年M月d日 EEEE', 'zh_CN').format(now),
+            style: const TextStyle(fontSize: 17, color: AppTheme.muted),
+          ),
+          if (_isCriticalRiskPlan(riskPlan)) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.health_and_safety_outlined,
+                      color: Colors.orange),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      riskPlan!.summary.isEmpty
+                          ? '请根据健康风险提示合理执行今天的计划。'
+                          : riskPlan!.summary,
+                      style: const TextStyle(fontSize: 17, height: 1.45),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          if (current == null)
+            _SeniorPlanEmpty(onAdjust: onAdjust)
+          else
+            _SeniorCurrentPlan(
+              item: current,
+              onGoClock: onGoClock,
+              onEdit: () => onEdit(plan: current.plan),
+            ),
+          if (upcoming.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _SeniorUpcomingPlans(
+              items: upcoming,
+              onGoClock: onGoClock,
+              onEdit: onEdit,
+            ),
+          ],
+          if (completed.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.cardBorder),
+              ),
+              child: ExpansionTile(
+                shape: const Border(),
+                collapsedShape: const Border(),
+                title: Text(
+                  '今天已完成 ${completed.length} 项',
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+                children: [
+                  for (final item in completed)
+                    ListTile(
+                      leading:
+                          const Icon(Icons.check_circle, color: Colors.green),
+                      title: Text(_seniorPlanTitle(item.plan)),
+                      trailing: TextButton(
+                        onPressed: () => onEdit(plan: item.plan),
+                        child: const Text('调整'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          if (futurePlans.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _SeniorFuturePlans(plans: futurePlans, onEdit: onEdit),
+          ],
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: () => onEdit(date: now),
+            icon: const Icon(Icons.add),
+            label: const Text('添加今天的计划'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorPlanItem {
+  const _SeniorPlanItem({
+    required this.plan,
+    required this.completed,
+    required this.hour,
+    required this.minute,
+  });
+
+  final PlanRecordData plan;
+  final bool completed;
+  final int hour;
+  final int minute;
+
+  String get time =>
+      '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+}
+
+class _SeniorCurrentPlan extends StatelessWidget {
+  const _SeniorCurrentPlan({
+    required this.item,
+    required this.onGoClock,
+    required this.onEdit,
+  });
+
+  final _SeniorPlanItem item;
+  final VoidCallback onGoClock;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryBlue.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('当前计划',
+              style: TextStyle(
+                  color: AppTheme.primaryBlue,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 16),
+          Text(item.time,
+              style:
+                  const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(_seniorPlanIcon(item.plan.type),
+                  size: 34, color: AppTheme.primaryBlue),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(_seniorPlanTitle(item.plan),
+                    style: const TextStyle(
+                        fontSize: 25, fontWeight: FontWeight.w900)),
+              ),
+            ],
+          ),
+          if (_seniorPlanDetail(item.plan).isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              _seniorPlanDetail(item.plan),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 17, color: AppTheme.muted),
+            ),
+          ],
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: onGoClock,
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('去完成'),
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined),
+            label: const Text('调整这一项'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorUpcomingPlans extends StatelessWidget {
+  const _SeniorUpcomingPlans({
+    required this.items,
+    required this.onGoClock,
+    required this.onEdit,
+  });
+
+  final List<_SeniorPlanItem> items;
+  final VoidCallback onGoClock;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('接下来',
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 8),
+          for (final item in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 76,
+                    child: Text(item.time,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w800)),
+                  ),
+                  Icon(_seniorPlanIcon(item.plan.type),
+                      color: AppTheme.primaryBlue),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(_seniorPlanTitle(item.plan),
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  TextButton(
+                    onPressed: () => onEdit(plan: item.plan),
+                    child: const Text('调整'),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SeniorFuturePlans extends StatelessWidget {
+  const _SeniorFuturePlans({required this.plans, required this.onEdit});
+
+  final List<PlanRecordData> plans;
+  final Future<void> Function({PlanRecordData? plan, DateTime? date}) onEdit;
+
+  Future<void> _showDayDetails(
+    BuildContext context,
+    DateTime date,
+    List<PlanRecordData> dayPlans,
+  ) async {
+    final sorted = [...dayPlans]..sort((a, b) {
+        const order = ['meal', 'exercise', 'measurement'];
+        return order.indexOf(a.type).compareTo(order.indexOf(b.type));
+      });
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.78,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  DateFormat('M月d日 EEEE', 'zh_CN').format(date),
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '当天共 ${sorted.length} 项计划',
+                  style: const TextStyle(fontSize: 16, color: AppTheme.muted),
+                ),
+                const SizedBox(height: 14),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: sorted.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final plan = sorted[index];
+                      final lines = _seniorPlanFullLines(plan);
+                      return Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: AppTheme.pageBg,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  _seniorPlanIcon(plan.type),
+                                  color: AppTheme.primaryBlue,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _seniorPlanTitle(plan),
+                                    style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (lines.isEmpty)
+                              const Text(
+                                '暂无详细说明',
+                                style: TextStyle(color: AppTheme.muted),
+                              )
+                            else
+                              for (final line in lines)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    line,
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton.icon(
+                                onPressed: () {
+                                  Navigator.pop(sheetContext);
+                                  onEdit(plan: plan);
+                                },
+                                icon: const Icon(Icons.edit_outlined),
+                                label: const Text('调整这一项'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dates = <DateTime, List<PlanRecordData>>{};
+    for (final plan in plans) {
+      final date = plan.date;
+      final key = DateTime(date.year, date.month, date.day);
+      dates.putIfAbsent(key, () => []).add(plan);
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: ExpansionTile(
+        shape: const Border(),
+        collapsedShape: const Border(),
+        title: const Text('查看未来 7 天',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        children: [
+          for (final entry in dates.entries)
+            ListTile(
+              leading: const Icon(Icons.calendar_today_outlined),
+              title: Text(DateFormat('M月d日 EEEE', 'zh_CN').format(entry.key)),
+              subtitle: Text('${entry.value.length} 项 · 点击查看'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _showDayDetails(context, entry.key, entry.value),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+List<String> _seniorPlanFullLines(PlanRecordData plan) {
+  final lines = <String>[];
+  void add(String value) {
+    final text = value.trim();
+    if (text.isNotEmpty && !lines.contains(text)) lines.add(text);
+  }
+
+  add(plan.summary);
+  if (plan.type == 'meal') {
+    for (final entry in const [
+      ('早餐', 'breakfast'),
+      ('午餐', 'lunch'),
+      ('晚餐', 'dinner'),
+      ('加餐', 'snack'),
+    ]) {
+      final values = _stringList(plan.payload[entry.$2]);
+      if (values.isNotEmpty) add('${entry.$1}：${values.join('、')}');
+    }
+  }
+  for (final item in _stringList(plan.payload['items'])) {
+    add('· $item');
+  }
+  final duration = plan.payload['durationMinutes'] ?? plan.payload['duration'];
+  if (duration != null && duration.toString().trim().isNotEmpty) {
+    final text = duration.toString().trim();
+    add('建议时长：$text${RegExp(r'\d$').hasMatch(text) ? ' 分钟' : ''}');
+  }
+  return lines;
+}
+
+class _SeniorPlanEmpty extends StatelessWidget {
+  const _SeniorPlanEmpty({required this.onAdjust});
+
+  final Future<void> Function() onAdjust;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.cardBorder),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.event_available_outlined,
+              size: 42, color: AppTheme.primaryBlue),
+          const SizedBox(height: 10),
+          const Text('今天还没有计划',
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 14),
+          FilledButton(onPressed: onAdjust, child: const Text('创建计划')),
+        ],
+      ),
+    );
+  }
+}
+
+String _seniorPlanTitle(PlanRecordData plan) => switch (plan.type) {
+      'meal' => '饮食安排',
+      'exercise' => '运动安排',
+      'measurement' => '健康测量',
+      _ => plan.label,
+    };
+
+IconData _seniorPlanIcon(String type) => switch (type) {
+      'meal' => Icons.restaurant_outlined,
+      'exercise' => Icons.directions_walk_outlined,
+      'measurement' => Icons.monitor_heart_outlined,
+      _ => Icons.event_note_outlined,
+    };
+
+String _seniorPlanDetail(PlanRecordData plan) {
+  if (plan.summary.trim().isNotEmpty) return plan.summary.trim();
+  final items = _stringList(plan.payload['items']);
+  if (items.isNotEmpty) return items.take(2).join('；');
+  for (final key in const ['breakfast', 'lunch', 'dinner']) {
+    final values = _stringList(plan.payload[key]);
+    if (values.isNotEmpty) return values.take(2).join('、');
+  }
+  return '';
 }
 
 class _PlanDraft {

@@ -115,12 +115,12 @@ class _CaptchaDialogState extends State<CaptchaDialog> {
     _recordPoint(_trajectory.isEmpty ? 0 : _trajectory.last.y);
     final challenge = _challenge;
     if (challenge == null) return;
-    if (_trajectory.length < 12 ||
-        _stopwatch.elapsed < const Duration(milliseconds: 350)) {
+    if (_trajectory.length < 6 ||
+        _stopwatch.elapsed < const Duration(milliseconds: 180)) {
       setState(() {
         _serverX = 0;
         _trajectory.clear();
-        _error = '滑动过快，请慢一点再试';
+        _error = '请对准缺口并平稳滑动后再试';
       });
       return;
     }
