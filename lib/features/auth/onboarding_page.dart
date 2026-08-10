@@ -40,15 +40,18 @@ class OnboardingPage extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(22),
             decoration: BoxDecoration(
-              gradient: AppTheme.accentSoftGradient(context),
+              color: AppTheme.softBlue,
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: colors.primary.withValues(alpha: 0.22),
-              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Image.asset(
+                  'assets/images/health_reset_logo_transparent.png',
+                  width: 72,
+                  height: 72,
+                ),
+                const SizedBox(height: 18),
                 const Text(
                   '开始你的健康重启',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
@@ -65,17 +68,27 @@ class OnboardingPage extends StatelessWidget {
                   children: [
                     _Pill(text: '账号同步', color: colors.primary),
                     _Pill(text: '加密保护', color: colors.primary),
-                    _Pill(text: '多彩主题', color: colors.primary),
+                    _Pill(text: '长辈模式', color: colors.tertiary),
                   ],
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-          ...steps.map(
-            (step) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _StepCard(step: step),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: AppTheme.cardBorder),
+            ),
+            child: Column(
+              children: [
+                for (var index = 0; index < steps.length; index++) ...[
+                  _StepRow(step: steps[index]),
+                  if (index != steps.length - 1)
+                    const Divider(indent: 72, endIndent: 16),
+                ],
+              ],
             ),
           ),
           const SizedBox(height: 8),
@@ -105,21 +118,16 @@ class _Step {
   final String desc;
 }
 
-class _StepCard extends StatelessWidget {
-  const _StepCard({required this.step});
+class _StepRow extends StatelessWidget {
+  const _StepRow({required this.step});
 
   final _Step step;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Container(
+    return Padding(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
-      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -78,8 +78,12 @@ class _MemoryAppDatabase extends AppDatabase {
     'sync_queue',
     'health_report',
     'meal_record',
+    'meal_recipe',
+    'meal_settings',
     'ai_session',
     'ai_message',
+    'quit_smoking_profile',
+    'smoking_event',
   ];
 
   OnlineDataApi? _onlineApi;
@@ -253,8 +257,12 @@ class _MemoryAppDatabase extends AppDatabase {
     'reminder',
     'health_report',
     'meal_record',
+    'meal_recipe',
+    'meal_settings',
     'ai_session',
     'ai_message',
+    'quit_smoking_profile',
+    'smoking_event',
   ];
 
   @override

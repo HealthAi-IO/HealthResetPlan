@@ -19,8 +19,18 @@ class ContentDetailPage extends StatefulWidget {
 
 class _ContentDetailPageState extends State<ContentDetailPage> {
   final ContentApi _api = sl<ContentApi>();
+  final TextEditingController _commentController = TextEditingController();
   ContentDetail? _detail;
+  ContentInteraction? _interaction;
   String? _error;
+  String? _interactionError;
+  bool _submittingInteraction = false;
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -34,10 +44,83 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
       final detail = await _api.contentDetail(widget.id);
       if (!mounted) return;
       setState(() => _detail = detail);
-      await _api.markContentRead(widget.id);
+      try {
+        await _api.markContentRead(widget.id);
+      } catch (_) {
+        // Reading the article must not fail because read-state sync failed.
+      }
+      await _loadInteraction();
     } catch (_) {
       if (mounted) setState(() => _error = '资讯不存在、已下架或网络暂时不可用');
     }
+  }
+
+  Future<void> _loadInteraction() async {
+    try {
+      final interaction = await _api.contentInteraction(widget.id);
+      if (mounted) {
+        setState(() {
+          _interaction = interaction;
+          _interactionError = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _interactionError = '互动功能暂时不可用');
+    }
+  }
+
+  Future<void> _react(String reaction) async {
+    final current = _interaction;
+    if (current == null || _submittingInteraction) return;
+    final nextReaction = current.userReaction == reaction ? '' : reaction;
+    setState(() => _submittingInteraction = true);
+    try {
+      final result = await _api.reactToContent(widget.id, nextReaction);
+      if (mounted) setState(() => _interaction = result);
+    } catch (_) {
+      if (mounted) _showInteractionError('操作失败，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _submittingInteraction = false);
+    }
+  }
+
+  Future<void> _submitComment() async {
+    final content = _commentController.text.trim();
+    if (content.isEmpty || _submittingInteraction) return;
+    if (content.length > 500) {
+      _showInteractionError('评论不能超过 500 字');
+      return;
+    }
+    setState(() => _submittingInteraction = true);
+    try {
+      final result = await _api.addComment(widget.id, content);
+      if (!mounted) return;
+      _commentController.clear();
+      FocusScope.of(context).unfocus();
+      setState(() => _interaction = result);
+    } catch (_) {
+      if (mounted) _showInteractionError('评论发布失败，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _submittingInteraction = false);
+    }
+  }
+
+  Future<void> _deleteComment(ContentComment comment) async {
+    if (!comment.isMine || _submittingInteraction) return;
+    setState(() => _submittingInteraction = true);
+    try {
+      final result = await _api.deleteComment(widget.id, comment.id);
+      if (mounted) setState(() => _interaction = result);
+    } catch (_) {
+      if (mounted) _showInteractionError('删除失败，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _submittingInteraction = false);
+    }
+  }
+
+  void _showInteractionError(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<bool> _openContentUrl(String value) async {
@@ -194,6 +277,17 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                         )
                       else
                         const Text('该内容类型将在后续版本开放。'),
+                      const Divider(height: 40),
+                      _ContentInteractionSection(
+                        interaction: _interaction,
+                        error: _interactionError,
+                        controller: _commentController,
+                        submitting: _submittingInteraction,
+                        onRetry: _loadInteraction,
+                        onReact: _react,
+                        onSubmit: _submitComment,
+                        onDelete: _deleteComment,
+                      ),
                     ],
                   ),
                 ),
@@ -204,6 +298,140 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
       ),
     );
   }
+}
+
+class _ContentInteractionSection extends StatelessWidget {
+  const _ContentInteractionSection({
+    required this.interaction,
+    required this.error,
+    required this.controller,
+    required this.submitting,
+    required this.onRetry,
+    required this.onReact,
+    required this.onSubmit,
+    required this.onDelete,
+  });
+
+  final ContentInteraction? interaction;
+  final String? error;
+  final TextEditingController controller;
+  final bool submitting;
+  final VoidCallback onRetry;
+  final ValueChanged<String> onReact;
+  final VoidCallback onSubmit;
+  final ValueChanged<ContentComment> onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    if (error != null && interaction == null) {
+      return Row(children: [
+        const Icon(Icons.info_outline, color: AppTheme.muted),
+        const SizedBox(width: 8),
+        Expanded(
+            child: Text(error!, style: const TextStyle(color: AppTheme.muted))),
+        TextButton(onPressed: onRetry, child: const Text('重试')),
+      ]);
+    }
+    final data = interaction;
+    if (data == null) return const Center(child: CircularProgressIndicator());
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: submitting ? null : () => onReact('like'),
+              icon: Icon(data.userReaction == 'like'
+                  ? Icons.thumb_up
+                  : Icons.thumb_up_outlined),
+              label: Text('有帮助 ${data.likeCount}'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: data.userReaction == 'like'
+                    ? AppTheme.primaryBlue
+                    : AppTheme.ink,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: submitting ? null : () => onReact('dislike'),
+              icon: Icon(data.userReaction == 'dislike'
+                  ? Icons.thumb_down
+                  : Icons.thumb_down_outlined),
+              label: Text('没帮助 ${data.dislikeCount}'),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 26),
+        Text('评论 ${data.comments.length}',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        TextField(
+          controller: controller,
+          minLines: 2,
+          maxLines: 4,
+          maxLength: 500,
+          decoration: const InputDecoration(hintText: '说说你的看法…'),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton(
+            onPressed: submitting ? null : onSubmit,
+            child: const Text('发表评论'),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (data.comments.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+                child: Text('还没有评论', style: TextStyle(color: AppTheme.muted))),
+          )
+        else
+          for (final comment in data.comments)
+            _CommentRow(comment: comment, onDelete: onDelete),
+      ],
+    );
+  }
+}
+
+class _CommentRow extends StatelessWidget {
+  const _CommentRow({required this.comment, required this.onDelete});
+  final ContentComment comment;
+  final ValueChanged<ContentComment> onDelete;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CircleAvatar(
+              radius: 18, child: Text(comment.authorName.characters.first)),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Row(children: [
+                  Expanded(
+                      child: Text(comment.authorName,
+                          style: const TextStyle(fontWeight: FontWeight.w700))),
+                  if (comment.isMine)
+                    IconButton(
+                      tooltip: '删除评论',
+                      onPressed: () => onDelete(comment),
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                    ),
+                ]),
+                Text(comment.content, style: const TextStyle(height: 1.5)),
+                if (comment.createdAt != null) ...[
+                  const SizedBox(height: 4),
+                  Text(DateFormat('MM-dd HH:mm').format(comment.createdAt!),
+                      style:
+                          const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                ],
+              ])),
+        ]),
+      );
 }
 
 class _CardContent extends StatelessWidget {

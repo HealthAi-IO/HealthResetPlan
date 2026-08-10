@@ -896,9 +896,9 @@ class _ProfilePageState extends State<ProfilePage> {
       onRefresh: _load,
       child: ListView(
         controller: _scrollController,
-        padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
+        padding: EdgeInsets.fromLTRB(20, 4, 20, bottomPadding),
         children: [
-          _OverviewCard(profile: profile, indicators: _indicators),
+          _ProfileHero(profile: profile, indicators: _indicators),
           const SizedBox(height: 16),
           Card(
             child: ListTile(
@@ -1854,6 +1854,89 @@ class _AccountSecurityPanel extends StatelessWidget {
   }
 }
 
+class _ProfileHero extends StatelessWidget {
+  const _ProfileHero({required this.profile, required this.indicators});
+
+  final UserProfileData profile;
+  final List<HealthIndicatorEntry> indicators;
+
+  @override
+  Widget build(BuildContext context) {
+    final name =
+        profile.nickname.trim().isEmpty ? '健康用户' : profile.nickname.trim();
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 34),
+          color: AppTheme.deepBlue,
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 27,
+                backgroundColor: AppTheme.accentCyan,
+                child: Text(name.characters.first,
+                    style: const TextStyle(
+                        color: AppTheme.deepBlue,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800)),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(name,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 4),
+                    const Text('健康档案已连接',
+                        style:
+                            TextStyle(color: Color(0xFFC3D5E0), fontSize: 13)),
+                  ])),
+            ],
+          ),
+        ),
+        Transform.translate(
+          offset: const Offset(0, -16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            decoration: BoxDecoration(
+                color: Colors.white, borderRadius: BorderRadius.circular(8)),
+            child: Row(children: [
+              _ProfileStat(
+                  label: '年龄',
+                  value: profile.age == 0 ? '--' : '${profile.age} 岁'),
+              _ProfileStat(
+                  label: 'BMI',
+                  value:
+                      profile.bmi == 0 ? '--' : profile.bmi.toStringAsFixed(1)),
+              _ProfileStat(label: '健康记录', value: '${indicators.length} 条'),
+            ]),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileStat extends StatelessWidget {
+  const _ProfileStat({required this.label, required this.value});
+  final String label, value;
+  @override
+  Widget build(BuildContext context) => Expanded(
+          child: Column(children: [
+        Text(label,
+            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+        const SizedBox(height: 6),
+        Text(value,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800))
+      ]));
+}
+
+// ignore: unused_element
 class _OverviewCard extends StatelessWidget {
   const _OverviewCard({
     required this.profile,

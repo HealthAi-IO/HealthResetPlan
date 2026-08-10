@@ -11,6 +11,8 @@ import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
+import 'widgets/auth_page_shell.dart';
+import 'widgets/secure_password_field.dart';
 
 class RegisterArgs {
   const RegisterArgs({
@@ -114,34 +116,68 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('注册账号')),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
+    final maskedPhone = '${widget.args.phone.substring(0, 3)} **** '
+        '${widget.args.phone.substring(7)}';
+    return AuthPageShell(
+      showBack: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '手机号 ${widget.args.phone.substring(0, 3)}****'
-            '${widget.args.phone.substring(7)} 已验证',
+            '创建账号',
+            style: Theme.of(context).textTheme.headlineLarge,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
+          const Text(
+            '完成注册，开启你的健康之旅',
+            style: TextStyle(color: Color(0xFF65788B), fontSize: 15),
+          ),
+          const SizedBox(height: 28),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF7FE),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.verified_rounded, color: Color(0xFF36B85A)),
+                const SizedBox(width: 12),
+                Expanded(child: Text(maskedPhone)),
+                TextButton(
+                  onPressed: _saving ? null : () => Navigator.maybePop(context),
+                  child: const Text('更换手机号'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
           TextField(
             controller: _nicknameController,
-            decoration: const InputDecoration(labelText: '昵称'),
+            decoration: const InputDecoration(
+              labelText: '昵称',
+              prefixIcon: Icon(Icons.person_outline_rounded),
+            ),
           ),
-          const SizedBox(height: 12),
-          TextField(
+          const SizedBox(height: 14),
+          SecurePasswordField(
             controller: _passwordController,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: '设置密码'),
+            labelText: '设置密码',
+            hintText: '请输入 8—64 位密码',
+            enabled: !_saving,
           ),
-          const SizedBox(height: 12),
-          TextField(
+          const SizedBox(height: 14),
+          SecurePasswordField(
             controller: _confirmController,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: '确认密码'),
+            labelText: '确认密码',
+            hintText: '请再次输入密码',
+            enabled: !_saving,
+            onSubmitted: (_) => _submit(),
           ),
+          const SizedBox(height: 6),
           CheckboxListTile(
             value: _agreed,
+            controlAffinity: ListTileControlAffinity.leading,
             contentPadding: EdgeInsets.zero,
             onChanged: (value) => setState(() => _agreed = value ?? false),
             title: Wrap(
@@ -150,32 +186,36 @@ class _RegisterPageState extends State<RegisterPage> {
                 const Text('我已阅读并同意'),
                 TextButton(
                   onPressed: () => launchUrl(Uri.parse(termsOfServiceUrl)),
-                  child: const Text('用户协议'),
+                  child: const Text('《用户协议》'),
                 ),
                 const Text('和'),
                 TextButton(
                   onPressed: () => context.push('/privacy-policy'),
-                  child: const Text('隐私政策'),
+                  child: const Text('《隐私政策》'),
                 ),
               ],
             ),
           ),
           if (_error != null)
-            Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
-          const SizedBox(height: 16),
           FilledButton(
             onPressed: _saving ? null : _submit,
             child: _saving
                 ? const SizedBox(
-                    width: 20,
-                    height: 20,
+                    width: 22,
+                    height: 22,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Text('完成注册'),
           ),
+          const SizedBox(height: 20),
+          const SeniorModeEntry(),
         ],
       ),
     );

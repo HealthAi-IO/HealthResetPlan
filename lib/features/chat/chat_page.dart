@@ -101,8 +101,8 @@ class _ChatPageState extends State<ChatPage> {
     final gender = p.gender == 'male'
         ? '男'
         : p.gender == 'female'
-        ? '女'
-        : '';
+            ? '女'
+            : '';
     final bmi = p.bmi > 0 ? '，BMI ${p.bmi.toStringAsFixed(1)}' : '';
     return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
   }
@@ -211,9 +211,8 @@ class _ChatPageState extends State<ChatPage> {
                           );
                           return ListTile(
                             dense: false,
-                            tileColor: active
-                                ? primary.withValues(alpha: 0.06)
-                                : null,
+                            tileColor:
+                                active ? primary.withValues(alpha: 0.06) : null,
                             leading: Container(
                               width: 36,
                               height: 36,
@@ -233,9 +232,8 @@ class _ChatPageState extends State<ChatPage> {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 14,
-                                fontWeight: active
-                                    ? FontWeight.w700
-                                    : FontWeight.w600,
+                                fontWeight:
+                                    active ? FontWeight.w700 : FontWeight.w600,
                               ),
                             ),
                             subtitle: Text(
@@ -475,6 +473,16 @@ class _ChatPageState extends State<ChatPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(22),
+          child: Padding(
+            padding: EdgeInsets.only(bottom: 6),
+            child: Text(
+              '● 结合你的记录回答 · 仅供参考',
+              style: TextStyle(color: AppTheme.aiPurple, fontSize: 11),
+            ),
+          ),
+        ),
         actions: [
           // 历史
           IconButton(
@@ -567,19 +575,15 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildEmptyState() {
-    final primary = Theme.of(context).colorScheme.primary;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: primary.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(Icons.psychology_outlined, size: 38, color: primary),
+          Image.asset(
+            'assets/images/ai_robot_avatar.png',
+            width: 92,
+            height: 92,
+            fit: BoxFit.contain,
           ),
           const SizedBox(height: 16),
           const Text(
@@ -627,7 +631,6 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildInputBar() {
-    final colors = Theme.of(context).colorScheme;
     // 键盘弹出时输入栏紧贴键盘上沿；无键盘时贴底部安全区
     return SafeArea(
       top: false,
@@ -681,8 +684,8 @@ class _ChatPageState extends State<ChatPage> {
                 : IconButton.filled(
                     onPressed: () => _sendMessage(_inputCtrl.text),
                     style: IconButton.styleFrom(
-                      backgroundColor: colors.primary,
-                      foregroundColor: colors.onPrimary,
+                      backgroundColor: AppTheme.aiPurple,
+                      foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.send_rounded, size: 20),
                   ),
@@ -723,12 +726,12 @@ class _UiMessage {
       );
 
   factory _UiMessage.fromDb(ChatMessage m) => _UiMessage(
-    id: m.id,
-    role: m.role,
-    content: m.content,
-    provider: m.provider,
-    isError: m.isError,
-  );
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        provider: m.provider,
+        isError: m.isError,
+      );
 }
 
 // ── 消息气泡 ──────────────────────────────────────────────────
@@ -752,30 +755,23 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
-        mainAxisAlignment: isUser
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isUser) ...[
-            Container(
+            SizedBox(
               width: 32,
               height: 32,
-              decoration: BoxDecoration(
-                color: isError
-                    ? Colors.red.shade100
-                    : colors.primary.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                isError ? Icons.error_outline : Icons.psychology_outlined,
-                size: 18,
-                color: isError ? Colors.red.shade700 : colors.primary,
-              ),
+              child: isError
+                  ? Icon(Icons.error_outline, color: Colors.red.shade700)
+                  : Image.asset(
+                      'assets/images/ai_robot_avatar.png',
+                      fit: BoxFit.contain,
+                    ),
             ),
             const SizedBox(width: 8),
           ],
@@ -794,10 +790,10 @@ class _MessageBubble extends StatelessWidget {
                 ),
                 decoration: BoxDecoration(
                   color: isUser
-                      ? colors.primary
+                      ? AppTheme.deepBlue
                       : isError
-                      ? Colors.red.shade50
-                      : Colors.white,
+                          ? Colors.red.shade50
+                          : Colors.white,
                   borderRadius: BorderRadius.only(
                     topLeft: const Radius.circular(18),
                     topRight: const Radius.circular(18),
@@ -825,10 +821,10 @@ class _MessageBubble extends StatelessWidget {
                         fontSize: 14,
                         height: 1.55,
                         color: isUser
-                            ? colors.onPrimary
+                            ? Colors.white
                             : isError
-                            ? Colors.red.shade700
-                            : AppTheme.ink,
+                                ? Colors.red.shade700
+                                : AppTheme.ink,
                       ),
                     ),
                   ],

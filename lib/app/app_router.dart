@@ -13,21 +13,23 @@ import '../features/content/content_detail_page.dart'
     deferred as content_detail;
 import '../features/content/content_list_page.dart' deferred as content_list;
 import '../features/content/message_center_page.dart' deferred as messages;
-import '../features/clock/clock_page.dart' deferred as clock;
 import '../features/home/home_page.dart' deferred as home;
 import '../features/indicators/indicator_input_page.dart'
     deferred as indicator_input;
 import '../features/indicators/indicator_list_page.dart'
     deferred as indicator_list;
 import '../features/meals/meal_record_page.dart' deferred as meals;
+import '../features/meals/food_hub_page.dart' deferred as food_hub;
 import '../features/meals/meal_input_args.dart';
 import '../features/plan/plan_page.dart' deferred as plan;
 import '../features/profile/profile_page.dart' deferred as profile;
+import '../features/records/record_hub_page.dart' deferred as records;
+import '../features/quit_smoking/quit_smoking_page.dart'
+    deferred as quit_smoking;
 import '../features/privacy/privacy_policy_page.dart';
 import '../features/report/report_page.dart' deferred as report;
 import '../features/self_check/self_check_page.dart' deferred as self_check;
 import '../features/shell/app_shell.dart';
-import '../features/stats/stats_page.dart' deferred as stats;
 
 class AppRouter {
   AppRouter._();
@@ -138,13 +140,14 @@ class AppRouter {
             ),
           ),
           GoRoute(
-            path: '/clock',
-            name: '/clock',
+            path: '/records',
+            name: '/records',
             pageBuilder: (_, state) => _shellPage(
               state,
               _DeferredPage(
-                load: clock.loadLibrary,
-                builder: () => clock.ClockPage(
+                load: records.loadLibrary,
+                builder: () => records.RecordHubPage(
+                  initialView: state.uri.queryParameters['view'] ?? 'clock',
                   initialReminderId: int.tryParse(
                     state.uri.queryParameters['reminderId'] ?? '',
                   ),
@@ -155,12 +158,38 @@ class AppRouter {
             ),
           ),
           GoRoute(
-            path: '/stats',
+            path: '/meals',
+            name: '/meals',
             pageBuilder: (_, state) => _shellPage(
               state,
               _DeferredPage(
-                load: stats.loadLibrary,
-                builder: () => stats.StatsPage(),
+                load: food_hub.loadLibrary,
+                builder: () => food_hub.FoodHubPage(),
+              ),
+            ),
+          ),
+          GoRoute(
+            path: '/clock',
+            name: '/clock',
+            redirect: (_, state) => Uri(
+              path: '/records',
+              queryParameters: {
+                'view': 'clock',
+                ...state.uri.queryParameters,
+              },
+            ).toString(),
+          ),
+          GoRoute(
+            path: '/stats',
+            redirect: (_, __) => '/records?view=stats',
+          ),
+          GoRoute(
+            path: '/quit-smoking',
+            pageBuilder: (_, state) => _shellPage(
+              state,
+              _DeferredPage(
+                load: quit_smoking.loadLibrary,
+                builder: () => quit_smoking.QuitSmokingPage(),
               ),
             ),
           ),

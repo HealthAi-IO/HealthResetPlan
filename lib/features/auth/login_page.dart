@@ -12,6 +12,7 @@ import '../../core/network/auth_api.dart';
 import 'account_recovery_dialog.dart';
 import 'register_page.dart';
 import 'widgets/captcha_dialog.dart';
+import 'widgets/auth_page_shell.dart';
 import 'widgets/secure_password_field.dart';
 
 class LoginPage extends StatefulWidget {
@@ -223,136 +224,119 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('登录健康重启计划')),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Text(
-                      '现在出发，重新找回健康的自己！',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '从一次真实记录、一次认真行动开始，让身体一点一点回到更好的状态。',
-                      style: TextStyle(color: Colors.black54, height: 1.5),
-                    ),
-                    const SizedBox(height: 20),
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(value: true, label: Text('验证码登录')),
-                        ButtonSegment(value: false, label: Text('密码登录')),
-                      ],
-                      selected: {_smsMode},
-                      onSelectionChanged: _submitting
-                          ? null
-                          : (value) => _changeLoginMode(value.first),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _phoneController,
-                      enabled: !_submitting,
-                      keyboardType: TextInputType.phone,
-                      autofillHints: const [AutofillHints.telephoneNumber],
-                      textInputAction: TextInputAction.next,
-                      inputFormatters: const [_ChinesePhoneInputFormatter()],
-                      onChanged: (_) {
-                        if (_phoneError != null) {
-                          setState(() => _phoneError = null);
-                        }
-                      },
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
-                      decoration: InputDecoration(
-                        labelText: '手机号',
-                        prefixText: '+86 ',
-                        errorText: _phoneError,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (_smsMode)
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _codeController,
-                              enabled: !_submitting,
-                              keyboardType: TextInputType.number,
-                              autofillHints: const [AutofillHints.oneTimeCode],
-                              textInputAction: TextInputAction.done,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                                LengthLimitingTextInputFormatter(6),
-                              ],
-                              onChanged: (value) {
-                                if (_credentialError != null) {
-                                  setState(() => _credentialError = null);
-                                }
-                                _submitCompletedCode(value);
-                              },
-                              onSubmitted: (_) => _submit(),
-                              decoration: InputDecoration(
-                                labelText: '验证码',
-                                errorText: _credentialError,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          TextButton(
-                            onPressed:
-                                _submitting || _sendingCode || _countdown > 0
-                                    ? null
-                                    : _sendCode,
-                            child: Text(
-                              _countdown > 0 ? '$_countdown 秒' : '获取验证码',
-                            ),
-                          ),
-                        ],
-                      )
-                    else
-                      SecurePasswordField(
-                        controller: _passwordController,
-                        labelText: '密码',
-                        enabled: !_submitting,
-                        errorText: _credentialError,
-                        onSubmitted: (_) => _submit(),
-                      ),
-                    const SizedBox(height: 20),
-                    FilledButton(
-                      onPressed: _submitting ? null : _submit,
-                      child: _submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('登录 / 注册'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _submitting ? null : _openAccountRecovery,
-                      child: const Text('恢复已注销账号'),
-                    ),
-                    TextButton(
-                      onPressed: () => context.push('/privacy-policy'),
-                      child: const Text('查看《隐私政策》'),
-                    ),
-                  ],
-                ),
-              ),
+    return AuthPageShell(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Image.asset(
+            'assets/images/health_reset_logo_transparent.png',
+            width: 72,
+            height: 72,
+            alignment: Alignment.centerLeft,
+            fit: BoxFit.contain,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            '欢迎回来',
+            style: Theme.of(context).textTheme.headlineLarge,
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            '登录后，继续你的健康重启计划',
+            style: TextStyle(color: Color(0xFF65788B), fontSize: 15),
+          ),
+          const SizedBox(height: 32),
+          SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: true, label: Text('验证码登录')),
+              ButtonSegment(value: false, label: Text('密码登录')),
+            ],
+            selected: {_smsMode},
+            onSelectionChanged:
+                _submitting ? null : (value) => _changeLoginMode(value.first),
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _phoneController,
+            enabled: !_submitting,
+            keyboardType: TextInputType.phone,
+            autofillHints: const [AutofillHints.telephoneNumber],
+            textInputAction: TextInputAction.next,
+            inputFormatters: const [_ChinesePhoneInputFormatter()],
+            onChanged: (_) {
+              if (_phoneError != null) setState(() => _phoneError = null);
+            },
+            onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+            decoration: InputDecoration(
+              labelText: '手机号',
+              prefixIcon: const Icon(Icons.phone_android_rounded),
+              prefixText: '+86 ',
+              errorText: _phoneError,
             ),
           ),
-        ),
+          const SizedBox(height: 14),
+          if (_smsMode)
+            TextField(
+              controller: _codeController,
+              enabled: !_submitting,
+              keyboardType: TextInputType.number,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              textInputAction: TextInputAction.done,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              onChanged: (value) {
+                if (_credentialError != null) {
+                  setState(() => _credentialError = null);
+                }
+                _submitCompletedCode(value);
+              },
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: '验证码',
+                prefixIcon: const Icon(Icons.verified_user_outlined),
+                errorText: _credentialError,
+                suffixIcon: TextButton(
+                  onPressed: _submitting || _sendingCode || _countdown > 0
+                      ? null
+                      : _sendCode,
+                  child: Text(_countdown > 0 ? '$_countdown 秒' : '获取验证码'),
+                ),
+              ),
+            )
+          else
+            SecurePasswordField(
+              controller: _passwordController,
+              labelText: '密码',
+              enabled: !_submitting,
+              errorText: _credentialError,
+              onSubmitted: (_) => _submit(),
+            ),
+          const SizedBox(height: 22),
+          FilledButton(
+            onPressed: _submitting ? null : _submit,
+            child: _submitting
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(_smsMode ? '登录 / 注册' : '登录'),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () => context.push('/privacy-policy'),
+            child: const Text('登录即表示已阅读并同意《隐私政策》'),
+          ),
+          TextButton(
+            onPressed: _submitting ? null : _openAccountRecovery,
+            child: const Text('恢复已注销账号'),
+          ),
+          const SizedBox(height: 20),
+          const SeniorModeEntry(),
+        ],
       ),
     );
   }

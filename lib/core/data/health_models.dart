@@ -470,6 +470,11 @@ class MealRecordData {
     required this.nutrition,
     required this.createdAt,
     required this.updatedAt,
+    this.portion = 1,
+    this.cost = 0,
+    this.diningType = 'home',
+    this.merchant = '',
+    this.note = '',
     this.version = 0,
     this.isDirty = 1,
     this.syncAt = 0,
@@ -492,6 +497,11 @@ class MealRecordData {
   final Map<String, dynamic> nutrition;
   final int createdAt;
   final int updatedAt;
+  final double portion;
+  final double cost;
+  final String diningType;
+  final String merchant;
+  final String note;
   final int version;
   final int isDirty;
   final int syncAt;
@@ -501,6 +511,8 @@ class MealRecordData {
   String get mealLabel => switch (mealType) {
         'breakfast' => '早餐',
         'dinner' => '晚餐',
+        'snack' => '加餐',
+        'late_night' => '夜宵',
         _ => '午餐',
       };
 
@@ -532,6 +544,11 @@ class MealRecordData {
       nutrition: decodeJson(row['nutrition_json'] as String? ?? '{}'),
       createdAt: _asInt(row['created_at']) ?? 0,
       updatedAt: _asInt(row['updated_at']) ?? 0,
+      portion: _asDouble(row['portion'] ?? 1),
+      cost: _asDouble(row['cost']),
+      diningType: row['dining_type'] as String? ?? 'home',
+      merchant: row['merchant'] as String? ?? '',
+      note: row['note'] as String? ?? '',
       version: _asInt(row['version']) ?? 0,
       isDirty: _asInt(row['is_dirty']) ?? 1,
       syncAt: _asInt(row['sync_at']) ?? 0,
@@ -557,6 +574,11 @@ class MealRecordData {
       'nutrition_json': jsonEncode(nutrition),
       'created_at': createdAt,
       'updated_at': updatedAt,
+      'portion': portion,
+      'cost': cost,
+      'dining_type': diningType,
+      'merchant': merchant,
+      'note': note,
       'version': version,
       'is_dirty': isDirty,
       'sync_at': syncAt,
@@ -578,6 +600,11 @@ class MealRecordData {
     List<MealFoodItem>? foods,
     Map<String, dynamic>? nutrition,
     int? updatedAt,
+    double? portion,
+    double? cost,
+    String? diningType,
+    String? merchant,
+    String? note,
   }) {
     return MealRecordData(
       id: id ?? this.id,
@@ -597,9 +624,127 @@ class MealRecordData {
       nutrition: nutrition ?? this.nutrition,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      portion: portion ?? this.portion,
+      cost: cost ?? this.cost,
+      diningType: diningType ?? this.diningType,
+      merchant: merchant ?? this.merchant,
+      note: note ?? this.note,
       version: version,
       isDirty: 1,
       syncAt: syncAt,
+    );
+  }
+}
+
+class MealRecipeData {
+  const MealRecipeData({
+    this.id,
+    this.userId = kLocalUserId,
+    required this.clientId,
+    required this.name,
+    required this.category,
+    required this.durationMinutes,
+    required this.difficulty,
+    required this.ingredients,
+    required this.steps,
+    required this.calories,
+    required this.proteinG,
+    required this.carbsG,
+    required this.fatG,
+    required this.isFavorite,
+    required this.isCustom,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final int? id;
+  final String userId;
+  final String clientId;
+  final String name;
+  final String category;
+  final int durationMinutes;
+  final String difficulty;
+  final List<String> ingredients;
+  final List<String> steps;
+  final double calories;
+  final double proteinG;
+  final double carbsG;
+  final double fatG;
+  final bool isFavorite;
+  final bool isCustom;
+  final int createdAt;
+  final int updatedAt;
+
+  factory MealRecipeData.fromRow(Map<String, Object?> row) {
+    List<String> strings(String key) {
+      final raw = jsonDecode(row[key] as String? ?? '[]');
+      return raw is List ? raw.map((item) => '$item').toList() : const [];
+    }
+
+    return MealRecipeData(
+      id: _asInt(row['id']),
+      userId: row['user_id'] as String? ?? kLocalUserId,
+      clientId: row['client_id'] as String? ?? '',
+      name: row['name'] as String? ?? '',
+      category: row['category'] as String? ?? '家常菜',
+      durationMinutes: _asInt(row['duration_minutes']) ?? 20,
+      difficulty: row['difficulty'] as String? ?? '简单',
+      ingredients: strings('ingredients_json'),
+      steps: strings('steps_json'),
+      calories: _asDouble(row['calories']),
+      proteinG: _asDouble(row['protein_g']),
+      carbsG: _asDouble(row['carbs_g']),
+      fatG: _asDouble(row['fat_g']),
+      isFavorite: _asInt(row['is_favorite']) == 1,
+      isCustom: _asInt(row['is_custom']) == 1,
+      createdAt: _asInt(row['created_at']) ?? 0,
+      updatedAt: _asInt(row['updated_at']) ?? 0,
+    );
+  }
+
+  Map<String, Object?> toRow() => {
+        if (id != null) 'id': id,
+        'user_id': userId,
+        'client_id': clientId,
+        'name': name,
+        'category': category,
+        'duration_minutes': durationMinutes,
+        'difficulty': difficulty,
+        'ingredients_json': jsonEncode(ingredients),
+        'steps_json': jsonEncode(steps),
+        'calories': calories,
+        'protein_g': proteinG,
+        'carbs_g': carbsG,
+        'fat_g': fatG,
+        'is_favorite': isFavorite ? 1 : 0,
+        'is_custom': isCustom ? 1 : 0,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      };
+
+  MealRecipeData copyWith({
+    int? id,
+    bool? isFavorite,
+    int? updatedAt,
+  }) {
+    return MealRecipeData(
+      id: id ?? this.id,
+      userId: userId,
+      clientId: clientId,
+      name: name,
+      category: category,
+      durationMinutes: durationMinutes,
+      difficulty: difficulty,
+      ingredients: ingredients,
+      steps: steps,
+      calories: calories,
+      proteinG: proteinG,
+      carbsG: carbsG,
+      fatG: fatG,
+      isFavorite: isFavorite ?? this.isFavorite,
+      isCustom: isCustom,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 }
@@ -768,6 +913,7 @@ class ClockRecordData {
       'medicine' => '用药',
       'weight' => '称重',
       'water' => '饮水',
+      'quit_smoking' => '戒烟',
       _ => '打卡',
     };
   }
@@ -994,6 +1140,7 @@ class ReminderData {
       'medicine' => '用药提醒',
       'weight' => '称重提醒',
       'water' => '饮水提醒',
+      'quit_smoking' => '戒烟提醒',
       'bp' => '血压提醒',
       'glucose' => '血糖提醒',
       _ => '提醒',
@@ -1082,7 +1229,14 @@ class HealthDashboardData {
               time.day == now.day;
         })
         .map((item) => item.type)
-        .where({'meal', 'exercise', 'medicine', 'weight'}.contains)
+        .where({
+          'meal',
+          'exercise',
+          'medicine',
+          'weight',
+          'water',
+          'quit_smoking'
+        }.contains)
         .toSet();
     return (completedTypes.length / 4).clamp(0, 1).toDouble();
   }

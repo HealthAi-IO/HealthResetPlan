@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppColorTheme {
-  standard('default', '默认主题', Color(0xFF0EA5E9)),
+  standard('default', '默认主题', Color(0xFF0B91E5)),
   ocean('ocean', '海洋蓝', Color(0xFF0B67D1)),
   emerald('emerald', '健康绿', Color(0xFF16866A)),
   violet('violet', '沉稳紫', Color(0xFF6D55C5)),

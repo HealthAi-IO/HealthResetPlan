@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -25,9 +26,22 @@ ThemeMode get _themeMode => ThemeMode.light;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await themeController.load();
-  await appSettingsController.load();
-  runApp(const PrivacyConsentGate(child: _AppLoader()));
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarDividerColor: AppTheme.cardBorder,
+    ),
+  );
+  runApp(
+    const PrivacyConsentGate(
+      loading: _SplashContent(),
+      child: _AppLoader(),
+    ),
+  );
 }
 
 class _AppLoader extends StatefulWidget {
@@ -50,6 +64,8 @@ class _AppLoaderState extends State<_AppLoader> {
   Future<void> _init() async {
     if (mounted) setState(() => _initError = null);
     try {
+      await themeController.load();
+      await appSettingsController.load();
       await setupServiceLocator();
 
       // 兼容：若无昵称但 profile 有，补一下；不阻塞首屏，后台执行
@@ -123,16 +139,15 @@ class _AppLoaderState extends State<_AppLoader> {
     }
 
     if (!_ready) {
-      final seed = themeController.colorTheme.seed;
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         title: '健康重启计划',
-        theme: AppTheme.lightFor(seed),
+        theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: _themeMode,
         home: Scaffold(
           backgroundColor: AppTheme.pageBg,
-          body: _SplashContent(accent: seed),
+          body: const _SplashContent(),
         ),
       );
     }
@@ -142,35 +157,27 @@ class _AppLoaderState extends State<_AppLoader> {
 }
 
 class _SplashContent extends StatelessWidget {
-  const _SplashContent({required this.accent});
-
-  final Color accent;
+  const _SplashContent();
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        ColorFiltered(
-          colorFilter: ColorFilter.mode(
-            accent.withValues(alpha: 0.82),
-            BlendMode.color,
-          ),
-          child: Image.asset(
-            'assets/images/splash_trajectory_background.png',
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.high,
-          ),
+        Image.asset(
+          'assets/images/splash_trajectory_background.png',
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.high,
         ),
         SafeArea(
           child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 620),
+            tween: Tween(begin: 0.72, end: 1),
+            duration: const Duration(milliseconds: 420),
             curve: Curves.easeOutCubic,
             builder: (context, value, child) => Opacity(
               opacity: value,
               child: Transform.translate(
-                offset: Offset(0, 14 * (1 - value)),
+                offset: Offset(0, 8 * (1 - value)),
                 child: child,
               ),
             ),
@@ -178,12 +185,12 @@ class _SplashContent extends StatelessWidget {
               children: [
                 const Spacer(flex: 7),
                 Image.asset(
-                  'assets/images/health_reset_logo.png',
-                  width: 108,
-                  height: 108,
+                  'assets/images/health_reset_logo_transparent.png',
+                  width: 88,
+                  height: 88,
                   filterQuality: FilterQuality.high,
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 const Text(
                   '健康重启计划',
                   style: TextStyle(
@@ -195,7 +202,7 @@ class _SplashContent extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  '记录每一步，看见每一点改变！',
+                  '每一次记录，都在靠近更好的自己',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
@@ -205,7 +212,7 @@ class _SplashContent extends StatelessWidget {
                 ),
                 const Spacer(flex: 5),
                 const Text(
-                  '正在开启你的健康记录',
+                  '正在开启你的健康计划',
                   style: TextStyle(
                     color: AppTheme.muted,
                     fontSize: 12,
@@ -216,11 +223,15 @@ class _SplashContent extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _SplashDot(color: accent.withValues(alpha: 0.45)),
+                    _SplashDot(
+                      color: AppTheme.primaryBlue.withValues(alpha: 0.45),
+                    ),
                     const SizedBox(width: 12),
-                    _SplashDot(color: accent),
+                    const _SplashDot(color: AppTheme.primaryBlue),
                     const SizedBox(width: 12),
-                    _SplashDot(color: accent.withValues(alpha: 0.68)),
+                    _SplashDot(
+                      color: AppTheme.accentCyan.withValues(alpha: 0.82),
+                    ),
                   ],
                 ),
                 const Spacer(flex: 2),
@@ -532,10 +543,10 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([themeController, appSettingsController]),
+      animation: appSettingsController,
       builder: (context, _) {
         final seniorMode = appSettingsController.seniorMode;
-        final baseTheme = AppTheme.lightFor(themeController.colorTheme.seed);
+        final baseTheme = AppTheme.light;
         return MaterialApp.router(
           scaffoldMessengerKey: appMessengerKey,
           title: '健康重启计划',

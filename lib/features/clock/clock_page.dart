@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
@@ -18,6 +19,7 @@ import '../../core/notification/reminder_scheduler.dart';
 import '../../core/network/file_api.dart';
 import '../../core/network/telemetry_api.dart';
 import '../../core/storage/report_image_storage.dart';
+import '../meals/meal_input_args.dart';
 
 class ClockPage extends StatefulWidget {
   const ClockPage({
@@ -189,6 +191,21 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     sl<TelemetryApi>().record('clock_recorded');
     if (!mounted) return;
     _showSnack('${_clockTitle(type)}已保存 ✓');
+  }
+
+  Future<void> _recordMeal() async {
+    final now = DateTime.now();
+    final mealType = now.hour < 10
+        ? 'breakfast'
+        : now.hour < 15
+            ? 'lunch'
+            : now.hour < 21
+                ? 'dinner'
+                : 'late_night';
+    await context.push(
+      '/meals/input',
+      extra: MealInputArgs(mealType: mealType, eatenDate: now),
+    );
   }
 
   // 用药打卡：done / skip 二选一
@@ -379,7 +396,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
               FilledButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _clockWithNote('meal');
+                  _recordMeal();
                 },
                 icon: const Icon(Icons.restaurant_outlined),
                 label: const Text('记录饮食'),
@@ -1302,7 +1319,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                       icon: Icons.restaurant_outlined,
                       label: '饮食',
                       color: Colors.orange,
-                      onTap: () => _clockWithNote('meal'),
+                      onTap: _recordMeal,
                     ),
                     _ClockTile(
                       icon: Icons.directions_run_outlined,
@@ -3680,6 +3697,7 @@ IconData _typeIcon(String type) => switch (type) {
       'medicine' => Icons.medication_outlined,
       'weight' => Icons.scale_outlined,
       'water' => Icons.water_drop_outlined,
+      'quit_smoking' => Icons.smoke_free_outlined,
       _ => Icons.check_circle_outline,
     };
 
@@ -3689,6 +3707,7 @@ Color _typeColor(String type) => switch (type) {
       'medicine' => Colors.redAccent,
       'weight' => AppTheme.deepBlue,
       'water' => Colors.lightBlue,
+      'quit_smoking' => Colors.teal,
       _ => AppTheme.deepBlue,
     };
 
@@ -3696,6 +3715,7 @@ String _clockTitle(String type) => switch (type) {
       'meal' => '饮食打卡',
       'exercise' => '运动打卡',
       'water' => '饮水打卡',
+      'quit_smoking' => '戒烟提醒',
       _ => '打卡',
     };
 

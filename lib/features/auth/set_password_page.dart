@@ -5,6 +5,7 @@ import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/auth_api.dart';
+import 'widgets/auth_page_shell.dart';
 
 class SetPasswordPage extends StatefulWidget {
   const SetPasswordPage({
@@ -60,76 +61,69 @@ class _SetPasswordPageState extends State<SetPasswordPage> {
   @override
   Widget build(BuildContext context) => PopScope(
         canPop: widget.allowSkip == false,
-        child: Scaffold(
-          backgroundColor: AppTheme.pageBg,
-          appBar: AppBar(
-            automaticallyImplyLeading: widget.allowSkip == false,
-            title: const Text('设置登录密码'),
-          ),
-          body: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        const Text(
-                          '设置密码后，下次可以使用手机号和密码登录。',
-                          style: TextStyle(color: AppTheme.muted),
-                        ),
-                        const SizedBox(height: 20),
-                        TextField(
-                          controller: _passwordController,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            labelText: '密码（8-64 位）',
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _confirmPasswordController,
-                          obscureText: true,
-                          decoration: const InputDecoration(
-                            labelText: '确认密码',
-                          ),
-                        ),
-                        if (_error != null) ...[
-                          const SizedBox(height: 12),
-                          Text(
-                            _error!,
-                            style: TextStyle(color: Colors.red.shade700),
-                          ),
-                        ],
-                        const SizedBox(height: 20),
-                        FilledButton(
-                          onPressed: _saving ? null : _submit,
-                          child: Text(_saving ? '设置中...' : '设置密码并进入'),
-                        ),
-                        if (widget.allowSkip) ...[
-                          const SizedBox(height: 8),
-                          OutlinedButton(
-                            onPressed: _saving
-                                ? null
-                                : () async {
-                                    await UserSession.instance
-                                        .resolvePasswordPrompt();
-                                    if (context.mounted) {
-                                      context.go(widget.returnTo);
-                                    }
-                                  },
-                            child: const Text('暂时不设密码'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+        child: AuthPageShell(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '设置登录密码',
+                style: TextStyle(
+                  color: AppTheme.ink,
+                  fontSize: 32,
+                  height: 1.2,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-            ),
+              const SizedBox(height: 10),
+              const Text(
+                '设置后，下次可以使用手机号和密码登录。',
+                style: TextStyle(color: AppTheme.muted, fontSize: 16),
+              ),
+              const SizedBox(height: 28),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: '密码（8-64 位）',
+                  prefixIcon: Icon(Icons.lock_outline_rounded),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _confirmPasswordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: '确认密码',
+                  prefixIcon: Icon(Icons.lock_outline_rounded),
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _error!,
+                  style: TextStyle(color: Colors.red.shade700),
+                ),
+              ],
+              const SizedBox(height: 22),
+              FilledButton(
+                onPressed: _saving ? null : _submit,
+                child: Text(_saving ? '设置中...' : '设置密码并进入'),
+              ),
+              if (widget.allowSkip) ...[
+                const SizedBox(height: 12),
+                OutlinedButton(
+                  onPressed: _saving
+                      ? null
+                      : () async {
+                          await UserSession.instance.resolvePasswordPrompt();
+                          if (context.mounted) context.go(widget.returnTo);
+                        },
+                  child: const Text('暂时不设密码'),
+                ),
+              ],
+              const SizedBox(height: 20),
+              const SeniorModeEntry(),
+            ],
           ),
         ),
       );

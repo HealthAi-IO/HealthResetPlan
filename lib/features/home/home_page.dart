@@ -233,6 +233,7 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  // ignore: unused_element
   Future<void> _openMealCalendar() async {
     final picked = await showDialog<DateTime>(
       context: context,
@@ -471,20 +472,10 @@ class _HomePageState extends State<HomePage> {
           _WeeklyContentCard(onTap: () => context.push('/content')),
           const SizedBox(height: 14),
 
-          _FoodDiaryPanel(
-            selectedDate: _selectedMealDate,
-            records: _mealRecords,
+          _FoodHomeSummary(
+            records: _todayMealRecords,
             targets: DailyNutritionTargets.fromProfile(profile),
-            onDateChanged: _selectMealDate,
-            onRecord: _openMealInput,
-            onOpenCalendar: _openMealCalendar,
-            onOpenRecord: (record) {
-              final id = record.id;
-              if (id == null) return;
-              context.push('/meals/detail/$id').then((_) {
-                if (mounted) _load(silent: true);
-              });
-            },
+            onOpen: () => context.go('/meals'),
           ),
           const SizedBox(height: 14),
 
@@ -582,10 +573,20 @@ class _HomePageState extends State<HomePage> {
                       color: Colors.orange,
                       onTap: () => context.go('/stats')),
                   _QuickEntry(
+                      icon: Icons.smoke_free_outlined,
+                      label: '戒烟计划',
+                      color: Colors.teal,
+                      onTap: () => context.push('/quit-smoking')),
+                  _QuickEntry(
                       icon: Icons.auto_stories_outlined,
                       label: '健康资讯',
                       color: Colors.cyan.shade700,
                       onTap: () => context.push('/content')),
+                  _QuickEntry(
+                      icon: Icons.smart_toy_outlined,
+                      label: 'AI 健康顾问',
+                      color: AppTheme.aiPurple,
+                      onTap: () => context.push('/chat')),
                 ],
               );
             }),
@@ -2291,6 +2292,68 @@ class _PlanSummaryRow extends StatelessWidget {
   }
 }
 
+class _FoodHomeSummary extends StatelessWidget {
+  const _FoodHomeSummary({
+    required this.records,
+    required this.targets,
+    required this.onOpen,
+  });
+
+  final List<MealRecordData> records;
+  final DailyNutritionTargets targets;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final calories =
+        records.fold<double>(0, (sum, item) => sum + item.totalCalories);
+    final protein = records.fold<double>(0, (sum, item) => sum + item.proteinG);
+    final cost = records.fold<double>(0, (sum, item) => sum + item.cost);
+    return _Panel(
+      title: '今日饮食',
+      action: TextButton.icon(
+        onPressed: onOpen,
+        icon: const Icon(Icons.chevron_right),
+        label: const Text('打开账本'),
+      ),
+      child: Row(children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: AppTheme.primaryBlue.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(Icons.restaurant_menu, color: AppTheme.deepBlue),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${calories.toStringAsFixed(0)} kcal · ${records.length} 餐',
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 4),
+            Text(
+              '蛋白质 ${protein.toStringAsFixed(0)}g${cost > 0 ? ' · 花费 ¥${cost.toStringAsFixed(2)}' : ''}',
+              style: const TextStyle(color: AppTheme.muted),
+            ),
+            if (targets.calories > 0) ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(
+                value: (calories / targets.calories).clamp(0, 1),
+                minHeight: 6,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ],
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+// ignore: unused_element
 class _FoodDiaryPanel extends StatelessWidget {
   const _FoodDiaryPanel({
     required this.selectedDate,

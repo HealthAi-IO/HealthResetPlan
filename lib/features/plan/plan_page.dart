@@ -19,6 +19,7 @@ import '../../core/notification/reminder_consent.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import '../../core/widgets/health_ui.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常或症状加重，请及时就医。';
 
@@ -713,9 +714,10 @@ class _PlanPageState extends State<PlanPage> {
       return const _PlanLoadingView();
     }
 
-    final grouped = _groupPlans();
-    final riskPayload = _riskPlan?.payload;
-    final targetKcal = riskPayload?['targetKcal'] as int? ?? 0;
+    final todayKey = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final grouped = Map<String, List<PlanRecordData>>.fromEntries(
+      _groupPlans().entries.where((entry) => entry.key == todayKey),
+    );
     final bottomPadding = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
     if (appSettingsController.seniorMode) {
@@ -752,64 +754,89 @@ class _PlanPageState extends State<PlanPage> {
       onRefresh: _load,
       child: ListView(
         key: const PageStorageKey('plan-scroll'),
-        padding: EdgeInsets.fromLTRB(20, 20, 20, bottomPadding),
+        padding: EdgeInsets.fromLTRB(20, 4, 20, bottomPadding),
         cacheExtent: 900,
         children: [
-          _PlanHero(
-            profile: _profile,
-            riskPlan: _riskPlan,
-            targetKcal: targetKcal,
-            onGenerate: _generate,
-            onAiGenerate:
-                _aiPlanController.status == AiPlanGenerationStatus.completed
-                    ? _presentAiResult
-                    : _generateWithAi,
-            aiGenerating: _aiPlanController.isGenerating,
-            aiResultReady:
-                _aiPlanController.status == AiPlanGenerationStatus.completed,
-          ),
-          if (_aiRemaining != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text('今日 AI 计划剩余 $_aiRemaining / 3 次',
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
-            ),
-          const SizedBox(height: 16),
-          if (_riskPlan != null) ...[
-            _RiskCard(plan: _riskPlan!),
-            const SizedBox(height: 16),
-          ],
-          _Panel(
-            title: '计划筛选',
-            subtitle: '按类型查看当前 7 天规划',
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _FilterChip(
-                  label: '全部',
-                  selected: _filter == 'all',
-                  onTap: () => _setFilter('all'),
+          HealthPageHeader(
+            title: '健康计划',
+            subtitle: '把下一步行动安排清楚',
+            action: PopupMenuButton<String>(
+              tooltip: '添加计划',
+              icon: const Icon(Icons.add),
+              onSelected: (value) {
+                switch (value) {
+                  case 'ai':
+                    if (_aiPlanController.status ==
+                        AiPlanGenerationStatus.completed) {
+                      _presentAiResult();
+                    } else {
+                      _generateWithAi();
+                    }
+                    break;
+                  case 'local':
+                    _generate();
+                    break;
+                  case 'manual':
+                    _editPlan(date: DateTime.now());
+                    break;
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'ai',
+                  enabled: !_aiPlanController.isGenerating,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, color: AppTheme.aiPurple),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _aiPlanController.isGenerating
+                              ? 'AI 生成中…'
+                              : _aiPlanController.status ==
+                                      AiPlanGenerationStatus.completed
+                                  ? '查看 AI 方案'
+                                  : 'AI 智能生成',
+                        ),
+                      ),
+                      if (_aiRemaining != null &&
+                          !_aiPlanController.isGenerating)
+                        Text('$_aiRemaining 次',
+                            style: const TextStyle(
+                                color: AppTheme.muted, fontSize: 12)),
+                    ],
+                  ),
                 ),
-                _FilterChip(
-                  label: '饮食',
-                  selected: _filter == 'meal',
-                  onTap: () => _setFilter('meal'),
+                const PopupMenuItem(
+                  value: 'local',
+                  child: Row(children: [
+                    Icon(Icons.event_repeat_outlined),
+                    SizedBox(width: 12),
+                    Text('本地生成 7 天计划'),
+                  ]),
                 ),
-                _FilterChip(
-                  label: '运动',
-                  selected: _filter == 'exercise',
-                  onTap: () => _setFilter('exercise'),
-                ),
-                _FilterChip(
-                  label: '测量',
-                  selected: _filter == 'measurement',
-                  onTap: () => _setFilter('measurement'),
+                const PopupMenuItem(
+                  value: 'manual',
+                  child: Row(children: [
+                    Icon(Icons.edit_calendar_outlined),
+                    SizedBox(width: 12),
+                    Text('手动添加今天计划'),
+                  ]),
                 ),
               ],
             ),
           ),
+          const _PlanWeekStrip(),
           const SizedBox(height: 16),
+          _PlanTodaySummary(
+              count: _plans
+                  .where(
+                      (plan) => DateUtils.isSameDay(plan.date, DateTime.now()))
+                  .length),
+          const SizedBox(height: 22),
+          const Text('今天',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
           Column(
             children: [
               if (grouped.isEmpty)
@@ -817,14 +844,12 @@ class _PlanPageState extends State<PlanPage> {
                   children: [
                     const _EmptyState(
                       icon: Icons.event_note_outlined,
-                      text: '暂无本地计划。可以生成 7 天计划，也可以从今天开始手动添加。',
+                      text: '今天还没有安排，可以从一件小事开始。',
                     ),
                     const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: () => _editPlan(date: DateTime.now()),
-                      icon: const Icon(Icons.add),
-                      label: const Text('添加今天的计划项'),
-                    ),
+                    FilledButton(
+                        onPressed: () => _editPlan(date: DateTime.now()),
+                        child: const Text('创建今天的计划')),
                   ],
                 )
               else
@@ -861,6 +886,7 @@ class _PlanPageState extends State<PlanPage> {
     return map;
   }
 
+  // ignore: unused_element
   void _setFilter(String value) {
     if (_filter == value) return;
     setState(() => _filter = value);
@@ -917,6 +943,71 @@ class _PlanPageState extends State<PlanPage> {
     if (confirmed != true) return;
     await _repo.deletePlan(plan.id!);
   }
+}
+
+class _PlanWeekStrip extends StatelessWidget {
+  const _PlanWeekStrip();
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    const labels = ['一', '二', '三', '四', '五', '六', '日'];
+    return Row(
+      children: [
+        for (var index = 0; index < 7; index++)
+          Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: index == now.weekday - 1
+                    ? AppTheme.primaryBlue
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(children: [
+                Text(labels[index],
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: index == now.weekday - 1
+                            ? Colors.white
+                            : AppTheme.muted)),
+                const SizedBox(height: 5),
+                Text('${monday.add(Duration(days: index)).day}',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: index == now.weekday - 1
+                            ? Colors.white
+                            : AppTheme.ink)),
+              ]),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PlanTodaySummary extends StatelessWidget {
+  const _PlanTodaySummary({required this.count});
+  final int count;
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+            color: AppTheme.deepBlue, borderRadius: BorderRadius.circular(8)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(count == 0 ? '今天还没有安排' : '今天有 $count 项安排',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 5),
+          const Text('从最容易完成的一项开始，按自己的节奏进行',
+              style: TextStyle(color: Color(0xFFC7D7E5), fontSize: 13)),
+          const SizedBox(height: 15),
+          Container(height: 2, color: AppTheme.leafGreen),
+        ]),
+      );
 }
 
 class _PlanLoadingView extends StatelessWidget {
@@ -1697,15 +1788,16 @@ class _PlanSkeletonBlock extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _PlanHero extends StatelessWidget {
   const _PlanHero({
     required this.profile,
     required this.riskPlan,
     required this.targetKcal,
     required this.onGenerate,
-    this.onAiGenerate,
-    this.aiGenerating = false,
-    this.aiResultReady = false,
+    required this.onAiGenerate,
+    required this.aiGenerating,
+    required this.aiResultReady,
   });
 
   final UserProfileData? profile;
@@ -1841,7 +1933,7 @@ class _PlanHero extends StatelessWidget {
                               : 'AI 智能生成',
                     ),
                     style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF0277BD),
+                      backgroundColor: AppTheme.primaryBlue,
                     ),
                   ),
                 ],
@@ -1899,6 +1991,7 @@ class _PlanHero extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _RiskCard extends StatelessWidget {
   const _RiskCard({required this.plan});
 
@@ -2034,8 +2127,7 @@ class _DayPlanCard extends StatelessWidget {
         plans.where((item) => _isAiPlanProvider(item.aiProvider)).toList();
     final isAiPlan = aiPlans.isNotEmpty;
     final provider = isAiPlan ? aiPlans.first.aiProvider : 'local';
-    final sourceColor =
-        isAiPlan ? Theme.of(context).colorScheme.primary : AppTheme.cardBorder;
+    final sourceColor = isAiPlan ? AppTheme.aiPurple : AppTheme.cardBorder;
 
     final showMeal = filter == 'all' || filter == 'meal';
     final showExercise = filter == 'all' || filter == 'exercise';
@@ -2122,7 +2214,7 @@ class _PlanSourceBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isAi ? Theme.of(context).colorScheme.primary : AppTheme.muted;
+    final color = isAi ? AppTheme.aiPurple : AppTheme.muted;
     final label = isAi ? 'AI · ${_planProviderLabel(provider)}' : '本地规则';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
@@ -2458,6 +2550,7 @@ bool _isCriticalRiskPlan(PlanRecordData? plan) {
   );
 }
 
+// ignore: unused_element
 class _FilterChip extends StatelessWidget {
   const _FilterChip({
     required this.label,
@@ -2513,6 +2606,7 @@ class _InfoPill extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _Panel extends StatelessWidget {
   const _Panel({
     required this.title,
@@ -2591,13 +2685,12 @@ class _AiDisclaimerCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF0277BD).withValues(alpha: 0.06),
+        color: AppTheme.primaryBlue.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(10),
-        border:
-            Border.all(color: const Color(0xFF0277BD).withValues(alpha: 0.18)),
+        border: Border.all(color: AppTheme.primaryBlue.withValues(alpha: 0.18)),
       ),
       child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(Icons.info_outline, size: 14, color: Color(0xFF0277BD)),
+        Icon(Icons.info_outline, size: 14, color: AppTheme.primaryBlue),
         SizedBox(width: 6),
         Expanded(
           child: Text(
@@ -2661,7 +2754,7 @@ class _AiDayCardState extends State<_AiDayCard> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFF0277BD),
+                color: AppTheme.primaryBlue,
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(weekDay,
@@ -2674,7 +2767,7 @@ class _AiDayCardState extends State<_AiDayCard> {
           const SizedBox(height: 10),
           if (diet.isNotEmpty) ...[
             const _SectionRow(
-                Icons.restaurant_outlined, '饮食', Color(0xFF0277BD)),
+                Icons.restaurant_outlined, '饮食', AppTheme.primaryBlue),
             const SizedBox(height: 6),
             for (final label in ['早餐', '午餐', '晚餐', '加餐'])
               if (diet[_dietKey(label)] != null)

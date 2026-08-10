@@ -76,6 +76,59 @@ class ContentDetail {
       .toList();
 }
 
+class ContentInteraction {
+  const ContentInteraction({
+    required this.likeCount,
+    required this.dislikeCount,
+    required this.userReaction,
+    required this.comments,
+  });
+
+  factory ContentInteraction.fromJson(Map<String, dynamic> json) {
+    return ContentInteraction(
+      likeCount: _int(json['likeCount']),
+      dislikeCount: _int(json['dislikeCount']),
+      userReaction: '${json['userReaction'] ?? ''}',
+      comments: (json['comments'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) =>
+              ContentComment.fromJson(Map<String, dynamic>.from(item)))
+          .toList(),
+    );
+  }
+
+  final int likeCount;
+  final int dislikeCount;
+  final String userReaction;
+  final List<ContentComment> comments;
+}
+
+class ContentComment {
+  const ContentComment({
+    required this.id,
+    required this.authorName,
+    required this.content,
+    required this.createdAt,
+    required this.isMine,
+  });
+
+  factory ContentComment.fromJson(Map<String, dynamic> json) {
+    return ContentComment(
+      id: _int(json['id']),
+      authorName: '${json['authorName'] ?? '健康用户'}',
+      content: '${json['content'] ?? ''}',
+      createdAt: _date(json['createdAt']),
+      isMine: json['isMine'] == true || json['isMine'] == 1,
+    );
+  }
+
+  final int id;
+  final String authorName;
+  final String content;
+  final DateTime? createdAt;
+  final bool isMine;
+}
+
 class SiteMessage {
   const SiteMessage({
     required this.id,

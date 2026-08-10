@@ -12,9 +12,14 @@ const _privacyPolicyVersion = '2026-07-17';
 const _privacyConsentKey = 'privacy_policy_version';
 
 class PrivacyConsentGate extends StatefulWidget {
-  const PrivacyConsentGate({super.key, required this.child});
+  const PrivacyConsentGate({
+    super.key,
+    required this.child,
+    this.loading,
+  });
 
   final Widget child;
+  final Widget? loading;
 
   @override
   State<PrivacyConsentGate> createState() => _PrivacyConsentGateState();
@@ -48,9 +53,16 @@ class _PrivacyConsentGateState extends State<PrivacyConsentGate> {
   Widget build(BuildContext context) {
     if (_accepted == true) return widget.child;
     if (_accepted == null) {
-      return const MaterialApp(
-          title: '健康重启计划',
-          home: Scaffold(body: Center(child: CircularProgressIndicator())));
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: '健康重启计划',
+        theme: AppTheme.light,
+        home: Scaffold(
+          backgroundColor: AppTheme.pageBg,
+          body: widget.loading ??
+              const Center(child: CircularProgressIndicator()),
+        ),
+      );
     }
     return MaterialApp(
       debugShowCheckedModeBanner: false,

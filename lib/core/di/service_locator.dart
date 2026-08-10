@@ -13,6 +13,7 @@ import '../auth/user_session.dart';
 import '../content/site_message_service.dart';
 import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
+import '../../features/quit_smoking/quit_smoking_repository.dart';
 import '../data/online_data_service.dart';
 import '../membership/membership_service.dart';
 import '../network/ai_api.dart';
@@ -53,6 +54,9 @@ Future<void> setupServiceLocator() async {
   await appDatabase.switchSpace(startupSpace);
   await healthRepository.initialize();
   sl.registerSingleton<HealthRepository>(healthRepository);
+  sl.registerSingleton<QuitSmokingRepository>(
+    QuitSmokingRepository(database: appDatabase),
+  );
 
   // 仓库类 - 仅持有数据库引用，构造瞬时
   sl.registerSingleton<ChatRepository>(ChatRepository(database: appDatabase));

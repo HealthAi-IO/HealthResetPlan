@@ -39,8 +39,12 @@ class _MealRecordPageState extends State<MealRecordPage> {
   final _api = sl<AiApi>();
   final _picker = ImagePicker();
   final _nameCtrl = TextEditingController();
+  final _costCtrl = TextEditingController();
+  final _merchantCtrl = TextEditingController();
+  final _noteCtrl = TextEditingController();
 
   late String _mealType;
+  late DateTime _eatenAt;
   XFile? _image;
   bool _loading = false;
   List<MealFoodItem> _foods = const [];
@@ -53,12 +57,24 @@ class _MealRecordPageState extends State<MealRecordPage> {
   double _glycemicLoad = 0;
   String _provider = '';
   String? _error;
+  double _portion = 1;
+  String _diningType = 'home';
 
   @override
   void initState() {
     super.initState();
     final record = widget.record;
     _mealType = record?.mealType ?? widget.mealType;
+    final now = DateTime.now();
+    final selectedDate = widget.eatenDate ?? now;
+    _eatenAt = record?.eatenTime ??
+        DateTime(
+          selectedDate.year,
+          selectedDate.month,
+          selectedDate.day,
+          now.hour,
+          now.minute,
+        );
     if (record != null) {
       _nameCtrl.text = record.name;
       _foods = record.foods;
@@ -69,12 +85,20 @@ class _MealRecordPageState extends State<MealRecordPage> {
       _fatG = record.fatG;
       _healthScore = record.healthScore;
       _glycemicLoad = record.glycemicLoad;
+      _portion = record.portion;
+      _diningType = record.diningType;
+      _costCtrl.text = record.cost > 0 ? record.cost.toStringAsFixed(2) : '';
+      _merchantCtrl.text = record.merchant;
+      _noteCtrl.text = record.note;
     }
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _costCtrl.dispose();
+    _merchantCtrl.dispose();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -341,10 +365,50 @@ class _MealRecordPageState extends State<MealRecordPage> {
     });
   }
 
+  void _setPortion(double value) {
+    if (value == _portion || _portion <= 0) return;
+    final factor = value / _portion;
+    setState(() {
+      _portion = value;
+      _totalCalories *= factor;
+      _proteinG *= factor;
+      _carbsG *= factor;
+      _fatG *= factor;
+      _glycemicLoad *= factor;
+      _foods = _foods
+          .map((item) => MealFoodItem(
+                name: item.name,
+                weightG: item.weightG * factor,
+                calories: item.calories * factor,
+              ))
+          .toList();
+      _nutrition = {
+        for (final entry in _nutrition.entries)
+          entry.key:
+              entry.value is num ? (entry.value as num) * factor : entry.value,
+      };
+    });
+  }
+
+  Future<void> _pickMealTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_eatenAt),
+    );
+    if (picked == null) return;
+    setState(() {
+      _eatenAt = DateTime(
+        _eatenAt.year,
+        _eatenAt.month,
+        _eatenAt.day,
+        picked.hour,
+        picked.minute,
+      );
+    });
+  }
+
   Future<void> _save() async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final baseDate =
-        widget.record?.eatenTime ?? widget.eatenDate ?? DateTime.now();
     final clientId = widget.record?.clientId ?? HealthRepository.newClientId();
     final imagePath = _image == null
         ? widget.record?.imagePath ?? ''
@@ -354,7 +418,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
       clientId: clientId,
       name: _nameCtrl.text.trim().isEmpty ? '未命名餐单' : _nameCtrl.text.trim(),
       mealType: _mealType,
-      eatenAt: baseDate.millisecondsSinceEpoch,
+      eatenAt: _eatenAt.millisecondsSinceEpoch,
       imagePath: imagePath,
       totalCalories: _totalCalories,
       proteinG: _proteinG,
@@ -366,6 +430,11 @@ class _MealRecordPageState extends State<MealRecordPage> {
       nutrition: _nutrition,
       createdAt: widget.record?.createdAt ?? now,
       updatedAt: now,
+      portion: _portion,
+      cost: double.tryParse(_costCtrl.text) ?? 0,
+      diningType: _diningType,
+      merchant: _merchantCtrl.text.trim(),
+      note: _noteCtrl.text.trim(),
     );
     await _repo.saveMealRecord(record);
     if (!mounted) return;
@@ -411,6 +480,18 @@ class _MealRecordPageState extends State<MealRecordPage> {
             foods: _foods,
             onEdit: _editFood,
             onAdd: _addFood,
+          ),
+          const SizedBox(height: 14),
+          _MealMetaCard(
+            portion: _portion,
+            onPortionChanged: _setPortion,
+            eatenAt: _eatenAt,
+            onTimeTap: _pickMealTime,
+            diningType: _diningType,
+            onDiningTypeChanged: (value) => setState(() => _diningType = value),
+            costCtrl: _costCtrl,
+            merchantCtrl: _merchantCtrl,
+            noteCtrl: _noteCtrl,
           ),
           if (_provider.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -619,14 +700,23 @@ class _MealSummaryCard extends StatelessWidget {
           decoration: const InputDecoration(labelText: '餐单名称'),
         ),
         const SizedBox(height: 12),
-        SegmentedButton<String>(
-          segments: const [
-            ButtonSegment(value: 'breakfast', label: Text('早餐')),
-            ButtonSegment(value: 'lunch', label: Text('午餐')),
-            ButtonSegment(value: 'dinner', label: Text('晚餐')),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final item in const [
+              ('breakfast', '早餐'),
+              ('lunch', '午餐'),
+              ('dinner', '晚餐'),
+              ('snack', '加餐'),
+              ('late_night', '夜宵'),
+            ])
+              ChoiceChip(
+                label: Text(item.$2),
+                selected: mealType == item.$1,
+                onSelected: (_) => onMealTypeChanged(item.$1),
+              ),
           ],
-          selected: {mealType},
-          onSelectionChanged: (values) => onMealTypeChanged(values.first),
         ),
         const SizedBox(height: 18),
         Row(children: [
@@ -664,6 +754,118 @@ class _MealSummaryCard extends StatelessWidget {
           color: Colors.green,
           minHeight: 7,
           borderRadius: BorderRadius.circular(99),
+        ),
+      ]),
+    );
+  }
+}
+
+class _MealMetaCard extends StatelessWidget {
+  const _MealMetaCard({
+    required this.portion,
+    required this.onPortionChanged,
+    required this.eatenAt,
+    required this.onTimeTap,
+    required this.diningType,
+    required this.onDiningTypeChanged,
+    required this.costCtrl,
+    required this.merchantCtrl,
+    required this.noteCtrl,
+  });
+
+  final double portion;
+  final ValueChanged<double> onPortionChanged;
+  final DateTime eatenAt;
+  final VoidCallback onTimeTap;
+  final String diningType;
+  final ValueChanged<String> onDiningTypeChanged;
+  final TextEditingController costCtrl;
+  final TextEditingController merchantCtrl;
+  final TextEditingController noteCtrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return _MealCard(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('这一餐',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+        const SizedBox(height: 12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.schedule_outlined),
+          title: const Text('用餐时间'),
+          trailing: TextButton(
+            onPressed: onTimeTap,
+            child: Text(
+              '${eatenAt.hour.toString().padLeft(2, '0')}:${eatenAt.minute.toString().padLeft(2, '0')}',
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Text('吃了多少？', style: TextStyle(color: AppTheme.muted)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final item in const [
+              (0.25, '1/4 份'),
+              (0.5, '1/2 份'),
+              (0.75, '3/4 份'),
+              (1.0, '全部'),
+            ])
+              ChoiceChip(
+                label: Text(item.$2),
+                selected: portion == item.$1,
+                onSelected: (_) => onPortionChanged(item.$1),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        const Text('就餐方式', style: TextStyle(color: AppTheme.muted)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final item in const [
+              ('home', '自制'),
+              ('takeout', '外卖'),
+              ('restaurant', '堂食'),
+              ('snack', '零食'),
+              ('other', '其他'),
+            ])
+              ChoiceChip(
+                label: Text(item.$2),
+                selected: diningType == item.$1,
+                onSelected: (_) => onDiningTypeChanged(item.$1),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: costCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: '本餐花费（元，选填）',
+            prefixIcon: Icon(Icons.payments_outlined),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: merchantCtrl,
+          decoration: const InputDecoration(
+            labelText: '商家或地点（选填）',
+            prefixIcon: Icon(Icons.location_on_outlined),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: noteCtrl,
+          maxLines: 2,
+          decoration: const InputDecoration(
+            labelText: '备注（选填）',
+            prefixIcon: Icon(Icons.notes_outlined),
+          ),
         ),
       ]),
     );

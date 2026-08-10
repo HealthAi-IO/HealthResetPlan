@@ -384,6 +384,24 @@ class HealthRepository extends ChangeNotifier {
     return rows.map(MealRecordData.fromRow).toList();
   }
 
+  Future<List<MealRecordData>> loadMealsBetween(
+    DateTime start,
+    DateTime end,
+  ) async {
+    final db = await database.open();
+    final rows = await db.query(
+      'meal_record',
+      where: 'user_id = ? AND eaten_at >= ? AND eaten_at < ?',
+      whereArgs: [
+        kLocalUserId,
+        start.millisecondsSinceEpoch,
+        end.millisecondsSinceEpoch,
+      ],
+      orderBy: 'eaten_at DESC, id DESC',
+    );
+    return rows.map(MealRecordData.fromRow).toList();
+  }
+
   Future<MealRecordData?> loadMealRecord(int id) async {
     final db = await database.open();
     final rows = await db.query(
@@ -423,6 +441,192 @@ class HealthRepository extends ChangeNotifier {
     }
     notifyListeners();
     return id;
+  }
+
+  Future<void> deleteMealRecord(MealRecordData meal) async {
+    if (meal.id == null) return;
+    final db = await database.open();
+    await db.transaction((txn) async {
+      await txn.delete(
+        'meal_record',
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [meal.id, kLocalUserId],
+      );
+      await txn.delete(
+        'clock_record',
+        where: 'user_id = ? AND type = ? AND clock_at = ?',
+        whereArgs: [kLocalUserId, 'meal', meal.eatenAt],
+      );
+    });
+    notifyListeners();
+  }
+
+  Future<List<MealRecipeData>> loadMealRecipes() async {
+    final db = await database.open();
+    final rows = await db.query(
+      'meal_recipe',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+      orderBy: 'is_favorite DESC, updated_at DESC',
+    );
+    return rows.map(MealRecipeData.fromRow).toList();
+  }
+
+  Future<int> saveMealRecipe(MealRecipeData recipe) async {
+    final db = await database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final next = recipe.copyWith(updatedAt: now);
+    if (next.id == null) {
+      final id = await db.insert('meal_recipe', next.toRow());
+      notifyListeners();
+      return id;
+    }
+    await db.update(
+      'meal_recipe',
+      next.toRow()..remove('id'),
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [next.id, kLocalUserId],
+    );
+    notifyListeners();
+    return next.id!;
+  }
+
+  Future<void> deleteMealRecipe(int id) async {
+    final db = await database.open();
+    await db.delete(
+      'meal_recipe',
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+    );
+    notifyListeners();
+  }
+
+  Future<void> ensureStarterMealRecipes() async {
+    final db = await database.open();
+    if (await db.count(
+          'meal_recipe',
+          where: 'user_id = ?',
+          whereArgs: [kLocalUserId],
+        ) >
+        0) {
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final recipes = <MealRecipeData>[
+      MealRecipeData(
+        clientId: 'starter-tomato-egg',
+        name: '番茄鸡蛋杂粮饭',
+        category: '主食',
+        durationMinutes: 25,
+        difficulty: '简单',
+        ingredients: const ['番茄 1 个', '鸡蛋 2 个', '杂粮饭 1 碗', '青菜 100 克'],
+        steps: const ['番茄切块，鸡蛋打散。', '少油炒鸡蛋后盛出。', '炒软番茄，放回鸡蛋，搭配杂粮饭和青菜。'],
+        calories: 520,
+        proteinG: 24,
+        carbsG: 68,
+        fatG: 16,
+        isFavorite: false,
+        isCustom: false,
+        createdAt: now,
+        updatedAt: now,
+      ),
+      MealRecipeData(
+        clientId: 'starter-steamed-fish',
+        name: '清蒸鱼配时蔬',
+        category: '水产',
+        durationMinutes: 30,
+        difficulty: '简单',
+        ingredients: const ['鱼柳 180 克', '西兰花 150 克', '姜丝适量', '生抽少量'],
+        steps: const ['鱼柳铺姜丝，蒸至熟透。', '西兰花焯熟。', '用少量生抽调味后装盘。'],
+        calories: 360,
+        proteinG: 42,
+        carbsG: 18,
+        fatG: 12,
+        isFavorite: false,
+        isCustom: false,
+        createdAt: now,
+        updatedAt: now,
+      ),
+      MealRecipeData(
+        clientId: 'starter-oat-breakfast',
+        name: '牛奶燕麦鸡蛋早餐',
+        category: '早餐',
+        durationMinutes: 12,
+        difficulty: '容易',
+        ingredients: const ['燕麦 40 克', '牛奶 250 毫升', '鸡蛋 1 个', '蓝莓 50 克'],
+        steps: const ['燕麦加入牛奶煮至浓稠。', '鸡蛋煮熟。', '燕麦碗加入蓝莓后一起食用。'],
+        calories: 410,
+        proteinG: 21,
+        carbsG: 52,
+        fatG: 13,
+        isFavorite: false,
+        isCustom: false,
+        createdAt: now,
+        updatedAt: now,
+      ),
+      MealRecipeData(
+        clientId: 'starter-tofu-soup',
+        name: '菌菇豆腐汤',
+        category: '汤粥',
+        durationMinutes: 20,
+        difficulty: '容易',
+        ingredients: const ['嫩豆腐 200 克', '菌菇 150 克', '青菜 100 克', '盐少量'],
+        steps: const ['菌菇洗净后煮开。', '加入豆腐小火煮 8 分钟。', '放入青菜和少量盐即可。'],
+        calories: 260,
+        proteinG: 20,
+        carbsG: 20,
+        fatG: 11,
+        isFavorite: false,
+        isCustom: false,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    ];
+    await db.transaction((txn) async {
+      for (final recipe in recipes) {
+        await txn.insert('meal_recipe', recipe.toRow());
+      }
+    });
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>> loadMealSettings() async {
+    final db = await database.open();
+    final rows = await db.query(
+      'meal_settings',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return const {};
+    return decodeJson(rows.first['payload_json'] as String? ?? '{}');
+  }
+
+  Future<void> saveMealSettings(Map<String, dynamic> settings) async {
+    final db = await database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final rows = await db.query(
+      'meal_settings',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+      limit: 1,
+    );
+    final values = <String, Object?>{
+      'user_id': kLocalUserId,
+      'payload_json': jsonEncode(settings),
+      'updated_at': now,
+    };
+    if (rows.isEmpty) {
+      await db.insert('meal_settings', values);
+    } else {
+      await db.update(
+        'meal_settings',
+        values,
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+    }
+    notifyListeners();
   }
 
   // 提取风险评估逻辑，供 generateWeeklyPlan 和 recalculateRisk 共用
@@ -1792,8 +1996,12 @@ class HealthRepository extends ChangeNotifier {
       'user_profile',
       'health_report',
       'meal_record',
+      'meal_recipe',
+      'meal_settings',
       'ai_message',
       'ai_session',
+      'quit_smoking_profile',
+      'smoking_event',
       'sync_queue',
     ]) {
       await db.delete(table);
@@ -1907,6 +2115,23 @@ class HealthRepository extends ChangeNotifier {
       where: 'user_id = ?',
       whereArgs: [kLocalUserId],
     );
+    final quitProfileRows = await db.query('quit_smoking_profile');
+    final smokingEventRows = await db.query('smoking_event');
+    final mealRows = await db.query(
+      'meal_record',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
+    final mealRecipeRows = await db.query(
+      'meal_recipe',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
+    final mealSettingsRows = await db.query(
+      'meal_settings',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
     return {
       'version': '1.0',
       'exportedAt': DateTime.now().toIso8601String(),
@@ -1915,6 +2140,11 @@ class HealthRepository extends ChangeNotifier {
         'indicators': indicatorRows,
         'reminders': reminderRows,
         'clockRecords': clockRows,
+        'quitSmokingProfile': quitProfileRows,
+        'smokingEvents': smokingEventRows,
+        'mealRecords': mealRows,
+        'mealRecipes': mealRecipeRows,
+        'mealSettings': mealSettingsRows,
       },
     };
   }
@@ -2009,6 +2239,23 @@ class HealthRepository extends ChangeNotifier {
         where: 'user_id = ?',
         whereArgs: [kLocalUserId],
       );
+      await txn.delete('quit_smoking_profile');
+      await txn.delete('smoking_event');
+      await txn.delete(
+        'meal_record',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+      await txn.delete(
+        'meal_recipe',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
+      await txn.delete(
+        'meal_settings',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+      );
 
       // 导入指标
       final indicators = exportData['indicators'] as List?;
@@ -2041,6 +2288,35 @@ class HealthRepository extends ChangeNotifier {
           map['user_id'] = kLocalUserId;
           map.remove('id');
           await txn.insert('clock_record', map);
+        }
+      }
+
+      final quitProfiles = exportData['quitSmokingProfile'] as List?;
+      if (quitProfiles != null && quitProfiles.isNotEmpty) {
+        final map = Map<String, Object?>.from(quitProfiles.first as Map)
+          ..remove('id');
+        await txn.insert('quit_smoking_profile', map);
+      }
+      final smokingEvents = exportData['smokingEvents'] as List?;
+      if (smokingEvents != null) {
+        for (final row in smokingEvents) {
+          final map = Map<String, Object?>.from(row as Map)..remove('id');
+          await txn.insert('smoking_event', map);
+        }
+      }
+
+      for (final entry in [
+        ('mealRecords', 'meal_record'),
+        ('mealRecipes', 'meal_recipe'),
+        ('mealSettings', 'meal_settings'),
+      ]) {
+        final rows = exportData[entry.$1] as List?;
+        if (rows == null) continue;
+        for (final row in rows) {
+          final map = Map<String, Object?>.from(row as Map)
+            ..['user_id'] = kLocalUserId
+            ..remove('id');
+          await txn.insert(entry.$2, map);
         }
       }
 
