@@ -37,8 +37,8 @@ class MacroRing extends StatelessWidget {
         Column(mainAxisSize: MainAxisSize.min, children: [
           Text(calories < 0 ? '--' : calories.round().toString(),
               style:
-                  const TextStyle(fontSize: 24, fontWeight: FontWeight.w900)),
-          const Text('kcal', style: TextStyle(color: AppTheme.muted)),
+                  const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+           Text('kcal', style: TextStyle(color: AppTheme.muted)),
         ]),
       ]),
     );

@@ -87,7 +87,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
+                     Text(
                       '生效日期：2026 年 7 月 17 日',
                       style: TextStyle(color: AppTheme.muted),
                     ),
@@ -98,7 +98,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                         paragraphs: section.$2,
                       ),
                     const Divider(height: 40),
-                    const Text(
+                     Text(
                       '北京微零记科技有限公司\n'
                       '联系邮箱：87103978@qq.com\n'
                       '联系电话：13436574850',

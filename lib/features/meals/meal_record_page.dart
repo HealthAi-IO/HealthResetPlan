@@ -297,6 +297,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
         ],
       ),
     );
+    await Future<void>.delayed(kThemeAnimationDuration);
     nameCtrl.dispose();
     weightCtrl.dispose();
     caloriesCtrl.dispose();
@@ -352,6 +353,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
         ],
       ),
     );
+    await Future<void>.delayed(kThemeAnimationDuration);
     nameCtrl.dispose();
     weightCtrl.dispose();
     caloriesCtrl.dispose();
@@ -496,7 +498,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
           if (_provider.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text('识别服务：$_provider',
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                style:  TextStyle(color: AppTheme.muted, fontSize: 12)),
           ],
         ],
       ),
@@ -599,12 +601,12 @@ class _UploadMealCard extends StatelessWidget {
     return _MealCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('拍照识别食物热量',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-        const Text('上传餐食照片后，AI 会拆分食材、估算重量、热量和营养素。',
+         Text('上传餐食照片后，AI 会拆分食材、估算重量、热量和营养素。',
             style: TextStyle(color: AppTheme.muted, height: 1.4)),
         const SizedBox(height: 6),
-        const Text(
+         Text(
           '图片需小于 10MB，建议光线充足、食物完整入镜；系统会自动压缩后上传。',
           style: TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4),
         ),
@@ -635,7 +637,7 @@ class _UploadMealCard extends StatelessWidget {
                     return Container(
                       height: 150,
                       alignment: Alignment.center,
-                      color: AppTheme.pageBg,
+                      color: Theme.of(context).scaffoldBackgroundColor,
                       child: const CircularProgressIndicator(),
                     );
                   }
@@ -653,7 +655,7 @@ class _UploadMealCard extends StatelessWidget {
           Text(imageName!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+              style:  TextStyle(color: AppTheme.muted, fontSize: 12)),
         ],
         if (loading) ...[
           const SizedBox(height: 14),
@@ -746,7 +748,7 @@ class _MealSummaryCard extends StatelessWidget {
               child:
                   Text('健康评分', style: TextStyle(fontWeight: FontWeight.w800))),
           Text('${healthScore.toStringAsFixed(1)} / 10',
-              style: const TextStyle(fontWeight: FontWeight.w900)),
+              style: const TextStyle(fontWeight: FontWeight.w700)),
         ]),
         const SizedBox(height: 8),
         LinearProgressIndicator(
@@ -788,7 +790,7 @@ class _MealMetaCard extends StatelessWidget {
     return _MealCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('这一餐',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 12),
         ListTile(
           contentPadding: EdgeInsets.zero,
@@ -802,7 +804,7 @@ class _MealMetaCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        const Text('吃了多少？', style: TextStyle(color: AppTheme.muted)),
+         Text('吃了多少？', style: TextStyle(color: AppTheme.muted)),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -821,7 +823,7 @@ class _MealMetaCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        const Text('就餐方式', style: TextStyle(color: AppTheme.muted)),
+         Text('就餐方式', style: TextStyle(color: AppTheme.muted)),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -890,7 +892,7 @@ class _FoodListCard extends StatelessWidget {
         Row(children: [
           const Expanded(
               child: Text('成分',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700))),
           if (onAdd != null)
             TextButton.icon(
               onPressed: onAdd,
@@ -898,7 +900,7 @@ class _FoodListCard extends StatelessWidget {
               label: const Text('添加'),
             )
           else if (onEdit != null)
-            const Text('点击条目编辑',
+             Text('点击条目编辑',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
         ]),
         const SizedBox(height: 10),
@@ -907,10 +909,10 @@ class _FoodListCard extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppTheme.pageBg,
+              color: Theme.of(context).scaffoldBackgroundColor,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Text(
+            child:  Text(
               '还没有识别到食材。请重新拍照/选择图片，或手动添加食材。',
               style: TextStyle(color: AppTheme.muted, height: 1.4),
             ),
@@ -922,14 +924,14 @@ class _FoodListCard extends StatelessWidget {
               onTap: onEdit == null ? null : () => onEdit!(i),
               leading: CircleAvatar(
                 backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.10),
-                child: const Icon(Icons.restaurant_outlined,
+                child:  Icon(Icons.restaurant_outlined,
                     color: AppTheme.deepBlue, size: 18),
               ),
               title: Text(foods[i].name,
                   style: const TextStyle(fontWeight: FontWeight.w800)),
               subtitle: Text('${foods[i].weightG.toStringAsFixed(0)} 克'),
               trailing: Text('${foods[i].calories.toStringAsFixed(0)} kcal',
-                  style: const TextStyle(fontWeight: FontWeight.w900)),
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
             ),
       ]),
     );
@@ -978,10 +980,10 @@ class _GlycemicLoadCard extends StatelessWidget {
         Row(children: [
           const Expanded(
               child: Text('血糖负荷',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900))),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700))),
           Text(value.toStringAsFixed(1),
               style:
-                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
         ]),
         const SizedBox(height: 26),
         LayoutBuilder(builder: (_, c) {
@@ -1005,7 +1007,7 @@ class _GlycemicLoadCard extends StatelessWidget {
           ]);
         }),
         const SizedBox(height: 12),
-        const Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+         Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
           Text('≤10\n低',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppTheme.muted)),
@@ -1039,7 +1041,7 @@ class _NutritionRings extends StatelessWidget {
     return _MealCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('营养成分',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 14),
         Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
           _SmallNutrientRing(
@@ -1111,7 +1113,7 @@ class _SmallNutrientRing extends StatelessWidget {
           ),
           Column(mainAxisSize: MainAxisSize.min, children: [
             Text('${grams.toStringAsFixed(1)}克',
-                style: const TextStyle(fontWeight: FontWeight.w900)),
+                style: const TextStyle(fontWeight: FontWeight.w700)),
             Text('${(value * 100).toStringAsFixed(1)}%',
                 style: const TextStyle(fontSize: 12)),
           ]),
@@ -1145,7 +1147,7 @@ class _MacroPill extends StatelessWidget {
             child: Text(label,
                 style: const TextStyle(fontWeight: FontWeight.w800))),
         Text('${value.toStringAsFixed(1)}克',
-            style: const TextStyle(fontWeight: FontWeight.w900)),
+            style: const TextStyle(fontWeight: FontWeight.w700)),
       ]),
     );
   }
@@ -1179,9 +1181,11 @@ class _MealCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
       child: child,
     );

@@ -425,6 +425,59 @@ class HealthReportRecord {
   }
 }
 
+class WeeklyHealthReportData {
+  const WeeklyHealthReportData({
+    this.id,
+    this.userId = kLocalUserId,
+    required this.clientId,
+    required this.startAt,
+    required this.endAt,
+    required this.structured,
+    required this.provider,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final int? id;
+  final String userId;
+  final String clientId;
+  final int startAt;
+  final int endAt;
+  final Map<String, dynamic> structured;
+  final String provider;
+  final int createdAt;
+  final int updatedAt;
+
+  DateTime get startDate => DateTime.fromMillisecondsSinceEpoch(startAt);
+  DateTime get endDate => DateTime.fromMillisecondsSinceEpoch(endAt);
+
+  factory WeeklyHealthReportData.fromRow(Map<String, Object?> row) {
+    return WeeklyHealthReportData(
+      id: _asInt(row['id']),
+      userId: row['user_id'] as String? ?? kLocalUserId,
+      clientId: row['client_id'] as String? ?? '',
+      startAt: _asInt(row['start_at']) ?? 0,
+      endAt: _asInt(row['end_at']) ?? 0,
+      structured: decodeJson(row['structured_json'] as String? ?? '{}'),
+      provider: row['provider'] as String? ?? '',
+      createdAt: _asInt(row['created_at']) ?? 0,
+      updatedAt: _asInt(row['updated_at']) ?? 0,
+    );
+  }
+
+  Map<String, Object?> toRow() => {
+        if (id != null) 'id': id,
+        'user_id': userId,
+        'client_id': clientId,
+        'start_at': startAt,
+        'end_at': endAt,
+        'structured_json': jsonEncode(structured),
+        'provider': provider,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      };
+}
+
 class MealFoodItem {
   const MealFoodItem({
     required this.name,
@@ -836,7 +889,7 @@ class PlanRecordData {
 
   String get label {
     return switch (type) {
-      'meal' => '饮食计划',
+      'meal' => '定制菜单',
       'exercise' => '运动计划',
       'medicine' => '用药提醒',
       _ => '健康计划',

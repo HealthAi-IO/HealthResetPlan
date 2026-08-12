@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
@@ -67,6 +66,7 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    final colors = Theme.of(context).colorScheme;
     final first = DateTime(_month.year, _month.month, 1);
     final leading = first.weekday % 7;
     final days = DateUtils.getDaysInMonth(_month.year, _month.month);
@@ -77,7 +77,7 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
         Row(children: [
           const Expanded(
             child: Text('数据日历',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
           ),
           IconButton(
             tooltip: '上个月',
@@ -106,11 +106,11 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
         ),
         const SizedBox(height: 14),
         Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppTheme.cardBorder),
+            color: colors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: colors.outlineVariant),
           ),
           child: Column(children: [
             Row(
@@ -121,7 +121,7 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
                       padding: EdgeInsets.symmetric(vertical: 8),
                       child: Text(label,
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: AppTheme.muted)),
+                          style: TextStyle(color: colors.onSurfaceVariant)),
                     ),
                   ),
               ],
@@ -141,38 +141,51 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
                 final day =
                     DateTime(_month.year, _month.month, index - leading + 1);
                 final selected = DateUtils.isSameDay(day, _selectedDate);
+                final isToday = DateUtils.isSameDay(day, DateTime.now());
                 final value = _valueForDay(day);
                 return InkWell(
                   onTap: () => setState(() => _selectedDate = day),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(16),
                   child: Container(
                     padding: const EdgeInsets.all(5),
                     decoration: BoxDecoration(
                       color: selected
-                          ? AppTheme.primaryBlue.withValues(alpha: 0.15)
+                          ? colors.primary
                           : value.isEmpty
-                              ? AppTheme.pageBg
-                              : AppTheme.primaryBlue.withValues(alpha: 0.07),
-                      borderRadius: BorderRadius.circular(8),
+                              ? Colors.transparent
+                              : colors.primaryContainer.withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: selected
-                            ? AppTheme.primaryBlue
-                            : Colors.transparent,
+                            ? colors.primary
+                            : isToday
+                                ? colors.primary
+                                : Colors.transparent,
                       ),
                     ),
                     child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text('${day.day}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w800)),
+                          Text(
+                            '${day.day}',
+                            style: TextStyle(
+                              color: selected
+                                  ? colors.onPrimary
+                                  : value.isEmpty
+                                      ? colors.onSurface
+                                      : colors.onPrimaryContainer,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
                           if (value.isNotEmpty) ...[
                             const SizedBox(height: 3),
                             Container(
                               width: 5,
                               height: 5,
-                              decoration: const BoxDecoration(
-                                color: AppTheme.primaryBlue,
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? colors.onPrimary
+                                    : colors.primary,
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -263,19 +276,26 @@ class _DayDetails extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.cardBorder),
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(DateFormat('M月d日', 'zh_CN').format(date),
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
         if (items.isEmpty)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(vertical: 18),
             child: Center(
-              child: Text('当天暂无记录', style: TextStyle(color: AppTheme.muted)),
+              child: Text(
+                '当天暂无记录',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
           )
         else

@@ -12,6 +12,8 @@ class TelemetryObserver extends NavigatorObserver {
       '/chat' => 'ai_chat',
       '/plan' => 'plan_view',
       '/self-check' => 'image_analysis_view',
+      '/report' => 'report_recognition_view',
+      '/messages' => 'message_center_view',
       '/clock' => 'clock_view',
       '/indicators' || '/indicators/input' => 'indicator_view',
       _ => '',

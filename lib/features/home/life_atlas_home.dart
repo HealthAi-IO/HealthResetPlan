@@ -49,12 +49,12 @@ class LifeAtlasHome extends StatelessWidget {
                     Text('$greeting，${name.isEmpty ? '朋友' : name}',
                         style: Theme.of(context).textTheme.headlineLarge),
                     const SizedBox(height: 5),
-                    const Text('今天从一件对身体有益的小事开始',
+                    Text('今天从一件对身体有益的小事开始',
                         style: TextStyle(color: AppTheme.muted, fontSize: 14)),
                   ],
                 ),
               ),
-              const Icon(Icons.more_horiz, color: AppTheme.muted),
+              Icon(Icons.more_horiz, color: AppTheme.muted),
             ],
           ),
           const SizedBox(height: 24),
@@ -71,7 +71,7 @@ class LifeAtlasHome extends StatelessWidget {
                     color: AppTheme.primaryBlue.withValues(alpha: .12),
                     borderRadius: BorderRadius.circular(6),
                   ),
-                  child: const Text('现在最值得做',
+                  child: Text('现在最值得做',
                       style: TextStyle(
                           color: AppTheme.primaryBlue,
                           fontSize: 12,
@@ -82,7 +82,7 @@ class LifeAtlasHome extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(hasMealRecord ? '让今天的变化有迹可循' : '拍照或文字记录，约 30 秒',
-                    style: const TextStyle(color: AppTheme.muted)),
+                    style: TextStyle(color: AppTheme.muted)),
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
@@ -96,7 +96,7 @@ class LifeAtlasHome extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 26),
-          const Text('最近的健康信号',
+          Text('最近的健康信号',
               style: TextStyle(
                   fontSize: 21,
                   fontWeight: FontWeight.w800,
@@ -118,7 +118,7 @@ class LifeAtlasHome extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 27),
-          const Text('接下来的照护',
+          Text('接下来的照护',
               style: TextStyle(
                   fontSize: 21,
                   fontWeight: FontWeight.w800,
@@ -150,30 +150,30 @@ class LifeAtlasHome extends StatelessWidget {
 }
 
 class _Metric extends StatelessWidget {
-  const _Metric(
-      {required this.label, required this.value, this.color = AppTheme.ink});
+  const _Metric({required this.label, required this.value, this.color});
   final String label;
   final String value;
-  final Color color;
+  final Color? color;
   @override
   Widget build(BuildContext context) => Expanded(
       child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Column(children: [
-            Text(label,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 14)),
+            Text(label, style: TextStyle(color: AppTheme.muted, fontSize: 14)),
             const SizedBox(height: 8),
             Text(value,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: color, fontSize: 19, fontWeight: FontWeight.w800))
+                    color: color ?? Theme.of(context).colorScheme.onSurface,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800))
           ])));
 }
 
 class _MetricDivider extends StatelessWidget {
   const _MetricDivider();
   @override
-  Widget build(BuildContext context) => const SizedBox(
+  Widget build(BuildContext context) => SizedBox(
       height: 58, child: VerticalDivider(width: 1, color: AppTheme.cardBorder));
 }
 
@@ -220,8 +220,8 @@ class _CareRow extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(label,
-                            style: const TextStyle(
-                                color: AppTheme.muted, fontSize: 13)),
+                            style:
+                                TextStyle(color: AppTheme.muted, fontSize: 13)),
                         const SizedBox(height: 5),
                         Text(title,
                             style: const TextStyle(

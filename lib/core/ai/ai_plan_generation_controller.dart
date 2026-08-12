@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/health_models.dart';
@@ -19,6 +21,7 @@ class AiPlanGenerationController extends ChangeNotifier {
   AiPlanGenerationStatus status = AiPlanGenerationStatus.idle;
   AiPlanResult? result;
   Object? error;
+  bool usedLocalFallback = false;
   int eventId = 0;
   Future<void>? _task;
 
@@ -27,15 +30,25 @@ class AiPlanGenerationController extends ChangeNotifier {
   Future<void> start({
     required UserProfileData profile,
     required String provider,
+    required String goal,
+    String goalDetail = '',
+    DateTime? targetDate,
   }) {
     if (isGenerating) return _task ?? Future<void>.value();
 
     status = AiPlanGenerationStatus.generating;
     result = null;
     error = null;
+    usedLocalFallback = false;
     notifyListeners();
 
-    final task = _run(profile: profile, provider: provider);
+    final task = _run(
+      profile: profile,
+      provider: provider,
+      goal: goal,
+      goalDetail: goalDetail,
+      targetDate: targetDate,
+    );
     _task = task;
     return task;
   }
@@ -43,6 +56,9 @@ class AiPlanGenerationController extends ChangeNotifier {
   Future<void> _run({
     required UserProfileData profile,
     required String provider,
+    required String goal,
+    required String goalDetail,
+    required DateTime? targetDate,
   }) async {
     try {
       final indicators = await _repository.loadIndicators(limit: 20);
@@ -51,13 +67,29 @@ class AiPlanGenerationController extends ChangeNotifier {
             profile: profile,
             recentIndicators: indicators,
             provider: provider,
-            goal: profile.goal,
+            goal: goal,
+            goalDetail: goalDetail,
+            targetDate: targetDate,
           )
           .timeout(const Duration(seconds: 130));
       status = AiPlanGenerationStatus.completed;
     } catch (caughtError) {
       error = caughtError;
-      status = AiPlanGenerationStatus.failed;
+      try {
+        final localPlan = await _repository.buildLocalWeeklyPlanPreview(
+          goal: goal,
+          goalDetail: goalDetail,
+          targetDate: targetDate,
+        );
+        result = AiPlanResult(
+          provider: '本地安全方案',
+          rawJson: jsonEncode(localPlan),
+        );
+        usedLocalFallback = true;
+        status = AiPlanGenerationStatus.completed;
+      } catch (_) {
+        status = AiPlanGenerationStatus.failed;
+      }
     } finally {
       _task = null;
       eventId++;
@@ -70,6 +102,7 @@ class AiPlanGenerationController extends ChangeNotifier {
     status = AiPlanGenerationStatus.idle;
     result = null;
     error = null;
+    usedLocalFallback = false;
     notifyListeners();
   }
 }

@@ -65,7 +65,7 @@ class _SetPasswordPageState extends State<SetPasswordPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
+               Text(
                 '设置登录密码',
                 style: TextStyle(
                   color: AppTheme.ink,
@@ -75,7 +75,7 @@ class _SetPasswordPageState extends State<SetPasswordPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              const Text(
+               Text(
                 '设置后，下次可以使用手机号和密码登录。',
                 style: TextStyle(color: AppTheme.muted, fontSize: 16),
               ),

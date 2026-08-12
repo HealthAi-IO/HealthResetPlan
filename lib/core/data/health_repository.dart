@@ -501,6 +501,74 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> applyPersonalizedMenu({
+    required List<dynamic> days,
+    required String provider,
+  }) async {
+    final db = await database.open();
+    final today = DateTime.now();
+    final todayMs = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).millisecondsSinceEpoch;
+    final createdAt = today.millisecondsSinceEpoch;
+
+    await db.transaction((txn) async {
+      await txn.delete(
+        'plan',
+        where: 'user_id = ? AND type = ? AND plan_date >= ?',
+        whereArgs: [kLocalUserId, 'meal', todayMs],
+      );
+      for (final rawDay in days) {
+        if (rawDay is! Map) continue;
+        final date = DateTime.tryParse('${rawDay['date']}');
+        final rawMeals = rawDay['meals'];
+        if (date == null || rawMeals is! Map) continue;
+        final payload = <String, dynamic>{};
+        for (final type in ['breakfast', 'lunch', 'dinner', 'snack']) {
+          final rawMeal = rawMeals[type];
+          if (rawMeal is! Map) continue;
+          final name = '${rawMeal['name'] ?? ''}'.trim();
+          if (name.isEmpty) continue;
+          final ingredients = rawMeal['ingredients'] is List
+              ? (rawMeal['ingredients'] as List).map((item) => '$item').toList()
+              : <String>[];
+          payload[type] = [
+            name,
+            ...ingredients,
+          ];
+        }
+        payload['summary'] = '个性化菜单，可随时换菜';
+        payload['targetCalories'] = _sumMenuCalories(rawMeals);
+        await txn.insert(
+          'plan',
+          PlanRecordData(
+            type: 'meal',
+            planDate: DateTime(
+              date.year,
+              date.month,
+              date.day,
+            ).millisecondsSinceEpoch,
+            payload: payload,
+            aiProvider: provider,
+            aiModel: 'personalized-menu-v1',
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          ).toRow(),
+        );
+      }
+    });
+    notifyListeners();
+  }
+
+  double _sumMenuCalories(Map<dynamic, dynamic> meals) {
+    return meals.values.fold<double>(0, (sum, rawMeal) {
+      if (rawMeal is! Map) return sum;
+      return sum + ((rawMeal['calories'] as num?)?.toDouble() ?? 0);
+    });
+  }
+
   Future<void> ensureStarterMealRecipes() async {
     final db = await database.open();
     if (await db.count(
@@ -938,7 +1006,7 @@ class HealthRepository extends ChangeNotifier {
     );
   }
 
-  Future<void> generateWeeklyPlan() async {
+  Future<void> generateWeeklyPlan({String? goal}) async {
     final db = await database.open();
     final profile = await loadProfile() ?? UserProfileData.empty();
     final r = await _eligibleRisk(profile);
@@ -947,50 +1015,59 @@ class HealthRepository extends ChangeNotifier {
     final today = DateTime(now.year, now.month, now.day);
     final createdAt = now.millisecondsSinceEpoch;
 
-    final mealPlans = _buildMealTemplates(
-      targetKcal: r.targetKcal,
-      dietPreference: profile.dietPreference,
-      goal: profile.goal,
-      highBp: r.highBp || r.borderlineBp,
-      highGlucose: r.highGlucose || r.borderlineGlucose,
-      highLipid: r.highLipid || r.borderlineLipid,
-      dietNote: r.dietNote,
-      goalNote: r.goalNote,
-    );
     final exercisePlans = _buildExerciseTemplates(
       exerciseBase: profile.exerciseBase,
       highBp: r.highBp,
       obese: r.obese,
-      goal: profile.goal,
+      goal: goal ?? profile.goal,
     );
-    final measurementPlan = _buildMeasurementPlan(
-      highBp: r.highBp || r.borderlineBp,
-      highGlucose: r.highGlucose || r.borderlineGlucose,
-      goal: profile.goal,
+    await db.delete(
+      'plan',
+      where: 'user_id = ? AND type = ? AND plan_date >= ?',
+      whereArgs: [
+        kLocalUserId,
+        'exercise',
+        today.millisecondsSinceEpoch,
+      ],
     );
-
-    await db.delete('plan', where: 'user_id = ?', whereArgs: [kLocalUserId]);
 
     for (var i = 0; i < 7; i++) {
       final date = today.add(Duration(days: i));
       final ms = date.millisecondsSinceEpoch;
-      for (final entry in [
-        ('meal', mealPlans[i]),
-        ('exercise', exercisePlans[i]),
-        ('measurement', measurementPlan),
-      ]) {
+      await db.insert(
+        'plan',
+        PlanRecordData(
+          type: 'exercise',
+          planDate: ms,
+          payload: exercisePlans[i],
+          aiProvider: 'local',
+          aiModel: 'rules-v2',
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ).toRow(),
+        replace: true,
+      );
+      final measurements = await db.query(
+        'plan',
+        where: 'user_id = ? AND type = ? AND plan_date = ?',
+        whereArgs: [kLocalUserId, 'measurement', ms],
+        limit: 1,
+      );
+      if (measurements.isEmpty) {
         await db.insert(
           'plan',
           PlanRecordData(
-            type: entry.$1,
+            type: 'measurement',
             planDate: ms,
-            payload: entry.$2,
+            payload: const {
+              'summary': '晨起体重',
+              'items': ['起床后、早餐前记录体重'],
+            },
             aiProvider: 'local',
-            aiModel: 'rules-v2',
+            aiModel: 'measurement-default-v1',
             createdAt: createdAt,
             updatedAt: createdAt,
           ).toRow(),
-          replace: true,
         );
       }
     }
@@ -1056,10 +1133,73 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<Map<String, dynamic>> buildLocalWeeklyPlanPreview({
+    required String goal,
+    String goalDetail = '',
+    DateTime? targetDate,
+  }) async {
+    final profile = await loadProfile() ?? UserProfileData.empty();
+    final risk = await _eligibleRisk(profile);
+    final exercisePlans = _buildExerciseTemplates(
+      exerciseBase: profile.exerciseBase,
+      highBp: risk.highBp,
+      obese: risk.obese,
+      goal: goal,
+    );
+    const weekDays = ['第1天', '第2天', '第3天', '第4天', '第5天', '第6天', '第7天'];
+    final measurements = switch (goal) {
+      'bp_control' => ['固定时段测量血压并记录'],
+      'glucose_control' => ['按既有医嘱记录空腹或餐后血糖'],
+      'sleep_better' => ['记录入睡时间、起床时间和睡眠感受'],
+      'fat_loss' => ['晨起、早餐前记录体重', '每周固定一天记录腰围'],
+      _ => ['晨起、早餐前记录体重', '运动后记录主观疲劳程度'],
+    };
+    final habit = switch (goal) {
+      'sleep_better' => '保持固定起床时间，睡前减少屏幕刺激',
+      'quit_smoking' => '记录吸烟冲动出现的时间、场景和应对方式',
+      'bp_control' => '久坐一小时后起身活动，并练习缓慢呼吸',
+      'glucose_control' => '避免长时间静坐，按计划完成轻量活动',
+      'fat_loss' => '记录每日步数和计划完成度',
+      'muscle_gain' => '训练后完成放松，并保证充分恢复',
+      _ => '在固定时间运动，并记录当天完成感受',
+    };
+    final detail = goalDetail.trim();
+    final targetText = targetDate == null
+        ? ''
+        : '目标日期：${targetDate.year.toString().padLeft(4, '0')}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}';
+
+    return {
+      'summary': [
+        '根据档案生成的本地 7 天专属计划',
+        if (detail.isNotEmpty) '期望状态：$detail',
+        if (targetText.isNotEmpty) targetText,
+      ].join('；'),
+      'days': [
+        for (var i = 0; i < exercisePlans.length; i++)
+          {
+            'weekDay': weekDays[i],
+            'exercise': {
+              ...exercisePlans[i],
+              'title': exercisePlans[i]['type'],
+              'totalMinutes': exercisePlans[i]['durationMinutes'],
+            },
+            'measurements': measurements,
+            'habits': [
+              habit,
+              if (detail.isNotEmpty) '围绕补充目标复盘：$detail',
+              if (targetText.isNotEmpty && i == 6) '检查阶段进度并调整下一周安排',
+            ],
+            'reminders': ['运动前确认身体状态，出现不适立即停止', '睡前记录当天完成情况'],
+          },
+      ],
+    };
+  }
+
   Future<void> applyAiPlan({
     required Map<String, dynamic> plan,
     required String provider,
     bool createReminders = true,
+    bool replaceExisting = true,
   }) async {
     final rawDays = plan['days'];
     final days = rawDays is List
@@ -1073,50 +1213,37 @@ class HealthRepository extends ChangeNotifier {
     }
 
     final db = await database.open();
-    final profile = await loadProfile() ?? UserProfileData.empty();
-    final risk = await _assessRisk(profile);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final timestamp = now.millisecondsSinceEpoch;
-    final keyFocus = _aiText(plan['keyFocus']);
-    final targetCalories = _aiNumber(plan['targetCalories'])?.round();
 
     await db.transaction((txn) async {
-      await txn.delete('plan', where: 'user_id = ?', whereArgs: [kLocalUserId]);
-      await _deleteSyncedRow(
-        txn,
-        table: 'reminder',
-        where: 'user_id = ? AND channel = ?',
-        whereArgs: [kLocalUserId, 'ai-plan'],
-      );
+      if (replaceExisting) {
+        await txn.delete(
+          'plan',
+          where: 'user_id = ? AND type = ? AND plan_date >= ?',
+          whereArgs: [
+            kLocalUserId,
+            'exercise',
+            today.millisecondsSinceEpoch,
+          ],
+        );
+        await _deleteSyncedRow(
+          txn,
+          table: 'reminder',
+          where: 'user_id = ? AND channel = ?',
+          whereArgs: [kLocalUserId, 'ai-plan'],
+        );
+      }
 
       for (var i = 0; i < days.length && i < 7; i++) {
         final day = days[i];
         final date = today.add(Duration(days: i));
         final planDate = date.millisecondsSinceEpoch;
-        final diet = _aiMap(day['diet']);
         final exercise = _aiMap(day['exercise']);
+        final measurements = _aiStringList(day['measurements']);
+        final habits = _aiStringList(day['habits']);
         final reminders = _aiStringList(day['reminders']);
-
-        await txn.insert(
-          'plan',
-          PlanRecordData(
-            type: 'meal',
-            planDate: planDate,
-            payload: _aiMealPayload(
-              diet,
-              keyFocus: keyFocus,
-              targetCalories: targetCalories,
-            ),
-            aiProvider: provider,
-            aiModel: 'ai-plan-json',
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            version: 1,
-            isDirty: 1,
-          ).toRow(),
-          replace: true,
-        );
 
         await txn.insert(
           'plan',
@@ -1134,27 +1261,67 @@ class HealthRepository extends ChangeNotifier {
           replace: true,
         );
 
-        await txn.insert(
+        final existingMeasurements = await txn.query(
           'plan',
-          PlanRecordData(
-            type: 'measurement',
-            planDate: planDate,
-            payload: _aiMeasurementPayload(reminders),
-            aiProvider: provider,
-            aiModel: 'ai-plan-json',
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            version: 1,
-            isDirty: 1,
-          ).toRow(),
-          replace: true,
+          where: 'user_id = ? AND type = ? AND plan_date = ?',
+          whereArgs: [kLocalUserId, 'measurement', planDate],
+          limit: 1,
         );
+        final measurementItems = [
+          if (measurements.isEmpty) '晨起、早餐前记录体重' else ...measurements,
+          for (final habit in habits) '生活习惯 · $habit',
+        ];
+        if (existingMeasurements.isNotEmpty && !replaceExisting) {
+          final existing = PlanRecordData.fromRow(existingMeasurements.first);
+          final mergedItems = <String>{
+            ..._aiStringList(existing.payload['items']),
+            ...measurementItems,
+          }.toList();
+          await txn.update(
+            'plan',
+            {
+              'payload_json': jsonEncode({
+                'summary': '每日测量与生活习惯',
+                'items': mergedItems,
+              }),
+              'updated_at': timestamp,
+              'version': existing.version + 1,
+              'is_dirty': 1,
+            },
+            where: 'id = ? AND user_id = ?',
+            whereArgs: [existing.id, kLocalUserId],
+          );
+        } else {
+          if (existingMeasurements.isNotEmpty) {
+            await txn.delete(
+              'plan',
+              where: 'user_id = ? AND type = ? AND plan_date = ?',
+              whereArgs: [kLocalUserId, 'measurement', planDate],
+            );
+          }
+          await txn.insert(
+            'plan',
+            PlanRecordData(
+              type: 'measurement',
+              planDate: planDate,
+              payload: {
+                'summary': '每日测量与生活习惯',
+                'items': measurementItems,
+              },
+              aiProvider: 'local',
+              aiModel: 'measurement-default-v1',
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              version: 1,
+              isDirty: 1,
+            ).toRow(),
+          );
+        }
 
         if (createReminders) {
           await _insertAiPlanReminders(
             txn,
             date: date,
-            diet: diet,
             exercise: exercise,
             reminders: reminders,
             timestamp: timestamp,
@@ -1162,35 +1329,12 @@ class HealthRepository extends ChangeNotifier {
           );
         }
       }
-
-      await txn.insert(
-        'plan',
-        PlanRecordData(
-          type: 'risk',
-          planDate: today.millisecondsSinceEpoch,
-          payload: {
-            ...risk.toPayload(),
-            if (_aiText(plan['summary']).isNotEmpty)
-              'aiSummary': _aiText(plan['summary']),
-            if (keyFocus.isNotEmpty) 'keyFocus': keyFocus,
-            if (_aiText(plan['riskAlert']).isNotEmpty &&
-                _aiText(plan['riskAlert']).toLowerCase() != 'null')
-              'aiRiskAlert': _aiText(plan['riskAlert']),
-          },
-          aiProvider: provider,
-          aiModel: 'ai-plan-json',
-          createdAt: timestamp,
-          updatedAt: timestamp,
-          version: 1,
-          isDirty: 1,
-        ).toRow(),
-        replace: true,
-      );
     });
 
     notifyListeners();
   }
 
+  // ignore: unused_element
   Map<String, dynamic> _aiMealPayload(
     Map<String, dynamic> diet, {
     required String keyFocus,
@@ -1220,10 +1364,25 @@ class HealthRepository extends ChangeNotifier {
   }
 
   Map<String, dynamic> _aiExercisePayload(Map<String, dynamic> exercise) {
-    final type = _aiText(exercise['type']);
-    final duration = _aiNumber(exercise['durationMinutes'])?.round();
+    final type = _aiText(exercise['title']);
+    final goal = _aiText(exercise['goal']);
+    final duration = _aiNumber(exercise['totalMinutes'])?.round();
     final intensity = _aiText(exercise['intensity']);
-    final description = _aiText(exercise['description']);
+    final location = _aiText(exercise['location']);
+    final equipment = _aiStringList(exercise['equipment']);
+    final warmup = _aiMapList(exercise['warmup']);
+    final main = _aiMapList(exercise['main']);
+    final cooldown = _aiMapList(exercise['cooldown']);
+    final safetyNotes = _aiStringList(exercise['safetyNotes']);
+    final alternative = _aiMap(exercise['alternative']);
+    final items = <String>[
+      for (final step in warmup) _exerciseStepText('热身', step),
+      for (final step in main) _exerciseStepText('主训练', step),
+      for (final step in cooldown) _exerciseStepText('放松', step),
+      for (final note in safetyNotes) '注意 · $note',
+      if (_aiText(alternative['name']).isNotEmpty)
+        '替代 · ${_aiText(alternative['condition'])}：${_aiText(alternative['name'])}，${_aiText(alternative['instruction'])}',
+    ].where((item) => item.trim().isNotEmpty).toList();
     final summaryParts = [
       if (type.isNotEmpty) type,
       if (duration != null && duration > 0) '$duration 分钟',
@@ -1231,18 +1390,41 @@ class HealthRepository extends ChangeNotifier {
     ];
 
     return {
-      'summary': summaryParts.isNotEmpty
-          ? summaryParts.join(' · ')
-          : (description.isNotEmpty ? description : '按 AI 建议完成今日运动'),
+      'summary':
+          summaryParts.isNotEmpty ? summaryParts.join(' · ') : '按 AI 建议完成今日运动',
       if (type.isNotEmpty) 'type': type,
+      if (goal.isNotEmpty) 'goal': goal,
       if (duration != null) 'duration': duration,
       if (duration != null) 'durationMinutes': duration,
       if (intensity.isNotEmpty) 'intensity': intensity,
-      if (description.isNotEmpty) 'desc': description,
-      'items': [if (description.isNotEmpty) description],
+      if (location.isNotEmpty) 'location': location,
+      if (equipment.isNotEmpty) 'equipment': equipment,
+      'warmup': warmup,
+      'main': main,
+      'cooldown': cooldown,
+      'safetyNotes': safetyNotes,
+      if (alternative.isNotEmpty) 'alternative': alternative,
+      'items': items,
     };
   }
 
+  String _exerciseStepText(String phase, Map<String, dynamic> step) {
+    final name = _aiText(step['name']);
+    final sets = _aiNumber(step['sets'])?.round();
+    final reps = _aiText(step['reps']);
+    final minutes = _aiNumber(step['durationMinutes'])?.round();
+    final rest = _aiNumber(step['restSeconds'])?.round();
+    final instruction = _aiText(step['instruction']);
+    return [
+      '$phase · $name',
+      if (sets != null && sets > 0) '$sets组${reps.isEmpty ? '' : ' × $reps'}',
+      if (minutes != null && minutes > 0) '$minutes分钟',
+      if (rest != null && rest > 0) '休息$rest秒',
+      if (instruction.isNotEmpty) instruction,
+    ].join(' · ');
+  }
+
+  // ignore: unused_element
   Map<String, dynamic> _aiMeasurementPayload(List<String> reminders) {
     final items =
         reminders.isEmpty ? const ['晨起空腹体重', '按需记录血压、血糖或今日不适'] : reminders;
@@ -1252,45 +1434,27 @@ class HealthRepository extends ChangeNotifier {
   Future<void> _insertAiPlanReminders(
     AppDatabase txn, {
     required DateTime date,
-    required Map<String, dynamic> diet,
     required Map<String, dynamic> exercise,
     required List<String> reminders,
     required int timestamp,
     required int dayIndex,
   }) async {
     final tasks = <({String type, DateTime at, String note})>[];
-    final breakfast = _aiStringList(diet['breakfast']);
-    final lunch = _aiStringList(diet['lunch']);
-    final dinner = _aiStringList(diet['dinner']);
     final exerciseSummary =
         _aiExercisePayload(exercise)['summary'] as String? ?? '';
 
-    if (breakfast.isNotEmpty) {
-      tasks.add((
-        type: 'meal',
-        at: DateTime(date.year, date.month, date.day, 8),
-        note: '第 $dayIndex 天早餐：${breakfast.join('；')}',
-      ));
-    }
-    if (lunch.isNotEmpty) {
-      tasks.add((
-        type: 'meal',
-        at: DateTime(date.year, date.month, date.day, 12),
-        note: '第 $dayIndex 天午餐：${lunch.join('；')}',
-      ));
-    }
-    if (dinner.isNotEmpty) {
-      tasks.add((
-        type: 'meal',
-        at: DateTime(date.year, date.month, date.day, 18),
-        note: '第 $dayIndex 天晚餐：${dinner.join('；')}',
-      ));
-    }
     if (exerciseSummary.isNotEmpty) {
       tasks.add((
         type: 'exercise',
         at: DateTime(date.year, date.month, date.day, 19, 30),
         note: '第 $dayIndex 天运动：$exerciseSummary',
+      ));
+    }
+    for (var i = 0; i < reminders.length; i++) {
+      tasks.add((
+        type: 'exercise',
+        at: DateTime(date.year, date.month, date.day, 19, 20 + i * 5),
+        note: reminders[i],
       ));
     }
     final seen = <String>{};
@@ -1318,6 +1482,11 @@ class HealthRepository extends ChangeNotifier {
     if (raw is Map<String, dynamic>) return raw;
     if (raw is Map) return raw.map((key, value) => MapEntry('$key', value));
     return <String, dynamic>{};
+  }
+
+  List<Map<String, dynamic>> _aiMapList(Object? raw) {
+    if (raw is! List) return <Map<String, dynamic>>[];
+    return raw.whereType<Map>().map(_aiMap).toList();
   }
 
   List<String> _aiStringList(Object? raw) {
@@ -1903,6 +2072,45 @@ class HealthRepository extends ChangeNotifier {
     return rows.map(HealthReportRecord.fromRow).toList();
   }
 
+  Future<List<WeeklyHealthReportData>> loadWeeklyHealthReports({
+    int limit = 20,
+  }) async {
+    final db = await database.open();
+    final rows = await db.query(
+      'ai_weekly_report',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+      orderBy: 'end_at DESC, id DESC',
+      limit: limit,
+    );
+    return rows.map(WeeklyHealthReportData.fromRow).toList();
+  }
+
+  Future<void> saveWeeklyHealthReport({
+    required DateTime startDate,
+    required DateTime endDate,
+    required Map<String, dynamic> structured,
+    required String provider,
+  }) async {
+    final db = await database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.insert(
+      'ai_weekly_report',
+      WeeklyHealthReportData(
+        clientId: newClientId(),
+        startAt: DateTime(startDate.year, startDate.month, startDate.day)
+            .millisecondsSinceEpoch,
+        endAt: DateTime(endDate.year, endDate.month, endDate.day)
+            .millisecondsSinceEpoch,
+        structured: structured,
+        provider: provider,
+        createdAt: now,
+        updatedAt: now,
+      ).toRow(),
+    );
+    notifyListeners();
+  }
+
   Future<void> saveReportRecord({
     required String clientId,
     required String imagePath,
@@ -2379,6 +2587,7 @@ class HealthRepository extends ChangeNotifier {
     }
   }
 
+  // ignore: unused_element
   List<Map<String, dynamic>> _buildMealTemplates({
     required int targetKcal,
     required String dietPreference,
@@ -2509,79 +2718,238 @@ class HealthRepository extends ChangeNotifier {
     final strengthNote =
         highBp ? '中等重量，避免憋气，组间充分休息' : (obese ? '低重量开始，注意膝关节保护' : '循序渐进加重');
 
+    Map<String, dynamic> step(
+      String name, {
+      int? sets,
+      String? reps,
+      int? minutes,
+      int? restSeconds,
+      required String instruction,
+    }) =>
+        {
+          'name': name,
+          if (sets != null) 'sets': sets,
+          if (reps != null) 'reps': reps,
+          if (minutes != null) 'durationMinutes': minutes,
+          if (restSeconds != null) 'restSeconds': restSeconds,
+          'instruction': instruction,
+        };
+
+    Map<String, dynamic> plan({
+      required String title,
+      required String goalText,
+      required int totalMinutes,
+      required List<Map<String, dynamic>> warmup,
+      required List<Map<String, dynamic>> main,
+      required List<Map<String, dynamic>> cooldown,
+      List<String> equipment = const [],
+      Map<String, dynamic>? alternative,
+    }) {
+      final safetyNotes = <String>[
+        '以主观用力程度 RPE 4–6/10 为宜，能说完整句子但呼吸略加快。',
+        strengthNote,
+        '出现胸痛、明显气短、眩晕或关节锐痛时立即停止，并视情况就医。',
+      ];
+      return {
+        'summary': '$title · $totalMinutes 分钟 · $intensity',
+        'type': title,
+        'goal': goalText,
+        'duration': totalMinutes,
+        'durationMinutes': totalMinutes,
+        'intensity': intensity,
+        'location': '居家或户外平坦场地',
+        'equipment': equipment,
+        'warmup': warmup,
+        'main': main,
+        'cooldown': cooldown,
+        'safetyNotes': safetyNotes,
+        if (alternative != null) 'alternative': alternative,
+        'items': [
+          for (final item in warmup) _exerciseStepText('热身', item),
+          for (final item in main) _exerciseStepText('主训练', item),
+          for (final item in cooldown) _exerciseStepText('放松', item),
+          for (final note in safetyNotes) '注意 · $note',
+        ],
+      };
+    }
+
+    final goalText = switch (goal) {
+      'fat_loss' => '提高日常消耗并保持可持续运动节奏',
+      'glucose_control' => '改善餐后活动量与全身肌肉参与',
+      'bp_control' => '提升心肺耐力，避免屏气和突然用力',
+      _ => '建立有氧、力量与恢复均衡的一周节奏',
+    };
+
     return [
-      // 第1天：有氧
-      {
-        'summary': '$intensity 有氧 ${durations[0]} 分钟',
-        'items': [
-          '热身 5 分钟（原地踏步 + 肩颈活动）',
-          '$cardioType ${durations[0]} 分钟',
-          '整理拉伸 8 分钟',
+      plan(
+        title: '稳态有氧',
+        goalText: goalText,
+        totalMinutes: durations[0],
+        warmup: [
+          step('原地踏步与肩颈活动', minutes: 5, instruction: '逐步加快步频，肩部自然放松'),
         ],
-        'type': 'cardio',
-      },
-      // 第2天：上肢力量
-      {
-        'summary': '上肢力量 ${durations[1]} 分钟（$strengthNote）',
-        'items': [
-          '热身 5 分钟',
-          '弹力带划船 3×12',
-          '俯卧撑 / 推墙 3×10',
-          '哑铃弯举 3×12',
-          '核心稳定 10 分钟',
+        main: [
+          step(cardioType,
+              minutes: (durations[0] - 10).clamp(5, 35),
+              instruction: '保持均匀呼吸和稳定节奏，不追求速度'),
         ],
-        'type': 'strength',
-      },
-      // 第3天：主动恢复
-      {
-        'summary': '主动恢复日，保持轻度活动',
-        'items': ['餐后轻松步行 15 分钟×2', '肩颈放松操 10 分钟', '睡前呼吸冥想 5 分钟'],
-        'type': 'recovery',
-      },
-      // 第4天：有氧 + 核心
-      {
-        'summary': '$intensity 有氧 ${durations[3] - 10} 分钟 + 核心训练',
-        'items': [
-          '热身 5 分钟',
-          '$cardioType ${durations[3] - 10} 分钟',
-          '平板支撑 3 组',
-          '腹肌卷曲 3 组',
-          '放松拉伸 8 分钟',
+        cooldown: [
+          step('慢走与小腿拉伸', minutes: 5, instruction: '心率平稳后再结束运动'),
         ],
-        'type': 'cardio',
-      },
-      // 第5天：下肢力量
-      {
-        'summary': '下肢力量 ${durations[4]} 分钟（$strengthNote）',
-        'items': [
-          '热身 5 分钟',
-          '深蹲 / 椅子辅助 3×12',
-          '弓箭步 3×10',
-          '臀桥 3×15',
-          '小腿提踵 3×20',
-          '拉伸 8 分钟',
+        alternative: {
+          'condition': '膝踝不适或天气不佳',
+          'name': '室内原地踏步',
+          'instruction': '扶稳桌椅，采用低抬腿动作并缩短单次时长',
+        },
+      ),
+      plan(
+        title: '上肢力量与核心',
+        goalText: '改善肩背力量和躯干稳定，动作全程避免憋气',
+        totalMinutes: durations[1],
+        equipment: const ['弹力带或轻哑铃', '稳固椅子'],
+        warmup: [
+          step('肩绕环与扩胸运动', minutes: 5, instruction: '小幅度开始，避免耸肩'),
         ],
-        'type': 'strength',
-      },
-      // 第6天：有氧（本周最长）
-      {
-        'summary': '$intensity 有氧 ${durations[5]} 分钟，挑战本周最长时长',
-        'items': [
-          '热身 8 分钟',
-          '$cardioType ${durations[5] - 10} 分钟',
-          '拉伸 + 泡沫轴放松 12 分钟',
+        main: [
+          step('弹力带划船',
+              sets: 3,
+              reps: '10–12次',
+              restSeconds: 45,
+              instruction: '肩胛骨向后下方收紧，腰背保持中立'),
+          step('墙面俯卧撑',
+              sets: 3,
+              reps: '8–12次',
+              restSeconds: 60,
+              instruction: '身体保持直线，呼气推起'),
+          step('坐姿哑铃弯举',
+              sets: 2,
+              reps: '10–12次',
+              restSeconds: 45,
+              instruction: '上臂贴近身体，不借力摆动'),
+          step('鸟狗式',
+              sets: 2,
+              reps: '每侧8次',
+              restSeconds: 45,
+              instruction: '缓慢伸展对侧手脚，骨盆保持稳定'),
         ],
-        'type': 'cardio',
-      },
-      // 第7天：休息
-      {
-        'summary': '休息日：轻量活动，注重恢复',
-        'items': ['轻松散步 ${durations[6]} 分钟', '瑜伽 / 全身拉伸 15 分钟', '保证睡眠 7-8 小时'],
-        'type': 'rest',
-      },
+        cooldown: [
+          step('胸肩与背部拉伸', minutes: 5, instruction: '每个动作保持20–30秒，不弹震'),
+        ],
+      ),
+      plan(
+        title: '主动恢复',
+        goalText: '缓解疲劳并维持日常活动量',
+        totalMinutes: durations[2],
+        warmup: [
+          step('腹式呼吸', minutes: 2, instruction: '吸气腹部隆起，缓慢呼气'),
+        ],
+        main: [
+          step('餐后轻松步行',
+              sets: 2,
+              reps: '每次5–10分钟',
+              restSeconds: 60,
+              instruction: '步速舒适，以放松为主'),
+          step('肩颈活动', minutes: 5, instruction: '缓慢点头、转头和肩部绕环'),
+        ],
+        cooldown: [
+          step('全身舒展', minutes: 3, instruction: '配合呼吸放松背部和下肢'),
+        ],
+      ),
+      plan(
+        title: '有氧与核心稳定',
+        goalText: '在心肺训练后强化躯干控制',
+        totalMinutes: durations[3],
+        equipment: const ['瑜伽垫'],
+        warmup: [
+          step('动态热身', minutes: 5, instruction: '原地踏步、髋部绕环和踝关节活动'),
+        ],
+        main: [
+          step(cardioType,
+              minutes: (durations[3] - 15).clamp(5, 30),
+              instruction: '维持RPE 4–6/10，呼吸均匀'),
+          step('高位平板支撑',
+              sets: 3,
+              reps: '20–30秒',
+              restSeconds: 45,
+              instruction: '可扶桌面完成，收紧腹部不塌腰'),
+          step('仰卧交替抬脚',
+              sets: 2, reps: '每侧8次', restSeconds: 45, instruction: '腰部贴垫，动作缓慢'),
+        ],
+        cooldown: [
+          step('髋屈肌与腰背拉伸', minutes: 5, instruction: '保持自然呼吸'),
+        ],
+      ),
+      plan(
+        title: '下肢力量',
+        goalText: '强化臀腿力量并提高日常起坐稳定性',
+        totalMinutes: durations[4],
+        equipment: const ['稳固椅子'],
+        warmup: [
+          step('踝泵与髋膝活动', minutes: 5, instruction: '扶稳椅背，小范围逐步增加'),
+        ],
+        main: [
+          step('椅子坐站',
+              sets: 3,
+              reps: '8–12次',
+              restSeconds: 60,
+              instruction: '膝盖对准脚尖，起身时呼气'),
+          step('臀桥',
+              sets: 3,
+              reps: '10–15次',
+              restSeconds: 45,
+              instruction: '收紧臀部，不用腰部顶起'),
+          step('扶椅提踵',
+              sets: 3,
+              reps: '12–15次',
+              restSeconds: 45,
+              instruction: '缓慢抬起和落下，保持身体稳定'),
+        ],
+        cooldown: [
+          step('臀腿与小腿拉伸', minutes: 5, instruction: '无痛范围内保持20–30秒'),
+        ],
+        alternative: {
+          'condition': '膝关节不适',
+          'name': '坐姿抬腿',
+          'instruction': '坐稳后交替伸膝，每侧完成2组8–10次',
+        },
+      ),
+      plan(
+        title: '耐力有氧',
+        goalText: '完成本周最长一次连续有氧，仍以舒适节奏为主',
+        totalMinutes: durations[5],
+        warmup: [
+          step('慢走与动态活动', minutes: 7, instruction: '逐步提高步频，不突然加速'),
+        ],
+        main: [
+          step(cardioType,
+              minutes: (durations[5] - 14).clamp(6, 35),
+              instruction: '每10分钟检查一次呼吸和身体感受'),
+        ],
+        cooldown: [
+          step('慢走、下肢拉伸', minutes: 7, instruction: '逐步降低心率后补充饮水'),
+        ],
+      ),
+      plan(
+        title: '恢复与活动度',
+        goalText: '让身体恢复，为下一周训练做准备',
+        totalMinutes: durations[6],
+        equipment: const ['瑜伽垫（可选）'],
+        warmup: [
+          step('轻松散步', minutes: 5, instruction: '保持自然步速'),
+        ],
+        main: [
+          step('全身活动度练习',
+              minutes: (durations[6] - 8).clamp(4, 12),
+              instruction: '依次活动肩、胸椎、髋和踝关节'),
+        ],
+        cooldown: [
+          step('呼吸放松', minutes: 3, instruction: '缓慢呼吸，放松全身肌肉'),
+        ],
+      ),
     ];
   }
 
+  // ignore: unused_element
   Map<String, dynamic> _buildMeasurementPlan({
     required bool highBp,
     required bool highGlucose,

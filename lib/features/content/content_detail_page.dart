@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart';
 import 'package:intl/intl.dart';
@@ -7,6 +8,7 @@ import '../../app/app_theme.dart';
 import '../../core/content/content_models.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/content_api.dart';
+import '../../core/network/api_response.dart';
 
 class ContentDetailPage extends StatefulWidget {
   const ContentDetailPage({super.key, required this.id});
@@ -64,8 +66,13 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
           _interactionError = null;
         });
       }
-    } catch (_) {
-      if (mounted) setState(() => _interactionError = '互动功能暂时不可用');
+    } catch (error) {
+      if (mounted) {
+        setState(() => _interactionError = _interactionFailure(
+              error,
+              '互动内容加载失败，请检查网络后重试',
+            ));
+      }
     }
   }
 
@@ -77,8 +84,10 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
     try {
       final result = await _api.reactToContent(widget.id, nextReaction);
       if (mounted) setState(() => _interaction = result);
-    } catch (_) {
-      if (mounted) _showInteractionError('操作失败，请稍后重试');
+    } catch (error) {
+      if (mounted) {
+        _showInteractionError(_interactionFailure(error, '操作失败，请稍后重试'));
+      }
     } finally {
       if (mounted) setState(() => _submittingInteraction = false);
     }
@@ -98,8 +107,12 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
       _commentController.clear();
       FocusScope.of(context).unfocus();
       setState(() => _interaction = result);
-    } catch (_) {
-      if (mounted) _showInteractionError('评论发布失败，请稍后重试');
+    } catch (error) {
+      if (mounted) {
+        _showInteractionError(
+          _interactionFailure(error, '评论发布失败，请稍后重试'),
+        );
+      }
     } finally {
       if (mounted) setState(() => _submittingInteraction = false);
     }
@@ -111,8 +124,10 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
     try {
       final result = await _api.deleteComment(widget.id, comment.id);
       if (mounted) setState(() => _interaction = result);
-    } catch (_) {
-      if (mounted) _showInteractionError('删除失败，请稍后重试');
+    } catch (error) {
+      if (mounted) {
+        _showInteractionError(_interactionFailure(error, '删除失败，请稍后重试'));
+      }
     } finally {
       if (mounted) setState(() => _submittingInteraction = false);
     }
@@ -121,6 +136,21 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
   void _showInteractionError(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _interactionFailure(Object error, String fallback) {
+    if (error is DioException && error.error is ApiResponseException) {
+      final message = (error.error as ApiResponseException).message.trim();
+      if (message.isNotEmpty) return message;
+    }
+    if (error is DioException &&
+        (error.type == DioExceptionType.connectionError ||
+            error.type == DioExceptionType.connectionTimeout ||
+            error.type == DioExceptionType.receiveTimeout ||
+            error.type == DioExceptionType.sendTimeout)) {
+      return '网络连接异常，请检查网络后重试';
+    }
+    return fallback;
   }
 
   Future<bool> _openContentUrl(String value) async {
@@ -156,7 +186,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.pageBg,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(title: const Text('健康资讯')),
       body: _body(),
     );
@@ -170,7 +200,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.info_outline, size: 46, color: AppTheme.muted),
+               Icon(Icons.info_outline, size: 46, color: AppTheme.muted),
               const SizedBox(height: 12),
               Text(_error!, textAlign: TextAlign.center),
               const SizedBox(height: 16),
@@ -234,7 +264,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                       if (detail.sourceType == 'ai') const SizedBox(height: 16),
                       Text(
                         detail.title,
-                        style: const TextStyle(
+                        style:  TextStyle(
                           color: AppTheme.ink,
                           fontSize: 28,
                           height: 1.35,
@@ -247,14 +277,14 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                             ? ''
                             : DateFormat('yyyy年MM月dd日 HH:mm')
                                 .format(detail.publishedAt!),
-                        style: const TextStyle(
+                        style:  TextStyle(
                             color: AppTheme.muted, fontSize: 13),
                       ),
                       if (detail.summary.isNotEmpty) ...[
                         const SizedBox(height: 18),
                         Text(
                           detail.summary,
-                          style: const TextStyle(
+                          style:  TextStyle(
                             color: AppTheme.muted,
                             fontSize: 16,
                             height: 1.7,
@@ -268,7 +298,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                         HtmlWidget(
                           detail.bodyHtml,
                           baseUrl: _api.apiBaseUri,
-                          textStyle: const TextStyle(
+                          textStyle:  TextStyle(
                             color: AppTheme.ink,
                             fontSize: 16,
                             height: 1.75,
@@ -325,10 +355,10 @@ class _ContentInteractionSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (error != null && interaction == null) {
       return Row(children: [
-        const Icon(Icons.info_outline, color: AppTheme.muted),
+         Icon(Icons.info_outline, color: AppTheme.muted),
         const SizedBox(width: 8),
         Expanded(
-            child: Text(error!, style: const TextStyle(color: AppTheme.muted))),
+            child: Text(error!, style:  TextStyle(color: AppTheme.muted))),
         TextButton(onPressed: onRetry, child: const Text('重试')),
       ]);
     }
@@ -383,7 +413,7 @@ class _ContentInteractionSection extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         if (data.comments.isEmpty)
-          const Padding(
+           Padding(
             padding: EdgeInsets.symmetric(vertical: 20),
             child: Center(
                 child: Text('还没有评论', style: TextStyle(color: AppTheme.muted))),
@@ -427,7 +457,7 @@ class _CommentRow extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(DateFormat('MM-dd HH:mm').format(comment.createdAt!),
                       style:
-                          const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                           TextStyle(color: AppTheme.muted, fontSize: 12)),
                 ],
               ])),
         ]),

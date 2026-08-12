@@ -34,12 +34,16 @@ class AiApi {
     required List<HealthIndicatorEntry> recentIndicators,
     String? provider,
     String goal = 'general',
+    String goalDetail = '',
+    DateTime? targetDate,
   }) async {
     final apiProvider = _normalizeProvider(provider);
     final body = _buildPlanRequest(
       profile: profile,
       indicators: recentIndicators,
       goal: goal,
+      goalDetail: goalDetail,
+      targetDate: targetDate,
       provider: apiProvider,
     );
 
@@ -49,10 +53,57 @@ class AiApi {
       options: _aiRequestOptions,
     );
     final data = _unwrapData(resp.data);
+    final rawJson = data['rawJson'] as String? ?? '';
+    if (rawJson.trim().isEmpty || rawJson.trim() == '{}') {
+      throw const FormatException('AI 未返回可用的运动计划，请切换模型后重试');
+    }
 
     return AiPlanResult(
       provider: _displayProvider(data['provider'] as String?, apiProvider),
-      rawJson: data['rawJson'] as String? ?? '{}',
+      rawJson: rawJson,
+    );
+  }
+
+  Future<AiWellnessResult> generatePersonalizedMenu(
+    Map<String, dynamic> request,
+  ) async {
+    return _postWellness('/ai/wellness/menu/generate', request);
+  }
+
+  Future<AiWellnessResult> swapPersonalizedMeal(
+    Map<String, dynamic> request,
+  ) async {
+    return _postWellness('/ai/wellness/menu/swap', request);
+  }
+
+  Future<AiWellnessResult> generateWeeklyHealthReport(
+    Map<String, dynamic> request,
+  ) async {
+    return _postWellness('/ai/wellness/weekly-report/generate', request);
+  }
+
+  Future<AiWellnessResult> _postWellness(
+    String path,
+    Map<String, dynamic> request,
+  ) async {
+    final response = await _client.dio.post(
+      path,
+      data: request,
+      options: _aiRequestOptions,
+    );
+    final result = _unwrapData(response.data);
+    final rawData = result['data'];
+    final structured = rawData is Map
+        ? rawData.map((key, value) => MapEntry('$key', value))
+        : result.containsKey('days') || result.containsKey('summary')
+            ? (Map<String, dynamic>.from(result)..remove('provider'))
+            : <String, dynamic>{};
+    if (structured.isEmpty) {
+      throw const FormatException('AI 返回内容为空，请重新生成');
+    }
+    return AiWellnessResult(
+      provider: result['provider'] as String? ?? 'qwen',
+      data: structured,
     );
   }
 
@@ -301,17 +352,7 @@ class AiApi {
 
   Map<String, dynamic> _unwrapData(dynamic body) {
     if (body is! Map) return <String, dynamic>{};
-    final code = (body['code'] as num?)?.toInt() ?? 0;
-    if (code != 0) {
-      final options = RequestOptions(path: '');
-      throw DioException(
-        requestOptions: options,
-        response: Response(requestOptions: options, data: body),
-        message: (body['message'] ?? body['msg'])?.toString() ?? 'AI 服务异常',
-      );
-    }
-    final data = body['data'];
-    return data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+    return Map<String, dynamic>.from(body);
   }
 
   String _mimeType(String name) {
@@ -326,6 +367,8 @@ class AiApi {
     required UserProfileData profile,
     required List<HealthIndicatorEntry> indicators,
     required String goal,
+    required String goalDetail,
+    required DateTime? targetDate,
     required String? provider,
   }) {
     final age =
@@ -371,6 +414,10 @@ class AiApi {
       if (recentTc != null) 'recentTc': recentTc,
       if (recentLdl != null) 'recentLdl': recentLdl,
       'goal': goal,
+      if (goalDetail.trim().isNotEmpty) 'goalDetail': goalDetail.trim(),
+      if (targetDate != null)
+        'targetDate':
+            '${targetDate.year.toString().padLeft(4, '0')}-${targetDate.month.toString().padLeft(2, '0')}-${targetDate.day.toString().padLeft(2, '0')}',
       'dietPref':
           profile.dietPreference.isNotEmpty ? profile.dietPreference : 'normal',
       'exerciseBase':
@@ -384,6 +431,13 @@ class AiPlanResult {
 
   final String provider;
   final String rawJson;
+}
+
+class AiWellnessResult {
+  const AiWellnessResult({required this.provider, required this.data});
+
+  final String provider;
+  final Map<String, dynamic> data;
 }
 
 class AiChatReply {

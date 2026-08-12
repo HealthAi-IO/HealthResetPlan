@@ -40,11 +40,11 @@ class AiContentNotice extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(children: [
-        const Icon(Icons.auto_awesome, size: 14, color: AppTheme.aiPurple),
+         Icon(Icons.auto_awesome, size: 14, color: AppTheme.aiPurple),
         const SizedBox(width: 5),
         Expanded(
           child: Text(aiContentLabel,
-              style: const TextStyle(
+              style:  TextStyle(
                   color: AppTheme.aiPurple,
                   fontSize: 11,
                   fontWeight: FontWeight.w700)),

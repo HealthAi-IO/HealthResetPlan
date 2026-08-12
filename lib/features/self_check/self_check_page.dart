@@ -184,7 +184,7 @@ class _SkinIntroCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'AI 测肤质',
             style: TextStyle(
               color: AppTheme.deepBlue,
@@ -219,7 +219,7 @@ class _SkinIntroCard extends StatelessWidget {
             onChanged: onAgreedChanged,
             contentPadding: EdgeInsets.zero,
             controlAffinity: ListTileControlAffinity.leading,
-            title: const Text(
+            title: Text(
               '仅收集必要脸部照片用于智能测肤及面部特征分析，我已阅读并同意隐私说明。',
               style: TextStyle(color: AppTheme.muted, fontSize: 13),
             ),
@@ -241,7 +241,7 @@ class _SkinFeatureRow extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          const Icon(Icons.face_retouching_natural_outlined,
+          Icon(Icons.face_retouching_natural_outlined,
               size: 18, color: AppTheme.deepBlue),
           const SizedBox(width: 8),
           Expanded(child: Text(text)),
@@ -272,7 +272,7 @@ class _UploadCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -283,9 +283,9 @@ class _UploadCard extends StatelessWidget {
             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 6),
-          Text(type.hint, style: const TextStyle(color: AppTheme.muted)),
+          Text(type.hint, style: TextStyle(color: AppTheme.muted)),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             '图片需小于 10MB，建议画面清晰、主体完整；系统会自动压缩后上传。',
             style: TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4),
           ),
@@ -311,7 +311,7 @@ class _UploadCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               imageName!,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+              style: TextStyle(color: AppTheme.muted, fontSize: 12),
               overflow: TextOverflow.ellipsis,
             ),
           ],
@@ -332,7 +332,7 @@ class _ResultCard extends StatelessWidget {
     final adviceSections = _adviceSections(result);
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -385,7 +385,7 @@ class _ResultCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               '识别服务：${result.provider}',
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+              style: TextStyle(color: AppTheme.muted, fontSize: 12),
             ),
           ],
         ],
@@ -434,7 +434,7 @@ class _BulletText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('•  ',
+      Text('•  ',
           style:
               TextStyle(color: AppTheme.deepBlue, fontWeight: FontWeight.w900)),
       Expanded(child: Text(text, style: const TextStyle(height: 1.55))),
@@ -454,13 +454,13 @@ class _AdviceSection extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppTheme.cardBorder),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title,
-            style: const TextStyle(
+            style: TextStyle(
                 color: AppTheme.deepBlue, fontWeight: FontWeight.w900)),
         const SizedBox(height: 8),
         for (final item in items)
@@ -547,7 +547,7 @@ class _DimensionTile extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppTheme.cardBorder),
       ),
@@ -585,7 +585,7 @@ class _DimensionTile extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               '建议：${item.suggestion}',
-              style: const TextStyle(color: AppTheme.deepBlue, height: 1.4),
+              style: TextStyle(color: AppTheme.deepBlue, height: 1.4),
             ),
           ],
         ],
@@ -603,17 +603,17 @@ class _ErrorCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: _cardDecoration(),
+      decoration: _cardDecoration(context),
       child: Text(message, style: const TextStyle(color: Colors.redAccent)),
     );
   }
 }
 
-BoxDecoration _cardDecoration() {
+BoxDecoration _cardDecoration(BuildContext context) {
   return BoxDecoration(
-    color: Colors.white,
+    color: Theme.of(context).colorScheme.surfaceContainerLow,
     borderRadius: BorderRadius.circular(20),
-    border: Border.all(color: AppTheme.cardBorder),
+    border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
   );
 }
 

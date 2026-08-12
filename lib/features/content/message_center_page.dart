@@ -98,7 +98,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.pageBg,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('消息中心'),
         actions: [
@@ -115,7 +115,7 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
               onRefresh: _refresh,
               child: _items.isEmpty
                   ? ListView(
-                      children: const [
+                      children:  [
                         SizedBox(height: 190),
                         Icon(Icons.notifications_none,
                             size: 52, color: AppTheme.muted),

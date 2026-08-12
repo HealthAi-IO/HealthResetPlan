@@ -28,10 +28,6 @@ class OnlineDataApi {
         'version': version,
         'data': tables,
       });
-      final body = response.data;
-      if (body is Map && body['code'] == 40901) {
-        throw const OnlineDataConflictException();
-      }
       return _snapshot(response.data);
     } on DioException catch (error) {
       final body = error.response?.data;
@@ -43,10 +39,10 @@ class OnlineDataApi {
   }
 
   OnlineDataSnapshot _snapshot(Object? body) {
-    if (body is! Map || body['code'] != 0 || body['data'] is! Map) {
+    if (body is! Map) {
       throw const FormatException('在线数据响应格式错误');
     }
-    final payload = Map<String, dynamic>.from(body['data'] as Map);
+    final payload = Map<String, dynamic>.from(body);
     final rawTables = payload['data'];
     final tables = <String, List<Map<String, Object?>>>{};
     if (rawTables is Map) {

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 
 import 'api_client.dart';
+import 'api_response.dart';
 
 /// 认证 API：手机号注册 / 登录 / 刷新 Token / 注销。
 class AuthApi {
@@ -177,9 +178,8 @@ class AuthApi {
   Future<AccountInfo?> fetchAccountInfo() async {
     try {
       final resp = await _client.dio.get('/users/me');
-      if (resp.data is Map && resp.data['code'] == 0) {
-        final data = resp.data['data'] as Map<String, dynamic>?;
-        if (data == null) return null;
+      if (resp.data is Map) {
+        final data = Map<String, dynamic>.from(resp.data as Map);
         return AccountInfo(
           userId: data['userId'] as String? ?? '',
           customId: data['customId'] as String? ?? '',
@@ -209,13 +209,7 @@ class AuthApi {
     if (data.isEmpty) return fetchAccountInfo();
 
     final resp = await _client.dio.put('/users/me', data: data);
-    final body = resp.data;
-    if (body is Map && body['code'] == 0 && body['data'] is Map) {
-      return AccountInfo.fromJson(
-        Map<String, dynamic>.from(body['data'] as Map),
-      );
-    }
-    return fetchAccountInfo();
+    return AccountInfo.fromJson(requireApiMap(resp.data));
   }
 
   Future<String> uploadAvatar(String filePath) async {
@@ -227,12 +221,9 @@ class AuthApi {
       data: formData,
       options: Options(contentType: 'multipart/form-data'),
     );
-    final body = resp.data;
-    if (body is Map && body['code'] == 0 && body['data'] is Map) {
-      final data = Map<String, dynamic>.from(body['data'] as Map);
-      final avatarUrl = data['avatarUrl'] as String? ?? '';
-      if (avatarUrl.isNotEmpty) return avatarUrl;
-    }
+    final data = requireApiMap(resp.data);
+    final avatarUrl = data['avatarUrl'] as String? ?? '';
+    if (avatarUrl.isNotEmpty) return avatarUrl;
     throw StateError('头像上传失败');
   }
 
@@ -240,16 +231,7 @@ class AuthApi {
     if (body is! Map) {
       throw StateError('服务器响应格式异常');
     }
-    final code = (body['code'] as num?)?.toInt() ?? 0;
-    if (code != 0) {
-      throw AuthApiException(
-        code,
-        (body['message'] ?? body['msg'])?.toString() ?? '请求失败',
-      );
-    }
-    final data = body['data'];
-    if (data is Map) return Map<String, dynamic>.from(data);
-    throw StateError('服务器响应缺少 data 字段');
+    return Map<String, dynamic>.from(body);
   }
 }
 

@@ -146,9 +146,9 @@ class _ChatPageState extends State<ChatPage> {
         minChildSize: 0.4,
         maxChildSize: 0.92,
         builder: (_, scrollCtrl) => Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: Column(
             children: [
@@ -188,7 +188,7 @@ class _ChatPageState extends State<ChatPage> {
               const Divider(height: 1),
               Expanded(
                 child: sessions.isEmpty
-                    ? const Center(
+                    ?  Center(
                         child: Padding(
                           padding: EdgeInsets.all(32),
                           child: Text(
@@ -238,7 +238,7 @@ class _ChatPageState extends State<ChatPage> {
                             ),
                             subtitle: Text(
                               '$time · ${s.messageCount} 条消息',
-                              style: const TextStyle(
+                              style:  TextStyle(
                                 fontSize: 11,
                                 color: AppTheme.muted,
                               ),
@@ -464,7 +464,7 @@ class _ChatPageState extends State<ChatPage> {
     // 会自动把整个 body 上推让出键盘空间，
     // 因此输入栏不再需要手动加 viewInsets.bottom。
     return Scaffold(
-      backgroundColor: AppTheme.pageBg,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: Text(
           _currentSession?.title.isNotEmpty == true
@@ -473,7 +473,7 @@ class _ChatPageState extends State<ChatPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        bottom: const PreferredSize(
+        bottom:  PreferredSize(
           preferredSize: Size.fromHeight(22),
           child: Padding(
             padding: EdgeInsets.only(bottom: 6),
@@ -591,7 +591,7 @@ class _ChatPageState extends State<ChatPage> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 8),
-          const Text(
+           Text(
             '有什么健康问题，直接问我吧',
             style: TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
@@ -615,13 +615,16 @@ class _ChatPageState extends State<ChatPage> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(color: AppTheme.cardBorder),
               ),
               child: Text(
                 _quickQuestions[i],
-                style: const TextStyle(fontSize: 12, color: AppTheme.ink),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
               ),
             ),
           );
@@ -636,9 +639,13 @@ class _ChatPageState extends State<ChatPage> {
       top: false,
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: AppTheme.cardBorder)),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            top: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
         ),
         child: Row(
           children: [
@@ -651,12 +658,12 @@ class _ChatPageState extends State<ChatPage> {
                 textInputAction: TextInputAction.newline,
                 decoration: InputDecoration(
                   hintText: '输入健康问题…',
-                  hintStyle: const TextStyle(
+                  hintStyle:  TextStyle(
                     color: AppTheme.muted,
                     fontSize: 14,
                   ),
                   filled: true,
-                  fillColor: AppTheme.pageBg,
+                  fillColor: Theme.of(context).colorScheme.surfaceContainerLow,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 10,
@@ -793,7 +800,7 @@ class _MessageBubble extends StatelessWidget {
                       ? AppTheme.deepBlue
                       : isError
                           ? Colors.red.shade50
-                          : Colors.white,
+                          : Theme.of(context).colorScheme.surfaceContainerLow,
                   borderRadius: BorderRadius.only(
                     topLeft: const Radius.circular(18),
                     topRight: const Radius.circular(18),
@@ -805,7 +812,7 @@ class _MessageBubble extends StatelessWidget {
                       : Border.all(
                           color: isError
                               ? Colors.red.shade200
-                              : AppTheme.cardBorder,
+                              : Theme.of(context).colorScheme.outlineVariant,
                         ),
                 ),
                 child: Column(
@@ -824,7 +831,7 @@ class _MessageBubble extends StatelessWidget {
                             ? Colors.white
                             : isError
                                 ? Colors.red.shade700
-                                : AppTheme.ink,
+                                : Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                   ],

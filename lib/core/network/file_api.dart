@@ -52,11 +52,9 @@ class FileApi {
       queryParameters: queryParameters,
       options: Options(contentType: 'multipart/form-data'),
     );
-    final body = response.data;
-    if (body is Map && body['code'] == 0 && body['data'] is Map) {
-      return '${(body['data'] as Map)['objectKey'] ?? ''}';
-    }
-    throw StateError('${body is Map ? body['message'] : '文件上传失败'}');
+    final data = response.data;
+    if (data is Map) return '${data['objectKey'] ?? ''}';
+    throw const FormatException('文件上传响应格式异常');
   }
 
   Future<void> delete(String objectKey) async {

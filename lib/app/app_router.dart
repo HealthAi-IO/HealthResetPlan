@@ -97,103 +97,128 @@ class AppRouter {
       return null;
     },
     routes: [
-      ShellRoute(
-        builder: (context, state, child) {
-          return AppShell(location: state.uri.path, child: child);
-        },
-        routes: [
-          GoRoute(path: '/', redirect: (_, __) => '/home'),
-          GoRoute(
-            path: '/home',
-            name: '/home',
-            pageBuilder: (_, state) => _shellPage(
-              state,
-              _DeferredPage(
-                load: home.loadLibrary,
-                builder: () => home.HomePage(),
-              ),
-            ),
-          ),
-          GoRoute(
-            path: '/profile',
-            pageBuilder: (_, state) => _shellPage(
-              state,
-              _DeferredPage(
-                load: profile.loadLibrary,
-                builder: () => profile.ProfilePage(
-                  manageAiOnOpen: state.uri.queryParameters['manageAi'] == '1',
-                  guideProfileOnOpen:
-                      state.uri.queryParameters['guideProfile'] == '1',
-                ),
-              ),
-            ),
-          ),
-          GoRoute(
-            path: '/plan',
-            name: '/plan',
-            pageBuilder: (_, state) => _shellPage(
-              state,
-              _DeferredPage(
-                load: plan.loadLibrary,
-                builder: () => plan.PlanPage(),
-              ),
-            ),
-          ),
-          GoRoute(
-            path: '/records',
-            name: '/records',
-            pageBuilder: (_, state) => _shellPage(
-              state,
-              _DeferredPage(
-                load: records.loadLibrary,
-                builder: () => records.RecordHubPage(
-                  initialView: state.uri.queryParameters['view'] ?? 'clock',
-                  initialReminderId: int.tryParse(
-                    state.uri.queryParameters['reminderId'] ?? '',
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) => AppShell(
+          location: state.uri.path,
+          navigationShell: navigationShell,
+          child: navigationShell,
+        ),
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/home',
+                name: '/home',
+                pageBuilder: (_, state) => _shellPage(
+                  state,
+                  _DeferredPage(
+                    load: home.loadLibrary,
+                    builder: () => home.HomePage(),
                   ),
-                  openReminderSettings:
-                      state.uri.queryParameters['manage'] == 'rules',
                 ),
               ),
-            ),
+            ],
           ),
-          GoRoute(
-            path: '/meals',
-            name: '/meals',
-            pageBuilder: (_, state) => _shellPage(
-              state,
-              _DeferredPage(
-                load: food_hub.loadLibrary,
-                builder: () => food_hub.FoodHubPage(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/plan',
+                name: '/plan',
+                pageBuilder: (_, state) => _shellPage(
+                  state,
+                  _DeferredPage(
+                    load: plan.loadLibrary,
+                    builder: () => plan.PlanPage(),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
-          GoRoute(
-            path: '/clock',
-            name: '/clock',
-            redirect: (_, state) => Uri(
-              path: '/records',
-              queryParameters: {
-                'view': 'clock',
-                ...state.uri.queryParameters,
-              },
-            ).toString(),
-          ),
-          GoRoute(
-            path: '/stats',
-            redirect: (_, __) => '/records?view=stats',
-          ),
-          GoRoute(
-            path: '/quit-smoking',
-            pageBuilder: (_, state) => _shellPage(
-              state,
-              _DeferredPage(
-                load: quit_smoking.loadLibrary,
-                builder: () => quit_smoking.QuitSmokingPage(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/meals',
+                name: '/meals',
+                pageBuilder: (_, state) => _shellPage(
+                  state,
+                  _DeferredPage(
+                    load: food_hub.loadLibrary,
+                    builder: () => food_hub.FoodHubPage(),
+                  ),
+                ),
               ),
-            ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/records',
+                name: '/records',
+                pageBuilder: (_, state) => _shellPage(
+                  state,
+                  _DeferredPage(
+                    load: records.loadLibrary,
+                    builder: () => records.RecordHubPage(
+                      initialView: state.uri.queryParameters['view'] ?? 'clock',
+                      initialReminderId: int.tryParse(
+                        state.uri.queryParameters['reminderId'] ?? '',
+                      ),
+                      openReminderSettings:
+                          state.uri.queryParameters['manage'] == 'rules',
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+      GoRoute(path: '/', redirect: (_, __) => '/home'),
+      GoRoute(
+        path: '/welcome-letter',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: home.loadLibrary,
+            builder: () => home.WelcomeLetterPage(),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/profile',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: profile.loadLibrary,
+            builder: () => profile.ProfilePage(
+              manageAiOnOpen: state.uri.queryParameters['manageAi'] == '1',
+              guideProfileOnOpen:
+                  state.uri.queryParameters['guideProfile'] == '1',
+            ),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/clock',
+        name: '/clock',
+        redirect: (_, state) => Uri(
+          path: '/records',
+          queryParameters: {
+            'view': 'clock',
+            ...state.uri.queryParameters,
+          },
+        ).toString(),
+      ),
+      GoRoute(path: '/stats', redirect: (_, __) => '/records?view=stats'),
+      GoRoute(
+        path: '/quit-smoking',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: quit_smoking.loadLibrary,
+            builder: () => quit_smoking.QuitSmokingPage(),
+          ),
+        ),
       ),
       GoRoute(
         path: '/indicators',

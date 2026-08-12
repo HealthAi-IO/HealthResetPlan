@@ -57,7 +57,7 @@ class OnboardingPage extends StatelessWidget {
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
-                const Text(
+                 Text(
                   '从了解自己的身体开始，记录日常变化，逐步建立适合你的健康节奏。',
                   style: TextStyle(color: AppTheme.muted, height: 1.6),
                 ),
@@ -149,7 +149,7 @@ class _StepRow extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 4),
                 Text(step.desc,
-                    style: const TextStyle(color: AppTheme.muted, height: 1.5)),
+                    style:  TextStyle(color: AppTheme.muted, height: 1.5)),
               ],
             ),
           ),

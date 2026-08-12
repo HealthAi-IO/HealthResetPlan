@@ -107,7 +107,7 @@ class _ContentListPageState extends State<ContentListPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.pageBg,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('健康资讯'),
         actions: [
@@ -138,7 +138,7 @@ class _ContentListPageState extends State<ContentListPage> {
       return RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
-          children: const [
+          children:  [
             SizedBox(height: 180),
             Icon(Icons.auto_stories_outlined, size: 52, color: AppTheme.muted),
             SizedBox(height: 14),
@@ -200,7 +200,7 @@ class _FilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
@@ -301,7 +301,7 @@ class _ContentCard extends StatelessWidget {
                   const SizedBox(height: 11),
                   Text(
                     item.title,
-                    style: const TextStyle(
+                    style:  TextStyle(
                       color: AppTheme.ink,
                       fontSize: 18,
                       height: 1.35,
@@ -315,7 +315,7 @@ class _ContentCard extends StatelessWidget {
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style:
-                          const TextStyle(color: AppTheme.muted, height: 1.55),
+                           TextStyle(color: AppTheme.muted, height: 1.55),
                     ),
                   ],
                   const SizedBox(height: 13),
@@ -323,7 +323,7 @@ class _ContentCard extends StatelessWidget {
                     item.publishedAt == null
                         ? ''
                         : DateFormat('yyyy年MM月dd日').format(item.publishedAt!),
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                    style:  TextStyle(color: AppTheme.muted, fontSize: 12),
                   ),
                 ],
               ),
@@ -372,7 +372,7 @@ class _ErrorView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.cloud_off_outlined, size: 48, color: AppTheme.muted),
+           Icon(Icons.cloud_off_outlined, size: 48, color: AppTheme.muted),
           const SizedBox(height: 12),
           Text(message),
           const SizedBox(height: 16),

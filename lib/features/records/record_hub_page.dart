@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../clock/clock_page.dart';
 import '../stats/stats_page.dart';
 import 'data_calendar_page.dart';
+import 'weekly_health_report_page.dart';
 import '../../core/widgets/health_ui.dart';
 
 class RecordHubPage extends StatefulWidget {
@@ -22,7 +24,37 @@ class RecordHubPage extends StatefulWidget {
 }
 
 class _RecordHubPageState extends State<RecordHubPage> {
-  late int _index = widget.initialView == 'stats' ? 2 : 1;
+  int _indexForView(String view) => switch (view) {
+        'clock' => 0,
+        'stats' => 2,
+        'weekly' => 3,
+        _ => 1,
+      };
+
+  late int _index = _indexForView(widget.initialView);
+
+  String _viewForIndex(int index) => switch (index) {
+        0 => 'clock',
+        2 => 'stats',
+        3 => 'weekly',
+        _ => 'calendar',
+      };
+
+  void _selectIndex(int index) {
+    if (_index != index) setState(() => _index = index);
+    final view = _viewForIndex(index);
+    if (GoRouterState.of(context).uri.queryParameters['view'] != view) {
+      context.go('/records?view=$view');
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant RecordHubPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialView != widget.initialView) {
+      _index = _indexForView(widget.initialView);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,28 +66,21 @@ class _RecordHubPageState extends State<RecordHubPage> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-          child: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(
-                value: 0,
-                icon: Icon(Icons.check_circle_outline),
-                label: Text('今日打卡'),
-              ),
-              ButtonSegment(
-                value: 1,
-                icon: Icon(Icons.calendar_month_outlined),
-                label: Text('数据日历'),
-              ),
-              ButtonSegment(
-                value: 2,
-                icon: Icon(Icons.insights_outlined),
-                label: Text('趋势分析'),
-              ),
-            ],
-            selected: {_index},
-            onSelectionChanged: (value) {
-              setState(() => _index = value.first);
-            },
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<int>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 0, label: Text('打卡')),
+                ButtonSegment(value: 1, label: Text('日历')),
+                ButtonSegment(value: 2, label: Text('趋势')),
+                ButtonSegment(value: 3, label: Text('AI周报')),
+              ],
+              selected: {_index},
+              onSelectionChanged: (value) {
+                _selectIndex(value.first);
+              },
+            ),
           ),
         ),
         Expanded(
@@ -67,7 +92,8 @@ class _RecordHubPageState extends State<RecordHubPage> {
                 openReminderSettings: widget.openReminderSettings,
               ),
               const DataCalendarPage(),
-              const StatsPage(),
+              StatsPage(onOpenClock: () => _selectIndex(0)),
+              const WeeklyHealthReportPage(),
             ],
           ),
         ),

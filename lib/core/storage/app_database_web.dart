@@ -1,4 +1,5 @@
 import '../network/online_data_api.dart';
+import 'data_sync_merge.dart';
 import 'data_sync_status.dart';
 
 class OnlineDataRequiredException implements Exception {
@@ -77,6 +78,7 @@ class _MemoryAppDatabase extends AppDatabase {
     'reminder',
     'sync_queue',
     'health_report',
+    'ai_weekly_report',
     'meal_record',
     'meal_recipe',
     'meal_settings',
@@ -88,6 +90,7 @@ class _MemoryAppDatabase extends AppDatabase {
 
   OnlineDataApi? _onlineApi;
   int _onlineVersion = 0;
+  Map<String, List<Map<String, Object?>>> _onlineBaseline = {};
   final Map<String, List<Map<String, Object?>>> _data = {
     for (final table in _tables) table: <Map<String, Object?>>[],
   };
@@ -166,9 +169,16 @@ class _MemoryAppDatabase extends AppDatabase {
               .map((row) => Map<String, Object?>.from(row)..remove('space_id'))
               .toList();
         }
-        final saved = await api.save(_onlineVersion, tables);
+        late final OnlineDataSnapshot saved;
+        try {
+          saved = await api.save(_onlineVersion, tables);
+        } on OnlineDataConflictException {
+          await _mergeAfterConflict(api, space, tables);
+          return;
+        }
         if (!identical(_onlineApi, api) || _activeSpace != space) return;
         _onlineVersion = saved.version;
+        _onlineBaseline = _deepCopy(tables);
         dataSyncStatusController.markSynced();
       } catch (error) {
         dataSyncStatusController.markFailed(error);
@@ -186,6 +196,54 @@ class _MemoryAppDatabase extends AppDatabase {
     });
     _saveTail = tracked;
     return tracked;
+  }
+
+  Future<void> _mergeAfterConflict(
+    OnlineDataApi api,
+    String space,
+    Map<String, List<Map<String, Object?>>> local,
+  ) async {
+    final remote = await api.load();
+    if (!identical(_onlineApi, api) || _activeSpace != space) return;
+    final merge = mergeDataSyncTables(
+      base: _onlineBaseline,
+      local: local,
+      remote: remote.tables,
+    );
+    if (merge.conflicts.isEmpty) {
+      final saved = await api.save(remote.version, merge.tables);
+      _replaceOnlineSpace(space, merge.tables);
+      _onlineVersion = saved.version;
+      _onlineBaseline = _deepCopy(merge.tables);
+      dataSyncStatusController.markSynced();
+      return;
+    }
+    dataSyncStatusController.markConflict(merge, (choices) async {
+      final resolved = merge.resolve(choices);
+      final saved = await api.save(remote.version, resolved);
+      if (!identical(_onlineApi, api) || _activeSpace != space) return;
+      _replaceOnlineSpace(space, resolved);
+      _onlineVersion = saved.version;
+      _onlineBaseline = _deepCopy(resolved);
+    });
+  }
+
+  void _replaceOnlineSpace(
+    String space,
+    Map<String, List<Map<String, Object?>>> tables,
+  ) {
+    _loadingOnline = true;
+    try {
+      for (final table in _onlineTables) {
+        final rows = _table(table);
+        rows.removeWhere((row) => row['space_id'] == space);
+        rows.addAll(
+          (tables[table] ?? const []).map((row) => {...row, 'space_id': space}),
+        );
+      }
+    } finally {
+      _loadingOnline = false;
+    }
   }
 
   Future<void> _persistIfNeeded() async {
@@ -220,6 +278,7 @@ class _MemoryAppDatabase extends AppDatabase {
     final space = _activeSpace;
     _onlineApi = null;
     _onlineVersion = 0;
+    _onlineBaseline = {};
     _saveTail = null;
     dataSyncStatusController.attachRetry(null);
     for (final table in _onlineTables) {
@@ -244,6 +303,7 @@ class _MemoryAppDatabase extends AppDatabase {
         );
       }
       _onlineVersion = snapshot.version;
+      _onlineBaseline = _deepCopy(snapshot.tables);
     } finally {
       _loadingOnline = false;
     }
@@ -256,6 +316,7 @@ class _MemoryAppDatabase extends AppDatabase {
     'clock_record',
     'reminder',
     'health_report',
+    'ai_weekly_report',
     'meal_record',
     'meal_recipe',
     'meal_settings',

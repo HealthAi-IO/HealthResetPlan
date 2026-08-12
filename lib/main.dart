@@ -22,16 +22,14 @@ import 'core/network/telemetry_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
 import 'core/update/app_update_service.dart';
 
-ThemeMode get _themeMode => ThemeMode.light;
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
+    SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.dark,
       statusBarBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.white,
+      systemNavigationBarColor: AppTheme.surface,
       systemNavigationBarIconBrightness: Brightness.dark,
       systemNavigationBarDividerColor: AppTheme.cardBorder,
     ),
@@ -106,9 +104,9 @@ class _AppLoaderState extends State<_AppLoader> {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         title: '健康重启计划',
-        theme: AppTheme.light,
-        darkTheme: AppTheme.dark,
-        themeMode: _themeMode,
+        theme: AppTheme.lightFor(themeController.colorTheme.seed),
+        darkTheme: AppTheme.darkFor(themeController.colorTheme.seed),
+        themeMode: themeController.themeMode,
         home: Scaffold(
           body: Center(
             child: Padding(
@@ -142,9 +140,9 @@ class _AppLoaderState extends State<_AppLoader> {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         title: '健康重启计划',
-        theme: AppTheme.light,
-        darkTheme: AppTheme.dark,
-        themeMode: _themeMode,
+        theme: AppTheme.lightFor(themeController.colorTheme.seed),
+        darkTheme: AppTheme.darkFor(themeController.colorTheme.seed),
+        themeMode: themeController.themeMode,
         home: Scaffold(
           backgroundColor: AppTheme.pageBg,
           body: const _SplashContent(),
@@ -191,7 +189,7 @@ class _SplashContent extends StatelessWidget {
                   filterQuality: FilterQuality.high,
                 ),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   '健康重启计划',
                   style: TextStyle(
                     fontSize: 27,
@@ -201,7 +199,7 @@ class _SplashContent extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
+                Text(
                   '每一次记录，都在靠近更好的自己',
                   style: TextStyle(
                     fontSize: 15,
@@ -211,7 +209,7 @@ class _SplashContent extends StatelessWidget {
                   ),
                 ),
                 const Spacer(flex: 5),
-                const Text(
+                Text(
                   '正在开启你的健康计划',
                   style: TextStyle(
                     color: AppTheme.muted,
@@ -227,7 +225,7 @@ class _SplashContent extends StatelessWidget {
                       color: AppTheme.primaryBlue.withValues(alpha: 0.45),
                     ),
                     const SizedBox(width: 12),
-                    const _SplashDot(color: AppTheme.primaryBlue),
+                    _SplashDot(color: AppTheme.primaryBlue),
                     const SizedBox(width: 12),
                     _SplashDot(
                       color: AppTheme.accentCyan.withValues(alpha: 0.82),
@@ -348,10 +346,10 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   }
 
   void _showSiteMessage(SiteMessage message) {
-    appMessengerKey.currentState?.showSnackBar(
+    showAppSnackBar(
       SnackBar(
         content: Text(message.title),
-        duration: const Duration(seconds: 8),
+        duration: const Duration(seconds: 6),
         action: SnackBarAction(
           label: '查看',
           onPressed: () async {
@@ -376,9 +374,13 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     if (currentPath == '/plan') return;
 
     if (_aiPlanController.status == AiPlanGenerationStatus.completed) {
-      appMessengerKey.currentState?.showSnackBar(
+      final usedLocalFallback = _aiPlanController.usedLocalFallback;
+      showAppSnackBar(
         SnackBar(
-          content: const Text('AI 健康计划已生成'),
+          duration: appActionSnackBarDuration,
+          content: Text(
+            usedLocalFallback ? 'AI 暂时不可用，本地详细方案已准备，请确认后应用' : 'AI 健康计划已生成',
+          ),
           action: SnackBarAction(
             label: '查看',
             onPressed: () => AppRouter.router.go('/plan'),
@@ -386,8 +388,9 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
         ),
       );
     } else if (_aiPlanController.status == AiPlanGenerationStatus.failed) {
-      appMessengerKey.currentState?.showSnackBar(
+      showAppSnackBar(
         SnackBar(
+          duration: appActionSnackBarDuration,
           content: const Text('AI 健康计划生成失败'),
           action: SnackBarAction(
             label: '返回计划',
@@ -401,10 +404,10 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   void _showReminder(ReminderData reminder) {
     final note = reminder.payload['note'] as String? ?? '';
     final body = note.isNotEmpty ? note : reminder.label;
-    appMessengerKey.currentState?.showSnackBar(
+    showAppSnackBar(
       SnackBar(
         content: Text(body),
-        duration: const Duration(seconds: 8),
+        duration: const Duration(seconds: 6),
         action: SnackBarAction(
           label: '查看',
           onPressed: () {
@@ -431,7 +434,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     try {
       if (event.action == 'snooze') {
         await sl<ReminderScheduler>().snoozeMedication(reminder);
-        appMessengerKey.currentState?.showSnackBar(
+        showAppSnackBar(
           const SnackBar(content: Text('已延后 10 分钟')),
         );
         return;
@@ -466,11 +469,11 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
       await sl<ReminderScheduler>().syncReminder(updated);
       final actionText = event.action == 'taken' ? '已记录服药' : '已记录跳过';
       final refillText = updated.refillNeeded ? '，药量不足，请及时补药' : '';
-      appMessengerKey.currentState?.showSnackBar(
+      showAppSnackBar(
         SnackBar(content: Text('$actionText$refillText')),
       );
     } catch (_) {
-      appMessengerKey.currentState?.showSnackBar(
+      showAppSnackBar(
         const SnackBar(content: Text('记录失败，请检查网络后重试')),
       );
     }
@@ -524,7 +527,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
 
   Future<void> _openUpdate(String packageUrl) async {
     if (!isTrustedPackageUrl(packageUrl)) {
-      appMessengerKey.currentState?.showSnackBar(
+      showAppSnackBar(
         const SnackBar(content: Text('更新地址未通过安全校验')),
       );
       return;
@@ -534,7 +537,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
       mode: LaunchMode.externalApplication,
     );
     if (!opened) {
-      appMessengerKey.currentState?.showSnackBar(
+      showAppSnackBar(
         const SnackBar(content: Text('无法打开下载地址，请稍后重试')),
       );
     }
@@ -543,10 +546,11 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: appSettingsController,
+      animation: Listenable.merge([appSettingsController, themeController]),
       builder: (context, _) {
         final seniorMode = appSettingsController.seniorMode;
-        final baseTheme = AppTheme.light;
+        final seed = themeController.colorTheme.seed;
+        final baseTheme = AppTheme.lightFor(seed);
         return MaterialApp.router(
           scaffoldMessengerKey: appMessengerKey,
           title: '健康重启计划',
@@ -580,8 +584,8 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
                   ),
                 )
               : baseTheme,
-          darkTheme: AppTheme.dark,
-          themeMode: _themeMode,
+          darkTheme: AppTheme.darkFor(seed),
+          themeMode: themeController.themeMode,
           routerConfig: AppRouter.router,
           debugShowCheckedModeBanner: false,
           supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
@@ -591,11 +595,30 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
             GlobalCupertinoLocalizations.delegate,
           ],
           builder: (context, child) {
-            if (!seniorMode) return child ?? const SizedBox.shrink();
-            final media = MediaQuery.of(context);
-            return MediaQuery(
-              data: media.copyWith(textScaler: const TextScaler.linear(1.22)),
-              child: child ?? const SizedBox.shrink(),
+            Widget content = child ?? const SizedBox.shrink();
+            if (seniorMode) {
+              final media = MediaQuery.of(context);
+              final systemTextScale = media.textScaler.scale(16) / 16;
+              content = MediaQuery(
+                data: media.copyWith(
+                  textScaler: TextScaler.linear(systemTextScale * 1.12),
+                ),
+                child: content,
+              );
+            }
+            final dark = Theme.of(context).brightness == Brightness.dark;
+            final colors = Theme.of(context).colorScheme;
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness:
+                    dark ? Brightness.light : Brightness.dark,
+                statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+                systemNavigationBarColor: colors.surface,
+                systemNavigationBarIconBrightness:
+                    dark ? Brightness.light : Brightness.dark,
+              ),
+              child: content,
             );
           },
         );

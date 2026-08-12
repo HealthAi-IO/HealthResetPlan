@@ -69,7 +69,8 @@ class ChatMessage {
         provider: (row['provider'] as String?) ?? '',
         isError: ((row['is_error'] as int?) ?? 0) == 1,
         createdAt: (row['created_at'] as int?) ?? 0,
-        updatedAt: (row['updated_at'] as int?) ?? (row['created_at'] as int?) ?? 0,
+        updatedAt:
+            (row['updated_at'] as int?) ?? (row['created_at'] as int?) ?? 0,
         messageUuid: (row['message_uuid'] as String?) ?? '',
         sessionUuid: (row['session_uuid'] as String?) ?? '',
       );
@@ -124,19 +125,21 @@ class ChatRepository {
     final db = await _database.open();
     await db.transaction((txn) async {
       await _ensureUuids(txn);
-      final sessionRows = await txn.query('ai_session', where: 'id = ?', whereArgs: [sessionId]);
+      final sessionRows = await txn
+          .query('ai_session', where: 'id = ?', whereArgs: [sessionId]);
       if (sessionRows.isEmpty) return;
       final now = DateTime.now().millisecondsSinceEpoch;
       final sessionUuid = sessionRows.first['session_uuid'] as String;
-      final messages = await txn.query('ai_message', where: 'session_id = ?', whereArgs: [sessionId]);
+      final messages = await txn
+          .query('ai_message', where: 'session_id = ?', whereArgs: [sessionId]);
       for (final message in messages) {
         await _enqueueDelete(txn, 'ai_message', message['id'] as int,
             message['message_uuid'] as String, now);
       }
       await _enqueueDelete(txn, 'ai_session', sessionId, sessionUuid, now);
-      await txn.delete('ai_message', where: 'session_id = ?', whereArgs: [sessionId]);
-      await txn.delete('ai_session',
-          where: 'id = ?', whereArgs: [sessionId]);
+      await txn.delete('ai_message',
+          where: 'session_id = ?', whereArgs: [sessionId]);
+      await txn.delete('ai_session', where: 'id = ?', whereArgs: [sessionId]);
     });
   }
 
@@ -193,7 +196,9 @@ class ChatRepository {
         'created_at': now,
         'updated_at': now,
         'message_uuid': _uuid.v4(),
-        'session_uuid': (await txn.query('ai_session', where: 'id = ?', whereArgs: [sessionId], limit: 1)).first['session_uuid'],
+        'session_uuid': (await txn.query('ai_session',
+                where: 'id = ?', whereArgs: [sessionId], limit: 1))
+            .first['session_uuid'],
         'version': now,
         'is_dirty': 1,
         'sync_at': 0,
@@ -276,9 +281,11 @@ class ChatRepository {
     final db = await _database.open();
     final sessions = await db.query('ai_session');
     for (final session in sessions) {
-      final count = await db.count('ai_message', where: 'session_id = ?', whereArgs: [session['id']]);
+      final count = await db.count('ai_message',
+          where: 'session_id = ?', whereArgs: [session['id']]);
       if (count != session['message_count']) {
-        await db.update('ai_session', {'message_count': count}, where: 'id = ?', whereArgs: [session['id']]);
+        await db.update('ai_session', {'message_count': count},
+            where: 'id = ?', whereArgs: [session['id']]);
       }
     }
   }
@@ -290,34 +297,62 @@ class ChatRepository {
       if (sessionUuid.isEmpty) {
         sessionUuid = _uuid.v4();
         final now = DateTime.now().millisecondsSinceEpoch;
-        await db.update('ai_session', {
-          'session_uuid': sessionUuid, 'updated_at': now, 'version': now, 'is_dirty': 1, 'sync_at': 0,
-        }, where: 'id = ?', whereArgs: [session['id']]);
+        await db.update(
+            'ai_session',
+            {
+              'session_uuid': sessionUuid,
+              'updated_at': now,
+              'version': now,
+              'is_dirty': 1,
+              'sync_at': 0,
+            },
+            where: 'id = ?',
+            whereArgs: [session['id']]);
       }
-      final messages = await db.query('ai_message', where: 'session_id = ?', whereArgs: [session['id']]);
+      final messages = await db.query('ai_message',
+          where: 'session_id = ?', whereArgs: [session['id']]);
       for (final message in messages) {
         if ((message['message_uuid'] as String? ?? '').isNotEmpty &&
             (message['session_uuid'] as String? ?? '').isNotEmpty) {
           continue;
         }
         final now = DateTime.now().millisecondsSinceEpoch;
-        await db.update('ai_message', {
-          'message_uuid': (message['message_uuid'] as String? ?? '').isEmpty ? _uuid.v4() : message['message_uuid'],
-          'session_uuid': sessionUuid,
-          'updated_at': (message['updated_at'] as int? ?? 0) > 0 ? message['updated_at'] : now,
-          'version': (message['version'] as int? ?? 0) > 0 ? message['version'] : now,
-          'is_dirty': 1,
-          'sync_at': 0,
-        }, where: 'id = ?', whereArgs: [message['id']]);
+        await db.update(
+            'ai_message',
+            {
+              'message_uuid': (message['message_uuid'] as String? ?? '').isEmpty
+                  ? _uuid.v4()
+                  : message['message_uuid'],
+              'session_uuid': sessionUuid,
+              'updated_at': (message['updated_at'] as int? ?? 0) > 0
+                  ? message['updated_at']
+                  : now,
+              'version': (message['version'] as int? ?? 0) > 0
+                  ? message['version']
+                  : now,
+              'is_dirty': 1,
+              'sync_at': 0,
+            },
+            where: 'id = ?',
+            whereArgs: [message['id']]);
       }
     }
   }
 
-  Future<void> _enqueueDelete(AppDatabase db, String table, int rowId, String clientId, int now) {
+  Future<void> _enqueueDelete(
+      AppDatabase db, String table, int rowId, String clientId, int now) {
     return db.insert('sync_queue', {
-      'table_name': table, 'row_id': rowId, 'op': 'delete',
-      'payload_json': jsonEncode({'table': table, 'clientId': clientId, 'version': now, 'clientUpdatedAt': now}),
-      'created_at': now, 'updated_at': now,
+      'table_name': table,
+      'row_id': rowId,
+      'op': 'delete',
+      'payload_json': jsonEncode({
+        'table': table,
+        'clientId': clientId,
+        'version': now,
+        'clientUpdatedAt': now
+      }),
+      'created_at': now,
+      'updated_at': now,
     }).then((_) {});
   }
 }

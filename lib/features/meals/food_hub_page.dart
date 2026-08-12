@@ -11,7 +11,9 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import 'meal_input_args.dart';
+import 'meal_slots.dart';
 import '../../core/widgets/health_ui.dart';
+import 'personalized_menu_page.dart';
 
 class FoodHubPage extends StatefulWidget {
   const FoodHubPage({super.key});
@@ -24,10 +26,13 @@ class _FoodHubPageState extends State<FoodHubPage> {
   final _repo = sl<HealthRepository>();
 
   bool _loading = true;
+  String? _loadError;
   int _tabIndex = 0;
   DateTime _selectedDate = DateTime.now();
   List<MealRecordData> _meals = const [];
   List<MealRecipeData> _recipes = const [];
+  List<PlanRecordData> _menuPlans = const [];
+  UserProfileData? _profile;
   DailyNutritionTargets _targets = const DailyNutritionTargets(
     calories: 0,
     proteinG: 0,
@@ -54,29 +59,46 @@ class _FoodHubPageState extends State<FoodHubPage> {
 
   Future<void> _load({bool silent = false, bool ensureRecipes = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
-    if (ensureRecipes) await _repo.ensureStarterMealRecipes();
-    final now = DateTime.now();
-    final results = await Future.wait<Object?>([
-      _repo.loadMealsBetween(
-        DateTime(now.year - 1, 1, 1),
-        DateTime(now.year + 1, 1, 1),
-      ),
-      _repo.loadMealRecipes(),
-      _repo.loadProfile(),
-      _repo.loadMealSettings(),
-    ]);
-    if (!mounted) return;
-    final settings = results[3] as Map<String, dynamic>;
-    setState(() {
-      _meals = results[0] as List<MealRecordData>;
-      _recipes = results[1] as List<MealRecipeData>;
-      _targets = DailyNutritionTargets.fromProfile(
-        results[2] as UserProfileData?,
-      );
-      _budgetEnabled = settings['budgetEnabled'] == true;
-      _monthlyBudget = (settings['monthlyBudget'] as num?)?.toDouble() ?? 0;
-      _loading = false;
-    });
+    try {
+      final results = await (() async {
+        if (ensureRecipes) await _repo.ensureStarterMealRecipes();
+        final now = DateTime.now();
+        return Future.wait<Object?>([
+          _repo.loadMealsBetween(
+            DateTime(now.year - 1, 1, 1),
+            DateTime(now.year + 1, 1, 1),
+          ),
+          _repo.loadMealRecipes(),
+          _repo.loadProfile(),
+          _repo.loadMealSettings(),
+          _repo.loadPlans(limit: 1000),
+        ]);
+      })()
+          .timeout(const Duration(seconds: 12));
+      if (!mounted) return;
+      final settings = results[3] as Map<String, dynamic>;
+      setState(() {
+        _meals = results[0] as List<MealRecordData>;
+        _recipes = results[1] as List<MealRecipeData>;
+        _profile = results[2] as UserProfileData?;
+        _menuPlans = (results[4] as List<PlanRecordData>)
+            .where((item) => item.type == 'meal')
+            .toList();
+        _targets = DailyNutritionTargets.fromProfile(
+          _profile,
+        );
+        _budgetEnabled = settings['budgetEnabled'] == true;
+        _monthlyBudget = (settings['monthlyBudget'] as num?)?.toDouble() ?? 0;
+        _loadError = null;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = '暂时无法加载饮食数据，请检查网络后重试。';
+        _loading = false;
+      });
+    }
   }
 
   List<MealRecordData> get _selectedMeals =>
@@ -195,6 +217,7 @@ class _FoodHubPageState extends State<FoodHubPage> {
         ),
       ),
     );
+    await Future<void>.delayed(kThemeAnimationDuration);
     controller.dispose();
     if (result == null) return;
     await _repo.saveMealSettings({
@@ -252,9 +275,31 @@ class _FoodHubPageState extends State<FoodHubPage> {
     await _repo.saveMealRecipe(result);
   }
 
+  Future<void> _openPersonalizedMenu() async {
+    final profile = _profile;
+    if (profile == null || !profile.isComplete) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在“我的”完善基础档案')),
+      );
+      return;
+    }
+    final applied = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PersonalizedMenuPage(
+          profile: profile,
+          targets: _targets,
+        ),
+      ),
+    );
+    if (applied == true) await _load(silent: true);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loadError != null && _meals.isEmpty && _recipes.isEmpty) {
+      return _MealLoadFailureView(onRetry: () => _load(ensureRecipes: true));
+    }
     final views = [
       _TodayFoodView(
         selectedDate: _selectedDate,
@@ -262,7 +307,7 @@ class _FoodHubPageState extends State<FoodHubPage> {
         allMeals: _meals,
         targets: _targets,
         onDateChanged: (value) => setState(() => _selectedDate = value),
-        onAdd: () => _openMeal(_defaultMealType()),
+        onAdd: _openMeal,
         onEdit: _editMeal,
       ),
       _FoodLedgerView(
@@ -276,6 +321,8 @@ class _FoodHubPageState extends State<FoodHubPage> {
       ),
       _RecipeBookView(
         recipes: _recipes,
+        menuPlans: _menuPlans,
+        onPersonalize: _openPersonalizedMenu,
         onCreate: _createRecipe,
         onFavorite: _toggleFavorite,
         onOpen: (recipe) => _showRecipe(context, recipe),
@@ -309,6 +356,8 @@ class _FoodHubPageState extends State<FoodHubPage> {
             },
           ),
         ),
+        if (_loadError != null)
+          _MealLoadErrorBanner(onRetry: () => _load(ensureRecipes: true)),
         const SizedBox(height: 8),
         Expanded(
           child: IndexedStack(index: _tabIndex, children: views),
@@ -334,7 +383,7 @@ class _FoodHubPageState extends State<FoodHubPage> {
               Expanded(
                 child: Text(recipe.name,
                     style: const TextStyle(
-                        fontSize: 24, fontWeight: FontWeight.w900)),
+                        fontSize: 24, fontWeight: FontWeight.w700)),
               ),
               IconButton(
                 tooltip: recipe.isFavorite ? '取消收藏' : '收藏',
@@ -350,13 +399,13 @@ class _FoodHubPageState extends State<FoodHubPage> {
             ]),
             Text(
               '${recipe.category} · ${recipe.durationMinutes} 分钟 · ${recipe.difficulty}',
-              style: const TextStyle(color: AppTheme.muted),
+              style:  TextStyle(color: AppTheme.muted),
             ),
             const SizedBox(height: 18),
             _RecipeNutrition(recipe: recipe),
             const SizedBox(height: 22),
             const Text('食材',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             for (final item in recipe.ingredients)
               ListTile(
@@ -367,7 +416,7 @@ class _FoodHubPageState extends State<FoodHubPage> {
               ),
             const SizedBox(height: 14),
             const Text('步骤',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             for (var i = 0; i < recipe.steps.length; i++)
               Padding(
@@ -393,6 +442,62 @@ class _FoodHubPageState extends State<FoodHubPage> {
   }
 }
 
+class _MealLoadFailureView extends StatelessWidget {
+  const _MealLoadFailureView({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+               Icon(
+                Icons.cloud_off_outlined,
+                size: 40,
+                color: AppTheme.muted,
+              ),
+              const SizedBox(height: 12),
+              const Text('暂时无法加载饮食数据'),
+              const SizedBox(height: 6),
+               Text('请检查网络后重试。', style: TextStyle(color: AppTheme.muted)),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新加载'),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+class _MealLoadErrorBanner extends StatelessWidget {
+  const _MealLoadErrorBanner({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        child: HealthPanel(
+          color: AppTheme.softBlue,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+               Icon(Icons.info_outline, color: AppTheme.muted),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('部分饮食数据未更新，请重试。')),
+              TextButton(onPressed: onRetry, child: const Text('重试')),
+            ],
+          ),
+        ),
+      );
+}
+
 class _TodayFoodView extends StatelessWidget {
   const _TodayFoodView({
     required this.selectedDate,
@@ -409,7 +514,7 @@ class _TodayFoodView extends StatelessWidget {
   final List<MealRecordData> allMeals;
   final DailyNutritionTargets targets;
   final ValueChanged<DateTime> onDateChanged;
-  final VoidCallback onAdd;
+  final ValueChanged<String> onAdd;
   final ValueChanged<MealRecordData> onEdit;
 
   @override
@@ -438,10 +543,10 @@ class _TodayFoodView extends StatelessWidget {
           ),
         ]),
         const SizedBox(height: 10),
-        _MealSlots(meals: meals, onAdd: onAdd, onEdit: onEdit),
+        MealSlots(meals: meals, onAdd: onAdd, onEdit: onEdit),
         const SizedBox(height: 18),
         FilledButton.icon(
-            onPressed: onAdd,
+            onPressed: () => onAdd(_defaultMealType()),
             icon: const Icon(Icons.camera_alt_outlined),
             label: const Text('拍照记录一餐')),
       ],
@@ -462,14 +567,26 @@ class _MealLedgerHero extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-            color: const Color(0xFFE8F8F4),
-            borderRadius: BorderRadius.circular(8)),
+            gradient: AppTheme.accentSoftGradient(context),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow:  [
+              BoxShadow(
+                color: AppTheme.softShadow,
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('饮食账本',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           const SizedBox(height: 4),
-          const Text('只记录真实吃过的食物',
-              style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+          Text(
+            '只记录真实吃过的食物',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 13,
+            ),
+          ),
           const SizedBox(height: 22),
           Text(_value(calories, '千卡'),
               style:
@@ -491,69 +608,16 @@ class _Macro extends StatelessWidget {
   Widget build(BuildContext context) => Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label,
-            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+        Text(
+          label,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            fontSize: 12,
+          ),
+        ),
         const SizedBox(height: 5),
         Text(value, style: const TextStyle(fontWeight: FontWeight.w700))
       ]));
-}
-
-class _MealSlots extends StatelessWidget {
-  const _MealSlots(
-      {required this.meals, required this.onAdd, required this.onEdit});
-  final List<MealRecordData> meals;
-  final VoidCallback onAdd;
-  final ValueChanged<MealRecordData> onEdit;
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-            color: Colors.white, borderRadius: BorderRadius.circular(8)),
-        child: Column(children: [
-          for (final type in const [
-            ('breakfast', '早餐', Icons.free_breakfast_outlined),
-            ('lunch', '午餐', Icons.lunch_dining_outlined),
-            ('dinner', '晚餐', Icons.dinner_dining_outlined)
-          ])
-            _MealSlot(
-                type: type.$1,
-                label: type.$2,
-                icon: type.$3,
-                meal:
-                    meals.where((meal) => meal.mealType == type.$1).firstOrNull,
-                onAdd: onAdd,
-                onEdit: onEdit)
-        ]),
-      );
-}
-
-class _MealSlot extends StatelessWidget {
-  const _MealSlot(
-      {required this.type,
-      required this.label,
-      required this.icon,
-      required this.meal,
-      required this.onAdd,
-      required this.onEdit});
-  final String type, label;
-  final IconData icon;
-  final MealRecordData? meal;
-  final VoidCallback onAdd;
-  final ValueChanged<MealRecordData> onEdit;
-  @override
-  Widget build(BuildContext context) => ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-              color: AppTheme.softBlue, borderRadius: BorderRadius.circular(8)),
-          child: Icon(icon, color: AppTheme.primaryBlue)),
-      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-      subtitle: Text(meal?.name.isNotEmpty == true ? meal!.name : '尚未记录'),
-      trailing: TextButton(
-          onPressed: meal == null ? onAdd : () => onEdit(meal!),
-          child: Text(meal == null ? '记录' : '查看')));
 }
 
 class _FoodLedgerView extends StatefulWidget {
@@ -616,7 +680,7 @@ class _FoodLedgerViewState extends State<_FoodLedgerView> {
             child: Text(
               DateFormat('yyyy年M月', 'zh_CN').format(_month),
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
             ),
           ),
           IconButton(
@@ -630,22 +694,22 @@ class _FoodLedgerViewState extends State<_FoodLedgerView> {
         const SizedBox(height: 10),
         _Section(
           child: Row(children: [
-            const Icon(Icons.account_balance_wallet_outlined,
+             Icon(Icons.account_balance_wallet_outlined,
                 size: 30, color: AppTheme.deepBlue),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('本月饮食消费',
+                     Text('本月饮食消费',
                         style: TextStyle(color: AppTheme.muted)),
                     Text('¥${cost.toStringAsFixed(2)}',
                         style: const TextStyle(
-                            fontSize: 25, fontWeight: FontWeight.w900)),
+                            fontSize: 25, fontWeight: FontWeight.w700)),
                     if (widget.budgetEnabled && widget.monthlyBudget > 0)
                       Text(
                         '预算 ¥${widget.monthlyBudget.toStringAsFixed(0)} · 剩余 ¥${math.max(0, widget.monthlyBudget - cost).toStringAsFixed(2)}',
-                        style: const TextStyle(color: AppTheme.muted),
+                        style:  TextStyle(color: AppTheme.muted),
                       ),
                   ]),
             ),
@@ -654,7 +718,7 @@ class _FoodLedgerViewState extends State<_FoodLedgerView> {
         ),
         const SizedBox(height: 16),
         if (dates.isEmpty)
-          const _Section(
+           _Section(
             child: Center(
               child: Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
@@ -669,7 +733,7 @@ class _FoodLedgerViewState extends State<_FoodLedgerView> {
               padding: const EdgeInsets.only(top: 8, bottom: 8),
               child: Text(
                 DateFormat('M月d日 EEEE', 'zh_CN').format(date),
-                style: const TextStyle(fontWeight: FontWeight.w900),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
             for (final meal in grouped[date]!) ...[
@@ -696,15 +760,125 @@ class _FoodLedgerViewState extends State<_FoodLedgerView> {
   }
 }
 
+class _PersonalizedMenuEntry extends StatelessWidget {
+  const _PersonalizedMenuEntry({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          gradient: AppTheme.accentGradient(context),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow:  [
+            BoxShadow(
+              color: AppTheme.softShadow,
+              blurRadius: 18,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(20),
+            child: const Padding(
+              padding: EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Icon(Icons.auto_awesome, color: Colors.white, size: 30),
+                  SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '定制专属 7 天菜单',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          '结合健康档案生成，可随时换一道',
+                          style: TextStyle(color: Color(0xFFFFF5EE)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, color: Colors.white),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
+class _SavedMenuSection extends StatelessWidget {
+  const _SavedMenuSection({required this.plans});
+
+  final List<PlanRecordData> plans;
+
+  @override
+  Widget build(BuildContext context) {
+    final sorted = [...plans]..sort((a, b) => a.planDate.compareTo(b.planDate));
+    return Card(
+      child: ExpansionTile(
+        leading: const Icon(Icons.calendar_view_week_outlined),
+        title: const Text('本周定制菜单'),
+        subtitle: Text('${sorted.length} 天菜单，点击逐日查看'),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          for (final plan in sorted)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(DateFormat('M月d日 EEEE', 'zh_CN').format(plan.date)),
+              subtitle: Text(
+                _menuSummary(plan),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _menuSummary(PlanRecordData plan) {
+    final parts = <String>[];
+    for (final item in const [
+      ('breakfast', '早'),
+      ('lunch', '午'),
+      ('dinner', '晚'),
+      ('snack', '加餐'),
+    ]) {
+      final values = plan.payload[item.$1];
+      if (values is List && values.isNotEmpty) {
+        parts.add('${item.$2}：${values.first}');
+      }
+    }
+    return parts.isEmpty ? '暂无菜单明细' : parts.join('  ·  ');
+  }
+}
+
 class _RecipeBookView extends StatefulWidget {
   const _RecipeBookView({
     required this.recipes,
+    required this.menuPlans,
+    required this.onPersonalize,
     required this.onCreate,
     required this.onFavorite,
     required this.onOpen,
   });
 
   final List<MealRecipeData> recipes;
+  final List<PlanRecordData> menuPlans;
+  final VoidCallback onPersonalize;
   final VoidCallback onCreate;
   final ValueChanged<MealRecipeData> onFavorite;
   final ValueChanged<MealRecipeData> onOpen;
@@ -731,6 +905,12 @@ class _RecipeBookViewState extends State<_RecipeBookView> {
       key: const PageStorageKey('food-recipes'),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
       children: [
+        _PersonalizedMenuEntry(onTap: widget.onPersonalize),
+        if (widget.menuPlans.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _SavedMenuSection(plans: widget.menuPlans),
+        ],
+        const SizedBox(height: 14),
         Row(children: [
           Expanded(
             child: TextField(
@@ -840,7 +1020,7 @@ class _FoodTrendViewState extends State<_FoodTrendView> {
         Row(children: [
           const Expanded(
             child: Text('饮食趋势',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
           ),
           SegmentedButton<String>(
             showSelectedIcon: false,
@@ -910,7 +1090,7 @@ class _FoodTrendViewState extends State<_FoodTrendView> {
                                 ),
                                 const SizedBox(height: 7),
                                 Text(point.$1,
-                                    style: const TextStyle(
+                                    style:  TextStyle(
                                         color: AppTheme.muted, fontSize: 11)),
                               ],
                             ),
@@ -923,7 +1103,7 @@ class _FoodTrendViewState extends State<_FoodTrendView> {
             ),
             if (target > 0)
               Text('每日参考目标：${target.toStringAsFixed(0)}',
-                  style: const TextStyle(color: AppTheme.muted)),
+                  style:  TextStyle(color: AppTheme.muted)),
           ]),
         ),
         const SizedBox(height: 14),
@@ -935,10 +1115,10 @@ class _FoodTrendViewState extends State<_FoodTrendView> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('热量来源排行',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
             const SizedBox(height: 12),
             if (ranked.isEmpty)
-              const Text('记录餐食后会显示主要食物来源',
+               Text('记录餐食后会显示主要食物来源',
                   style: TextStyle(color: AppTheme.muted))
             else
               for (var i = 0; i < math.min(5, ranked.length); i++)
@@ -979,7 +1159,7 @@ class _WeekMealStrip extends StatelessWidget {
           Expanded(
             child: Text(
               DateFormat('M月', 'zh_CN').format(selectedDate),
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
           ),
           IconButton(
@@ -1009,7 +1189,7 @@ class _WeekMealStrip extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: _sameDay(day, selectedDate)
                         ? AppTheme.primaryBlue.withValues(alpha: 0.12)
-                        : AppTheme.pageBg,
+                        : Theme.of(context).colorScheme.surfaceContainer,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color: _sameDay(day, selectedDate)
@@ -1060,7 +1240,9 @@ class _DayFoodPreview extends StatelessWidget {
       width: 34,
       height: 28,
       decoration: BoxDecoration(
-        color: meals.isEmpty ? Colors.white : AppTheme.primaryBlue,
+        color: meals.isEmpty
+            ? Theme.of(context).colorScheme.surfaceContainerHighest
+            : AppTheme.primaryBlue,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Icon(
@@ -1082,10 +1264,10 @@ class _MealTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: AppTheme.cardBorder),
+        side:  BorderSide(color: AppTheme.cardBorder),
       ),
       child: InkWell(
         onTap: onTap,
@@ -1100,7 +1282,7 @@ class _MealTile extends StatelessWidget {
                       width: 66,
                       height: 66,
                       color: AppTheme.primaryBlue.withValues(alpha: 0.10),
-                      child: const Icon(Icons.restaurant,
+                      child:  Icon(Icons.restaurant,
                           color: AppTheme.deepBlue),
                     )
                   : _MealImage(path: meal.imagePath, width: 66, height: 66),
@@ -1113,12 +1295,12 @@ class _MealTile extends StatelessWidget {
                     Text(meal.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w900)),
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 4),
                     Text(
                       '${DateFormat('HH:mm').format(meal.eatenTime)} · ${meal.mealLabel} · ${_diningLabel(meal.diningType)}',
                       style:
-                          const TextStyle(color: AppTheme.muted, fontSize: 12),
+                           TextStyle(color: AppTheme.muted, fontSize: 12),
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -1157,7 +1339,7 @@ class _MealImage extends StatelessWidget {
       errorBuilder: (_, __, ___) => Container(
         width: width,
         height: height,
-        color: AppTheme.pageBg,
+        color: Theme.of(context).scaffoldBackgroundColor,
         child: const Icon(Icons.restaurant_outlined),
       ),
     );
@@ -1195,16 +1377,16 @@ class _FoodGuidance extends StatelessWidget {
                     : '今天的记录整体平稳，继续注意食物种类和分量。';
     return _Section(
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.lightbulb_outline, color: AppTheme.deepBlue),
+         Icon(Icons.lightbulb_outline, color: AppTheme.deepBlue),
         const SizedBox(width: 12),
         Expanded(
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('饮食提示', style: TextStyle(fontWeight: FontWeight.w900)),
+            const Text('饮食提示', style: TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 5),
             Text(text, style: const TextStyle(height: 1.5)),
             const SizedBox(height: 4),
-            const Text('仅供健康管理参考，不构成医疗建议。',
+             Text('仅供健康管理参考，不构成医疗建议。',
                 style: TextStyle(color: AppTheme.muted, fontSize: 11)),
           ]),
         ),
@@ -1232,7 +1414,7 @@ class _TrendGuidance extends StatelessWidget {
             : '这段时间已有 $days 天饮食记录，继续记录有助于看清长期变化。';
     return _Section(
       child: Row(children: [
-        const Icon(Icons.tips_and_updates_outlined, color: AppTheme.deepBlue),
+         Icon(Icons.tips_and_updates_outlined, color: AppTheme.deepBlue),
         const SizedBox(width: 12),
         Expanded(child: Text(text, style: const TextStyle(height: 1.5))),
       ]),
@@ -1290,10 +1472,10 @@ class _RecipeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: AppTheme.cardBorder),
+        side:  BorderSide(color: AppTheme.cardBorder),
       ),
       child: InkWell(
         onTap: onTap,
@@ -1310,7 +1492,7 @@ class _RecipeTile extends StatelessWidget {
                   color: AppTheme.primaryBlue.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(Icons.soup_kitchen_outlined,
+                child:  Icon(Icons.soup_kitchen_outlined,
                     color: AppTheme.deepBlue),
               ),
               const Spacer(),
@@ -1327,11 +1509,11 @@ class _RecipeTile extends StatelessWidget {
             Text(recipe.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w900)),
+                style: const TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 5),
             Text(
               '${recipe.category} · ${recipe.durationMinutes}分钟 · ${recipe.calories.toStringAsFixed(0)} kcal',
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+              style:  TextStyle(color: AppTheme.muted, fontSize: 12),
             ),
           ]),
         ),
@@ -1372,9 +1554,9 @@ class _Metric extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(children: [
       Text(value.toStringAsFixed(0),
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
       Text('$label $unit',
-          style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
+          style:  TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
 }
@@ -1391,7 +1573,7 @@ class _EmptyFood extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 22),
         child: Column(children: [
-          const Icon(Icons.no_food_outlined, size: 38, color: AppTheme.muted),
+           Icon(Icons.no_food_outlined, size: 38, color: AppTheme.muted),
           const SizedBox(height: 10),
           const Text('这一天还没有记录饮食'),
           const SizedBox(height: 12),
@@ -1417,7 +1599,7 @@ class _Section extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppTheme.cardBorder),
       ),

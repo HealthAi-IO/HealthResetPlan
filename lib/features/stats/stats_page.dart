@@ -30,7 +30,9 @@ ImageProvider<Object>? _authenticatedAvatarProvider(AccountInfo? info) {
 }
 
 class StatsPage extends StatefulWidget {
-  const StatsPage({super.key});
+  const StatsPage({super.key, this.onOpenClock});
+
+  final VoidCallback? onOpenClock;
 
   @override
   State<StatsPage> createState() => _StatsPageState();
@@ -64,6 +66,15 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   void _onChanged() => _load(silent: true);
+
+  void _openClock() {
+    final onOpenClock = widget.onOpenClock;
+    if (onOpenClock != null) {
+      onOpenClock();
+      return;
+    }
+    context.go('/clock');
+  }
 
   Future<void> _load({bool silent = false}) async {
     if (!mounted) return;
@@ -154,7 +165,7 @@ class _StatsPageState extends State<StatsPage> {
         onMore: () => context.push('/indicators').then((_) {
           if (mounted) _load(silent: true);
         }),
-        onClock: () => context.go('/clock'),
+        onClock: _openClock,
         onRefresh: () => _load(silent: true),
       );
     }
@@ -168,7 +179,7 @@ class _StatsPageState extends State<StatsPage> {
         children: [
           _TrendHeader(
             profile: profile,
-            onEditProfile: () => context.go('/profile'),
+            onEditProfile: () => context.push('/profile'),
           ),
           const SizedBox(height: 14),
           _SummaryRow(profile: profile, data: data),
@@ -177,7 +188,7 @@ class _StatsPageState extends State<StatsPage> {
             title: '打卡完成率',
             subtitle: '日 / 周 / 月三档统计',
             trailing: TextButton.icon(
-              onPressed: () => context.go('/clock'),
+              onPressed: _openClock,
               icon: const Icon(Icons.add, size: 16),
               label: const Text('去打卡'),
             ),
@@ -278,10 +289,10 @@ class _SeniorStatsView extends StatelessWidget {
     final critical = latest != null &&
         HealthSafety.isCriticalIndicator(latest.type, latest.payload);
     final stateColor = critical
-        ? Colors.redAccent
+        ? Theme.of(context).colorScheme.error
         : abnormal
-            ? Colors.orange
-            : Colors.green;
+            ? AppTheme.warning(context)
+            : AppTheme.success(context);
     final bottomPad = MediaQuery.sizeOf(context).width < 960 ? 100.0 : 20.0;
 
     return RefreshIndicator(
@@ -293,7 +304,7 @@ class _SeniorStatsView extends StatelessWidget {
           const Text('健康变化',
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
           const SizedBox(height: 4),
-          const Text(
+          Text(
             '一次查看一个指标，更容易看清变化',
             style: TextStyle(fontSize: 17, color: AppTheme.muted),
           ),
@@ -354,7 +365,7 @@ class _SeniorStatsView extends StatelessWidget {
                           Expanded(
                             child: Text(
                               '最新${latest.label}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 18, color: AppTheme.muted),
                             ),
                           ),
@@ -399,8 +410,7 @@ class _SeniorStatsView extends StatelessWidget {
                       const SizedBox(height: 6),
                       Text(
                         '测量时间 ${DateFormat('MM月dd日 HH:mm').format(latest.measuredTime)}',
-                        style: const TextStyle(
-                            fontSize: 16, color: AppTheme.muted),
+                        style: TextStyle(fontSize: 16, color: AppTheme.muted),
                       ),
                       if (abnormal) ...[
                         const SizedBox(height: 12),
@@ -424,9 +434,11 @@ class _SeniorStatsView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.surfaceContainerLow,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppTheme.cardBorder),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -437,8 +449,7 @@ class _SeniorStatsView extends StatelessWidget {
                       fontSize: 21, fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 4),
-                const Text('触摸折线可查看具体测量时间',
-                    style: TextStyle(color: AppTheme.muted)),
+                Text('触摸折线可查看具体测量时间', style: TextStyle(color: AppTheme.muted)),
                 const SizedBox(height: 16),
                 if (visibleEntries.isEmpty)
                   const Padding(
@@ -460,9 +471,11 @@ class _SeniorStatsView extends StatelessWidget {
             const SizedBox(height: 16),
             Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppTheme.cardBorder),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
               ),
               child: ExpansionTile(
                 shape: const Border(),
@@ -510,7 +523,7 @@ class _SeniorMetricChart extends StatelessWidget {
         .map((entry) => (entry.payload['spo2Pct'] as num?)?.toDouble() ?? 0)
         .toList();
     return _TouchableLineChart(
-      seriesList: [_Series(values: values, color: AppTheme.primaryBlue)],
+      seriesList: [_Series(values: values, color: AppTheme.water(context))],
       axisLabels: _trendAxisLabels(entries),
       tooltipLabels: _trendTooltipLabels(entries),
       unit: '%',
@@ -554,9 +567,11 @@ class _StatsSkeletonBlock extends StatelessWidget {
     return Container(
       height: height,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
     );
   }
@@ -590,7 +605,8 @@ class _TrendHeader extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0277BD).withValues(alpha: 0.18),
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.18),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -743,7 +759,8 @@ class _CombinedProfileCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0277BD).withValues(alpha: 0.18),
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.18),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -891,7 +908,7 @@ class _CombinedProfileCard extends StatelessWidget {
                 label: const Text('注册 / 登录账号'),
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF0277BD),
+                  foregroundColor: Theme.of(context).colorScheme.primary,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
@@ -993,7 +1010,9 @@ class _CardInfoPill extends StatelessWidget {
                 Text(
                   value,
                   style: TextStyle(
-                    color: highlight ? const Color(0xFFB9F77A) : Colors.white,
+                    color: highlight
+                        ? Theme.of(context).colorScheme.primaryContainer
+                        : Colors.white,
                     fontSize: 14,
                     fontWeight: FontWeight.w900,
                   ),
@@ -1047,23 +1066,7 @@ class _AccountStatusCard extends StatelessWidget {
     final bmiText = (profile == null || profile.bmi == 0)
         ? 'BMI --'
         : 'BMI ${profile.bmi.toStringAsFixed(1)}';
-    final gradient = memberStatus.isActive
-        ? const LinearGradient(
-            colors: [Color(0xFF0277BD), Color(0xFF0288D1)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          )
-        : isLoggedIn
-            ? const LinearGradient(
-                colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              )
-            : LinearGradient(
-                colors: [Colors.orange.shade700, Colors.orange.shade500],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              );
+    final gradient = AppTheme.accentGradient(context);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1202,7 +1205,7 @@ class _AccountStatusCard extends StatelessWidget {
                 label: const Text('注册 / 登录账号'),
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
-                  foregroundColor: Colors.orange.shade700,
+                  foregroundColor: Theme.of(context).colorScheme.primary,
                   padding: const EdgeInsets.symmetric(vertical: 11),
                 ),
               ),
@@ -1295,17 +1298,7 @@ class _AccountCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: isLoggedIn
-            ? const LinearGradient(
-                colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              )
-            : LinearGradient(
-                colors: [Colors.orange.shade700, Colors.orange.shade500],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+        gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -1345,10 +1338,10 @@ class _AccountCard extends StatelessWidget {
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 1),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.camera_alt_outlined,
                           size: 11,
-                          color: Color(0xFF2E7D32),
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                     ),
@@ -1425,7 +1418,7 @@ class _AccountCard extends StatelessWidget {
                 label: const Text('注册 / 登录账号'),
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
-                  foregroundColor: Colors.orange.shade700,
+                  foregroundColor: Theme.of(context).colorScheme.primary,
                   padding: const EdgeInsets.symmetric(vertical: 11),
                 ),
               ),
@@ -1604,26 +1597,26 @@ class _SummaryRow extends StatelessWidget {
               title: 'BMI',
               value: bmi == 0 ? '--' : bmi.toStringAsFixed(1),
               sub: profile?.bmiLevel ?? '待完善',
-              color: Colors.teal),
+              color: Theme.of(context).colorScheme.secondary),
           _SummaryCard(
               title: '最新体重',
               value: latestWeight?.displayValue ?? '--',
               sub: latestWeight == null
                   ? ''
                   : DateFormat('MM/dd HH:mm').format(latestWeight.measuredTime),
-              color: AppTheme.deepBlue),
+              color: AppTheme.weight(context)),
           _SummaryCard(
               title: '最新血压',
               value: latestBp?.displayValue ?? '--',
               sub: latestBp == null
                   ? ''
                   : DateFormat('MM/dd HH:mm').format(latestBp.measuredTime),
-              color: Colors.redAccent),
+              color: Theme.of(context).colorScheme.error),
           _SummaryCard(
               title: '今日完成',
               value: '$todayPct%',
               sub: '${data.todayClockCount} 条打卡',
-              color: Colors.orange),
+              color: AppTheme.warning(context)),
         ],
       );
     });
@@ -1646,23 +1639,23 @@ class _SummaryCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
       child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(title,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+            Text(title, style: TextStyle(color: AppTheme.muted, fontSize: 12)),
             const SizedBox(height: 4),
             Text(value,
                 style: TextStyle(
                     fontSize: 18, fontWeight: FontWeight.w800, color: color)),
             if (sub.isNotEmpty)
-              Text(sub,
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
+              Text(sub, style: TextStyle(color: AppTheme.muted, fontSize: 11)),
           ]),
     );
   }
@@ -1705,7 +1698,9 @@ class _ClockRateSectionState extends State<_ClockRateSection> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
                 decoration: BoxDecoration(
-                  color: _tab == i ? AppTheme.deepBlue : AppTheme.pageBg,
+                  color: _tab == i
+                      ? AppTheme.deepBlue
+                      : Theme.of(context).colorScheme.surfaceContainerLow,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(labels[i],
@@ -1743,12 +1738,12 @@ class _RateBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pct = (rate * 100).round();
-    const typeInfos = [
-      ('meal', '饮食', Colors.orange),
-      ('exercise', '运动', Colors.green),
-      ('medicine', '用药', Colors.redAccent),
-      ('weight', '称重', AppTheme.deepBlue),
-      ('water', '饮水', Colors.lightBlue),
+    final typeInfos = [
+      ('meal', '饮食', AppTheme.meal(context)),
+      ('exercise', '运动', AppTheme.exercise(context)),
+      ('medicine', '用药', AppTheme.medicine(context)),
+      ('weight', '称重', AppTheme.weight(context)),
+      ('water', '饮水', AppTheme.water(context)),
     ];
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1759,13 +1754,13 @@ class _RateBar extends StatelessWidget {
             child: LinearProgressIndicator(
               value: rate,
               minHeight: 12,
-              backgroundColor: AppTheme.pageBg,
+              backgroundColor: Theme.of(context).scaffoldBackgroundColor,
               valueColor: AlwaysStoppedAnimation<Color>(
                 rate >= 0.8
-                    ? Colors.green
+                    ? AppTheme.success(context)
                     : rate >= 0.5
-                        ? Colors.orange
-                        : Colors.redAccent,
+                        ? AppTheme.warning(context)
+                        : Theme.of(context).colorScheme.error,
               ),
             ),
           ),
@@ -1791,7 +1786,7 @@ class _RateBar extends StatelessWidget {
       ]),
       const SizedBox(height: 4),
       Text('统计周期 $days 天',
-          style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
+          style: TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
 }
@@ -1824,7 +1819,7 @@ class _WeightChart extends StatelessWidget {
         .map((e) => (e.payload['weightKg'] as num?)?.toDouble() ?? 0)
         .toList();
     return _TouchableLineChart(
-      seriesList: [_Series(values: values, color: AppTheme.deepBlue)],
+      seriesList: [_Series(values: values, color: AppTheme.weight(context))],
       axisLabels: _trendAxisLabels(entries),
       tooltipLabels: _trendTooltipLabels(entries),
       unit: 'kg',
@@ -1848,8 +1843,14 @@ class _BpChart extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _TouchableLineChart(
         seriesList: [
-          _Series(values: systolic, color: Colors.redAccent, label: '收缩压'),
-          _Series(values: diastolic, color: AppTheme.deepBlue, label: '舒张压'),
+          _Series(
+              values: systolic,
+              color: Theme.of(context).colorScheme.error,
+              label: '收缩压'),
+          _Series(
+              values: diastolic,
+              color: Theme.of(context).colorScheme.secondary,
+              label: '舒张压'),
         ],
         axisLabels: _trendAxisLabels(entries),
         tooltipLabels: _trendTooltipLabels(entries),
@@ -1857,12 +1858,12 @@ class _BpChart extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       Row(children: [
-        _Legend(color: Colors.redAccent, label: '收缩压'),
+        _Legend(color: Theme.of(context).colorScheme.error, label: '收缩压'),
         const SizedBox(width: 16),
-        _Legend(color: AppTheme.deepBlue, label: '舒张压'),
+        _Legend(color: Theme.of(context).colorScheme.secondary, label: '舒张压'),
       ]),
       const SizedBox(height: 4),
-      const Text('正常参考：收缩压 <140  舒张压 <90 mmHg',
+      Text('正常参考：收缩压 <140  舒张压 <90 mmHg',
           style: TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
@@ -1892,7 +1893,7 @@ class _GlucoseChart extends StatelessWidget {
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _TouchableLineChart(
-        seriesList: [_Series(values: values, color: Colors.orange)],
+        seriesList: [_Series(values: values, color: AppTheme.warning(context))],
         axisLabels: _trendAxisLabels(entries),
         tooltipLabels: _trendTooltipLabels(entries),
         unit: 'mmol/L',
@@ -1906,15 +1907,15 @@ class _GlucoseChart extends StatelessWidget {
       ),
       const SizedBox(height: 8),
       Row(children: [
-        _Legend(color: Colors.orange, label: '血糖'),
+        _Legend(color: AppTheme.warning(context), label: '血糖'),
         if (fastingAvg > 0) ...[
           const SizedBox(width: 12),
           Text('空腹均值 ${fastingAvg.toStringAsFixed(1)} mmol/L',
-              style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
         ],
       ]),
       const SizedBox(height: 4),
-      const Text('正常参考：空腹 3.9-6.1  餐后2h <7.8 mmol/L',
+      Text('正常参考：空腹 3.9-6.1  餐后2h <7.8 mmol/L',
           style: TextStyle(color: AppTheme.muted, fontSize: 11)),
     ]);
   }
@@ -2017,12 +2018,19 @@ class _TouchableLineChartState extends State<_TouchableLineChart> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppTheme.cardBorder),
-          boxShadow: const [
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+          boxShadow: [
             BoxShadow(
-                color: Color(0x14000000), blurRadius: 8, offset: Offset(0, 2))
+                color: Theme.of(context)
+                    .colorScheme
+                    .shadow
+                    .withValues(alpha: 0.08),
+                blurRadius: 8,
+                offset: const Offset(0, 2))
           ],
         ),
         child: Column(
@@ -2031,7 +2039,7 @@ class _TouchableLineChartState extends State<_TouchableLineChart> {
           children: [
             Row(children: [
               Text(date,
-                  style: const TextStyle(
+                  style: TextStyle(
                       color: AppTheme.muted,
                       fontSize: 11,
                       fontWeight: FontWeight.w600)),
@@ -2041,12 +2049,11 @@ class _TouchableLineChartState extends State<_TouchableLineChart> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                   decoration: BoxDecoration(
-                    color: AppTheme.pageBg,
+                    color: Theme.of(context).scaffoldBackgroundColor,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(extra,
-                      style:
-                          const TextStyle(color: AppTheme.muted, fontSize: 10)),
+                      style: TextStyle(color: AppTheme.muted, fontSize: 10)),
                 ),
               ],
             ]),
@@ -2131,7 +2138,7 @@ class _LineChartPainter extends CustomPainter {
     final gridPaint = Paint()
       ..color = AppTheme.cardBorder
       ..strokeWidth = 1;
-    const labelStyle = TextStyle(color: AppTheme.muted, fontSize: 10);
+    final labelStyle = TextStyle(color: AppTheme.muted, fontSize: 10);
 
     for (var i = 0; i <= 4; i++) {
       final dy = padT + h - h * i / 4;
@@ -2263,7 +2270,7 @@ class _EmptyChart extends StatelessWidget {
       height: 90,
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
         Text(text,
-            style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+            style: TextStyle(color: AppTheme.muted, fontSize: 13),
             textAlign: TextAlign.center),
         const SizedBox(height: 8),
         TextButton.icon(
@@ -2287,7 +2294,7 @@ class _RecentIndicators extends StatelessWidget {
   Widget build(BuildContext context) {
     if (items.isEmpty) {
       return Column(children: [
-        const Text('暂无数据', style: TextStyle(color: AppTheme.muted)),
+        Text('暂无数据', style: TextStyle(color: AppTheme.muted)),
         const SizedBox(height: 8),
         TextButton.icon(
             onPressed: onAdd,
@@ -2302,7 +2309,7 @@ class _RecentIndicators extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-                color: AppTheme.pageBg,
+                color: Theme.of(context).scaffoldBackgroundColor,
                 borderRadius: BorderRadius.circular(14)),
             child: Row(children: [
               Container(
@@ -2324,15 +2331,14 @@ class _RecentIndicators extends StatelessWidget {
                         style: const TextStyle(
                             fontWeight: FontWeight.w700, fontSize: 14)),
                     Text(item.displayValue,
-                        style: const TextStyle(
-                            color: AppTheme.muted, fontSize: 13)),
+                        style: TextStyle(color: AppTheme.muted, fontSize: 13)),
                   ])),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
                     '测量 ${DateFormat('MM/dd HH:mm').format(item.measuredTime)}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: AppTheme.muted,
                       fontSize: 12,
                     ),
@@ -2340,7 +2346,7 @@ class _RecentIndicators extends StatelessWidget {
                   if (item.updatedAt > item.createdAt)
                     Text(
                       '修改 ${DateFormat('MM/dd HH:mm').format(DateTime.fromMillisecondsSinceEpoch(item.updatedAt))}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: AppTheme.muted,
                         fontSize: 11,
                       ),
@@ -2372,9 +2378,11 @@ class _Panel extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -2386,8 +2394,7 @@ class _Panel extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 16, fontWeight: FontWeight.w800)),
                 Text(subtitle,
-                    style:
-                        const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                    style: TextStyle(color: AppTheme.muted, fontSize: 12)),
               ])),
           if (trailing != null) trailing!,
         ]),
@@ -2406,7 +2413,7 @@ class _AddButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return IconButton(
       onPressed: onTap,
-      icon: const Icon(Icons.add_circle_outline, color: AppTheme.deepBlue),
+      icon: Icon(Icons.add_circle_outline, color: AppTheme.deepBlue),
       tooltip: '录入',
     );
   }

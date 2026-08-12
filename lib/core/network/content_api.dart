@@ -138,18 +138,12 @@ class ContentApi {
     Map<String, dynamic>? query,
   }) async {
     final response = await _client.dio.get(path, queryParameters: query);
-    final body = response.data;
-    if (body is Map && body['code'] == 0 && body['data'] is Map) {
-      return Map<String, dynamic>.from(body['data'] as Map);
-    }
-    throw StateError('${body is Map ? body['message'] : '请求失败'}');
+    return _responseData(response.data);
   }
 
   Map<String, dynamic> _responseData(Object? body) {
-    if (body is Map && body['code'] == 0 && body['data'] is Map) {
-      return Map<String, dynamic>.from(body['data'] as Map);
-    }
-    throw StateError('${body is Map ? body['message'] : '请求失败'}');
+    if (body is Map) return Map<String, dynamic>.from(body);
+    throw const FormatException('内容接口响应格式异常');
   }
 
   Future<ContentInteraction> _localInteraction(int id) async {

@@ -201,9 +201,9 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     final payload = _buildPayload();
-    if (appSettingsController.seniorMode) {
-      final critical = HealthSafety.isCriticalIndicator(_type, payload);
-      final abnormal = HealthSafety.isAbnormalIndicator(_type, payload);
+    final critical = HealthSafety.isCriticalIndicator(_type, payload);
+    final abnormal = HealthSafety.isAbnormalIndicator(_type, payload);
+    if (appSettingsController.seniorMode || critical || abnormal) {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -475,8 +475,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 decimal: true,
                 required: true),
             const SizedBox(height: 14),
-            const Text('测量类型',
-                style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+            Text('测量类型', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
             const SizedBox(height: 8),
             ValueListenableBuilder<String>(
               valueListenable: _glucoseTypeCtrl,
@@ -551,7 +550,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 max: 20,
                 decimal: true),
             const SizedBox(height: 8),
-            const Text('血脂各项均为选填，录入已有检查报告结果即可。',
+            Text('血脂各项均为选填，录入已有检查报告结果即可。',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
           ]),
         ),
@@ -591,7 +590,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               required: true,
             ),
             const SizedBox(height: 8),
-            const Text('正常值：95 % 以上；低于 90 % 需就医',
+            Text('正常值：95 % 以上；低于 90 % 需就医',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
           ],
         )),
@@ -609,8 +608,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               required: true,
             ),
             const SizedBox(height: 14),
-            const Text('睡眠质量',
-                style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+            Text('睡眠质量', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
             const SizedBox(height: 8),
             ValueListenableBuilder<String>(
               valueListenable: _sleepQualityCtrl,
@@ -651,7 +649,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               required: true,
             ),
             const SizedBox(height: 8),
-            const Text('建议每日步数：6000 ~ 10000 步',
+            Text('建议每日步数：6000 ~ 10000 步',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
           ],
         )),
@@ -687,9 +685,11 @@ class _Card extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
       child: child,
     );
@@ -717,11 +717,14 @@ class _TypeSelector extends StatelessWidget {
               duration: const Duration(milliseconds: 150),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                color: value == t.$1 ? AppTheme.deepBlue : Colors.white,
+                color: value == t.$1
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color:
-                      value == t.$1 ? AppTheme.deepBlue : AppTheme.cardBorder,
+                  color: value == t.$1
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.outlineVariant,
                   width: value == t.$1 ? 2 : 1,
                 ),
               ),
@@ -730,11 +733,15 @@ class _TypeSelector extends StatelessWidget {
                 children: [
                   Icon(t.$3,
                       size: 18,
-                      color: value == t.$1 ? Colors.white : AppTheme.deepBlue),
+                      color: value == t.$1
+                          ? Theme.of(context).colorScheme.onPrimary
+                          : Theme.of(context).colorScheme.onSurface),
                   const SizedBox(width: 6),
                   Text(t.$2,
                       style: TextStyle(
-                        color: value == t.$1 ? Colors.white : AppTheme.deepBlue,
+                        color: value == t.$1
+                            ? Theme.of(context).colorScheme.onPrimary
+                            : Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                       )),
                 ],
@@ -760,13 +767,15 @@ class _DatePickerTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppTheme.cardBorder),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today_outlined,
+            Icon(Icons.calendar_today_outlined,
                 color: AppTheme.deepBlue, size: 20),
             const SizedBox(width: 12),
             Expanded(
@@ -777,7 +786,7 @@ class _DatePickerTile extends StatelessWidget {
                     const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
               ),
             ),
-            const Icon(Icons.chevron_right, color: AppTheme.muted),
+            Icon(Icons.chevron_right, color: AppTheme.muted),
           ],
         ),
       ),
@@ -851,17 +860,18 @@ class _TypeChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return FilterChip(
       selected: selected,
       label: Text(label),
       onSelected: (_) => onTap(value),
       labelStyle: TextStyle(
-        color: selected ? Colors.white : AppTheme.deepBlue,
+        color: selected ? colorScheme.onPrimary : colorScheme.onSurface,
         fontWeight: FontWeight.w700,
       ),
-      backgroundColor: Colors.white,
-      selectedColor: AppTheme.deepBlue,
-      side: const BorderSide(color: AppTheme.cardBorder),
+      backgroundColor: colorScheme.surfaceContainerLow,
+      selectedColor: colorScheme.primary,
+      side: BorderSide(color: colorScheme.outlineVariant),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
     );
   }

@@ -13,10 +13,12 @@ class AppShell extends StatefulWidget {
     super.key,
     required this.child,
     required this.location,
+    this.navigationShell,
   });
 
   final Widget child;
   final String location;
+  final StatefulNavigationShell? navigationShell;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -48,15 +50,11 @@ class _AppShellState extends State<AppShell> {
       icon: Icons.fact_check_outlined,
       selectedIcon: Icons.fact_check,
     ),
-    _TabItem(
-      label: '我的',
-      path: '/profile',
-      icon: Icons.person_outline,
-      selectedIcon: Icons.person,
-    ),
   ];
 
   int get _index {
+    final branchIndex = widget.navigationShell?.currentIndex;
+    if (branchIndex != null) return branchIndex;
     for (var i = 0; i < _tabs.length; i++) {
       if (widget.location == _tabs[i].path ||
           widget.location.startsWith('${_tabs[i].path}/')) {
@@ -68,22 +66,35 @@ class _AppShellState extends State<AppShell> {
 
   void _goTab(BuildContext context, int value) {
     if (value == _index) return;
+    final navigationShell = widget.navigationShell;
+    if (navigationShell != null) {
+      navigationShell.goBranch(value);
+      return;
+    }
     context.go(_tabs[value].path);
   }
 
   @override
   Widget build(BuildContext context) {
-    final pageHost = RepaintBoundary(child: widget.child);
+    final pageHost = widget.child;
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 1100;
         final colors = Theme.of(context).colorScheme;
         return Scaffold(
-          backgroundColor: AppTheme.pageBg,
-          resizeToAvoidBottomInset: false,
+          backgroundColor: colors.surface,
+          resizeToAvoidBottomInset: true,
           appBar: null,
+          drawer: wide ? null : const _AppDrawer(),
+          drawerEnableOpenDragGesture: !wide,
           body: DecoratedBox(
-            decoration: const BoxDecoration(color: AppTheme.pageBg),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [colors.surfaceContainerLowest, colors.surface],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
             child: wide
                 ? Row(
                     children: [
@@ -117,7 +128,7 @@ class _AppShellState extends State<AppShell> {
                       onTap: (value) => _goTab(context, value),
                       activeColor: colors.primary,
                       inactiveColor: AppTheme.muted,
-                      backgroundColor: Colors.white.withValues(alpha: 0.94),
+                      backgroundColor: colors.surface.withValues(alpha: 0.96),
                       items: [
                         for (final tab in _tabs)
                           BottomNavigationBarItem(
@@ -146,6 +157,246 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
+class _AppDrawer extends StatelessWidget {
+  const _AppDrawer();
+
+  void _open(BuildContext context, String location) {
+    final router = GoRouter.of(context);
+    Navigator.of(context).pop();
+    router.push(location);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return Drawer(
+      width: (screenWidth * 0.84).clamp(280, 336).toDouble(),
+      backgroundColor: colors.surface,
+      child: SafeArea(
+        child: AnimatedBuilder(
+          animation: UserSession.instance,
+          builder: (context, _) {
+            final session = UserSession.instance;
+            final displayName =
+                session.name.trim().isEmpty ? '健康用户' : session.name.trim();
+            final initial = displayName.characters.first.toUpperCase();
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+              children: [
+                Material(
+                  color: colors.primaryContainer.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    onTap: () => _open(context, '/profile'),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 22,
+                            backgroundColor: colors.primary,
+                            foregroundColor: colors.onPrimary,
+                            child: Text(
+                              initial,
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  displayName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  session.isAccountLogin
+                                      ? '个人中心 · 健康档案'
+                                      : '登录后同步健康数据',
+                                  style: TextStyle(
+                                    color: colors.onSurfaceVariant,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _DrawerSection(
+                  title: '智能服务',
+                  children: [
+                    _DrawerItem(
+                      icon: Icons.document_scanner_outlined,
+                      label: '报告识别',
+                      onTap: () => _open(context, '/report'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.smart_toy_outlined,
+                      label: 'AI 健康顾问',
+                      onTap: () => _open(context, '/chat'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.image_search_outlined,
+                      label: 'AI 健康图像分析',
+                      onTap: () => _open(context, '/self-check'),
+                    ),
+                  ],
+                ),
+                _DrawerSection(
+                  title: '健康工具',
+                  children: [
+                    _DrawerItem(
+                      icon: Icons.list_alt_outlined,
+                      label: '指标历史',
+                      onTap: () => _open(context, '/indicators'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.insights_outlined,
+                      label: '趋势统计',
+                      onTap: () => _open(context, '/records?view=stats'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.smoke_free_outlined,
+                      label: '戒烟计划',
+                      onTap: () => _open(context, '/quit-smoking'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.auto_stories_outlined,
+                      label: '健康资讯',
+                      onTap: () => _open(context, '/content'),
+                    ),
+                  ],
+                ),
+                _DrawerSection(
+                  title: '消息与提醒',
+                  children: [
+                    _DrawerItem(
+                      icon: Icons.notifications_outlined,
+                      label: '消息中心',
+                      onTap: () => _open(context, '/messages'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.alarm_outlined,
+                      label: '提醒设置',
+                      onTap: () => _open(context, '/clock?manage=rules'),
+                    ),
+                  ],
+                ),
+                _DrawerSection(
+                  title: '账户设置',
+                  children: [
+                    _DrawerItem(
+                      icon: Icons.admin_panel_settings_outlined,
+                      label: 'AI 数据授权',
+                      onTap: () => _open(context, '/profile?manageAi=1'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.privacy_tip_outlined,
+                      label: '隐私政策',
+                      onTap: () => _open(context, '/privacy-policy'),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.mail_outline,
+                      label: '欢迎信',
+                      onTap: () => _open(context, '/welcome-letter'),
+                    ),
+                  ],
+                ),
+                if (session.isAccountLogin)
+                  TextButton.icon(
+                    onPressed: () async {
+                      Navigator.of(context).pop();
+                      await session.signOut();
+                    },
+                    icon: const Icon(Icons.logout),
+                    label: const Text('退出登录'),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerSection extends StatelessWidget {
+  const _DrawerSection({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+            child: Text(
+              title,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class _DrawerItem extends StatelessWidget {
+  const _DrawerItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ListTile(
+      minTileHeight: 48,
+      dense: true,
+      visualDensity: const VisualDensity(vertical: -1),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+      leading: Icon(icon, size: 22, color: colors.primary),
+      title: Text(label),
+      trailing: Icon(Icons.chevron_right, color: colors.onSurfaceVariant),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onTap: onTap,
+    );
+  }
+}
+
 class _DesktopNavigation extends StatelessWidget {
   const _DesktopNavigation({
     required this.selectedIndex,
@@ -159,7 +410,7 @@ class _DesktopNavigation extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 200,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: Column(
         children: [
           const SizedBox(
@@ -217,7 +468,7 @@ class _DesktopNavigation extends StatelessWidget {
           _NavigationItem(
             label: '账号与数据',
             icon: Icons.account_circle_outlined,
-            onTap: () => context.go('/profile'),
+            onTap: () => context.push('/profile'),
           ),
           const SizedBox(height: 12),
         ],
@@ -283,7 +534,7 @@ class _DesktopCommandBar extends StatelessWidget {
     final displayName = session.name.isEmpty ? '健康用户' : session.name;
     return Container(
       height: 64,
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Row(
         children: [
@@ -298,7 +549,7 @@ class _DesktopCommandBar extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             '账号已登录 · 数据自动保存',
-            style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+            style: TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
           const Spacer(),
           const _MessageButton(),
@@ -313,7 +564,7 @@ class _DesktopCommandBar extends StatelessWidget {
           const SizedBox(width: 4),
           IconButton(
             tooltip: '账号与健康档案',
-            onPressed: () => context.go('/profile'),
+            onPressed: () => context.push('/profile'),
             icon: const Icon(Icons.chevron_right, size: 20),
           ),
         ],

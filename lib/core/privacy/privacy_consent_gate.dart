@@ -111,7 +111,7 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.privacy_tip_outlined,
+                   Icon(Icons.privacy_tip_outlined,
                       size: 48, color: AppTheme.deepBlue),
                   const SizedBox(height: 18),
                   const Text('隐私保护提示',
@@ -119,7 +119,7 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                       style:
                           TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
-                  const Text(
+                   Text(
                     '健康重启计划将在你同意并登录后处理必要信息，提供在线健康记录、多端同步和提醒服务。敏感健康数据由服务器加密后存储。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
                     style: TextStyle(height: 1.55, color: AppTheme.muted),
                   ),

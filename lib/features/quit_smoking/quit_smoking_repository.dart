@@ -40,7 +40,8 @@ class QuitSmokingRepository {
       motivation: motivation,
       triggers: triggers,
       stageGoal: stageGoal,
-      stageStartDate: old?.stageStartDate ?? stageStartDate.millisecondsSinceEpoch,
+      stageStartDate:
+          old?.stageStartDate ?? stageStartDate.millisecondsSinceEpoch,
       remindersEnabled: remindersEnabled,
       createdAt: old?.createdAt ?? now,
       updatedAt: now,

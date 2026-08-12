@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../auth/user_session.dart';
 import '../config/app_config.dart';
+import 'api_response.dart';
 
 const _skipAuthRefreshKey = 'skipAuthRefresh';
 
@@ -44,6 +45,7 @@ class ApiClient {
     }
     _dio.interceptors.add(
       InterceptorsWrapper(
+        onResponse: _handleResponse,
         onError: _handleAuthError,
       ),
     );
@@ -78,6 +80,30 @@ class ApiClient {
       ..['X-Device-Id'] = deviceId
       ..['X-Platform'] = platform
       ..['X-App-Version'] = appVersion;
+  }
+
+  Future<void> _handleResponse(
+    Response<dynamic> response,
+    ResponseInterceptorHandler handler,
+  ) async {
+    try {
+      response.data = unwrapApiResponse(response.data);
+      handler.next(response);
+    } on ApiResponseException catch (error) {
+      if ((error.code == 401 || error.code == 40102) &&
+          !_isAuthPath(response.requestOptions.path)) {
+        await _clearSessionAfterRefreshFailure();
+      }
+      handler.reject(
+        DioException(
+          requestOptions: response.requestOptions,
+          response: response,
+          type: DioExceptionType.badResponse,
+          message: error.message,
+          error: error,
+        ),
+      );
+    }
   }
 
   Future<void> _handleAuthError(
@@ -119,17 +145,17 @@ class ApiClient {
     if (status != 401) return false;
     if (error.requestOptions.extra[_skipAuthRefreshKey] == true) return false;
 
-    final path = error.requestOptions.path;
-    if (path.contains('/auth/login') ||
-        path.contains('/auth/register') ||
-        path.contains('/auth/sms/register') ||
-        path.contains('/auth/refresh') ||
-        path.contains('/auth/logout')) {
-      return false;
-    }
+    if (_isAuthPath(error.requestOptions.path)) return false;
 
     return true;
   }
+
+  bool _isAuthPath(String path) =>
+      path.contains('/auth/login') ||
+      path.contains('/auth/register') ||
+      path.contains('/auth/sms/register') ||
+      path.contains('/auth/refresh') ||
+      path.contains('/auth/logout');
 
   bool _canRefresh(DioException error) {
     if (!_isProtectedUnauthorized(error)) return false;

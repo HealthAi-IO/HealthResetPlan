@@ -9,8 +9,7 @@ class AccountRecoveryDialog extends StatefulWidget {
   final String initialPhone;
 
   @override
-  State<AccountRecoveryDialog> createState() =>
-      _AccountRecoveryDialogState();
+  State<AccountRecoveryDialog> createState() => _AccountRecoveryDialogState();
 }
 
 class _AccountRecoveryDialogState extends State<AccountRecoveryDialog> {
@@ -33,8 +32,7 @@ class _AccountRecoveryDialogState extends State<AccountRecoveryDialog> {
     super.dispose();
   }
 
-  String get _phone =>
-      _phoneController.text.replaceAll(RegExp(r'\D'), '');
+  String get _phone => _phoneController.text.replaceAll(RegExp(r'\D'), '');
 
   Future<void> _sendCode() async {
     if (!RegExp(r'^1\d{10}$').hasMatch(_phone)) {
@@ -108,8 +106,7 @@ class _AccountRecoveryDialogState extends State<AccountRecoveryDialog> {
                   child: TextField(
                     controller: _codeController,
                     keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: '短信验证码'),
+                    decoration: const InputDecoration(labelText: '短信验证码'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -131,8 +128,7 @@ class _AccountRecoveryDialogState extends State<AccountRecoveryDialog> {
       ),
       actions: [
         TextButton(
-          onPressed:
-              _recovering ? null : () => Navigator.pop(context),
+          onPressed: _recovering ? null : () => Navigator.pop(context),
           child: const Text('取消'),
         ),
         FilledButton(

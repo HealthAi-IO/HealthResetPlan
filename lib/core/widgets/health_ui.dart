@@ -2,41 +2,63 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_theme.dart';
 
+class HealthDrawerButton extends StatelessWidget {
+  const HealthDrawerButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.filledTonal(
+      tooltip: '打开个人与功能菜单',
+      onPressed: () => Scaffold.of(context).openDrawer(),
+      icon: const Icon(Icons.menu_rounded),
+    );
+  }
+}
+
 class HealthPageHeader extends StatelessWidget {
   const HealthPageHeader({
     super.key,
     required this.title,
     this.subtitle,
     this.action,
+    this.padding = const EdgeInsets.fromLTRB(16, 8, 16, 10),
   });
 
   final String title;
   final String? subtitle;
   final Widget? action;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+      padding: padding,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          if (Scaffold.maybeOf(context)?.hasDrawer ?? false) ...[
+            const HealthDrawerButton(),
+            const SizedBox(width: 12),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: AppTheme.ink,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w800,
                       ),
                 ),
                 if (subtitle != null) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     subtitle!,
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 13,
+                    ),
                   ),
                 ],
               ],
@@ -54,12 +76,12 @@ class HealthPanel extends StatelessWidget {
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(16),
-    this.color = Colors.white,
+    this.color,
   });
 
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -67,8 +89,15 @@ class HealthPanel extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
+        color: color ?? Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.softShadow,
+            blurRadius: 18,
+            offset: Offset(0, 6),
+          ),
+        ],
       ),
       child: child,
     );
@@ -106,7 +135,7 @@ class HealthActionPanel extends StatelessWidget {
                 ),
           ),
           const SizedBox(height: 5),
-          Text(description, style: const TextStyle(color: AppTheme.muted)),
+          Text(description, style: TextStyle(color: AppTheme.muted)),
           const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: onPressed,
@@ -129,33 +158,35 @@ class HealthListRow extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.onTap,
-    this.accentColor = AppTheme.primaryBlue,
+    this.accentColor,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback? onTap;
-  final Color accentColor;
+  final Color? accentColor;
 
   @override
   Widget build(BuildContext context) {
+    final resolvedAccentColor =
+        accentColor ?? Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(16),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(
           children: [
             DecoratedBox(
               decoration: BoxDecoration(
-                color: accentColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
+                color: resolvedAccentColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(16),
               ),
               child: SizedBox(
                 width: 38,
                 height: 38,
-                child: Icon(icon, color: accentColor, size: 20),
+                child: Icon(icon, color: resolvedAccentColor, size: 20),
               ),
             ),
             const SizedBox(width: 12),
@@ -167,12 +198,11 @@ class HealthListRow extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 3),
                   Text(subtitle,
-                      style:
-                          const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                      style: TextStyle(color: AppTheme.muted, fontSize: 12)),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: AppTheme.muted),
+            Icon(Icons.chevron_right_rounded, color: AppTheme.muted),
           ],
         ),
       ),

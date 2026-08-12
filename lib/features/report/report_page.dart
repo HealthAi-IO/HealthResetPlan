@@ -15,6 +15,7 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
+import '../../core/network/api_response.dart';
 import '../../core/network/file_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
@@ -77,6 +78,8 @@ class _OcrResult {
     required this.provider,
     required this.highRisk,
     required this.riskMessage,
+    required this.complete,
+    required this.warning,
   });
 
   final String? reportDate;
@@ -87,6 +90,8 @@ class _OcrResult {
   final String provider;
   final bool highRisk;
   final String riskMessage;
+  final bool complete;
+  final String warning;
 
   factory _OcrResult.fromJson(Map<String, dynamic> json) {
     final normalized = _normalizeOcrJson(json);
@@ -106,6 +111,8 @@ class _OcrResult {
       provider: normalized['provider'] as String? ?? 'vision',
       highRisk: normalized['highRisk'] == true,
       riskMessage: normalized['riskMessage'] as String? ?? '',
+      complete: normalized['complete'] != false,
+      warning: normalized['warning'] as String? ?? '',
     );
   }
 
@@ -118,6 +125,8 @@ class _OcrResult {
         'provider': provider,
         'highRisk': highRisk,
         'riskMessage': riskMessage,
+        'complete': complete,
+        'warning': warning,
       };
 }
 
@@ -322,29 +331,21 @@ class _ReportPageState extends State<ReportPage> {
 
     try {
       final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) throw const FormatException('图片内容为空');
+      if (bytes.length > 10 * 1024 * 1024) {
+        throw const FormatException('图片不能超过 10MB');
+      }
+      final mimeType = _mimeType(file.name);
+      if (!const {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+          .contains(mimeType)) {
+        throw const FormatException('仅支持 JPEG、PNG、WebP 或 GIF 图片');
+      }
       if (!mounted) return;
       setState(() => _analyzeStage = 'Uploading report for AI recognition...');
-      final formData = FormData.fromMap({
-        'file': MultipartFile.fromBytes(
-          bytes,
-          filename: file.name,
-          contentType: DioMediaType.parse(_mimeType(file.name)),
-        ),
-      });
-
-      final response = await _apiClient.dio.post(
-        '/reports/analyze',
-        data: formData,
-        options: Options(
-          contentType: 'multipart/form-data',
-          connectTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 90),
-        ),
-      );
+      final response = await _uploadReport(bytes, file.name, mimeType);
       if (!mounted) return;
       setState(() => _analyzeStage = 'Extracting health indicators...');
-      final result = _OcrResult.fromJson(_unwrapResponseData(response.data));
+      final result = _OcrResult.fromJson(requireApiMap(response.data));
 
       if (!mounted) return;
       setState(() {
@@ -377,6 +378,40 @@ class _ReportPageState extends State<ReportPage> {
       );
     }
   }
+
+  Future<Response<dynamic>> _uploadReport(
+      Uint8List bytes, String fileName, String mimeType) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await _apiClient.dio.post(
+          '/reports/analyze',
+          data: FormData.fromMap({
+            'file': MultipartFile.fromBytes(
+              bytes,
+              filename: fileName,
+              contentType: DioMediaType.parse(mimeType),
+            ),
+          }),
+          options: Options(
+            contentType: 'multipart/form-data',
+            connectTimeout: const Duration(seconds: 15),
+            sendTimeout: const Duration(seconds: 30),
+            receiveTimeout: const Duration(seconds: 90),
+          ),
+        );
+      } on DioException catch (error) {
+        if (attempt == 1 || !_isRetryable(error)) rethrow;
+      }
+    }
+    throw StateError('报告上传失败');
+  }
+
+  bool _isRetryable(DioException error) => const {
+        DioExceptionType.connectionTimeout,
+        DioExceptionType.sendTimeout,
+        DioExceptionType.receiveTimeout,
+        DioExceptionType.connectionError,
+      }.contains(error.type);
 
   void _showReviewSheet(_OcrResult result) {
     showModalBottomSheet(
@@ -688,6 +723,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   String _friendlyError(DioException e) {
+    final apiError = e.error;
+    if (apiError is ApiResponseException && apiError.message.isNotEmpty) {
+      return apiError.message;
+    }
     final body = e.response?.data;
     if (body is Map) {
       final code = (body['code'] as num?)?.toInt() ?? 0;
@@ -700,12 +739,16 @@ class _ReportPageState extends State<ReportPage> {
     if (status == 429) return '请求过于频繁，请稍后重试';
     if (status == 401) return '登录已过期，请重新登录';
     if (e.type == DioExceptionType.receiveTimeout) return 'AI 识别超时，请重试';
-    return '网络错误：${e.type.name}';
+    if (e.message?.trim().isNotEmpty == true) return e.message!.trim();
+    return '网络连接失败，请稍后重试';
   }
 
   Map<String, dynamic> _unwrapResponseData(dynamic body) {
     if (body is! Map) {
       throw StateError('服务端响应格式异常');
+    }
+    if (!body.containsKey('code')) {
+      return Map<String, dynamic>.from(body);
     }
     final code = (body['code'] as num?)?.toInt() ?? 0;
     if (code != 0) {
@@ -737,8 +780,7 @@ class _ReportPageState extends State<ReportPage> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text('今日报告识别剩余 $_aiRemaining / 5 次',
-                    style:
-                        const TextStyle(color: AppTheme.muted, fontSize: 13)),
+                    style: TextStyle(color: AppTheme.muted, fontSize: 13)),
               ),
             _PickCard(
               pickedImage: _pickedImage,
@@ -805,7 +847,7 @@ class _PickCard extends StatelessWidget {
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
-        const Text(
+        Text(
           '上传体检或检验报告图片，AI 自动提取指标；确认后保存到当前账号。',
           style: TextStyle(color: AppTheme.muted, height: 1.5),
         ),
@@ -849,12 +891,12 @@ class _PickCard extends StatelessWidget {
         if (pickedImage != null) ...[
           const SizedBox(height: 10),
           Row(children: [
-            const Icon(Icons.image_outlined, size: 14, color: AppTheme.muted),
+            Icon(Icons.image_outlined, size: 14, color: AppTheme.muted),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
                 pickedImage!.name,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                style: TextStyle(color: AppTheme.muted, fontSize: 12),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -988,7 +1030,7 @@ class _OcrSummaryCard extends StatelessWidget {
         if (result.summary.isNotEmpty) ...[
           const SizedBox(height: 6),
           Text(result.summary,
-              style: const TextStyle(fontSize: 13, color: AppTheme.muted)),
+              style: TextStyle(fontSize: 13, color: AppTheme.muted)),
         ],
         const SizedBox(height: 10),
         _AiAdviceCard(text: _withAiDoctorDisclaimer(result.analysisAdvice)),
@@ -1020,7 +1062,7 @@ class _AiAdviceCard extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               height: 1.45,
               color: AppTheme.muted,
@@ -1043,12 +1085,12 @@ class _ReportContentCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.pageBg,
+        color: Theme.of(context).scaffoldBackgroundColor,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         text,
-        style: const TextStyle(color: AppTheme.muted, height: 1.45),
+        style: TextStyle(color: AppTheme.muted, height: 1.45),
       ),
     );
   }
@@ -1121,9 +1163,9 @@ class _OcrReviewSheet extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(top: 80),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 12),
@@ -1139,8 +1181,7 @@ class _OcrReviewSheet extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Row(children: [
-            const Icon(Icons.document_scanner_outlined,
-                color: AppTheme.deepBlue),
+            Icon(Icons.document_scanner_outlined, color: AppTheme.deepBlue),
             const SizedBox(width: 8),
             const Expanded(
               child: Text(
@@ -1149,7 +1190,7 @@ class _OcrReviewSheet extends StatelessWidget {
               ),
             ),
             Text(result.provider,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
+                style: TextStyle(color: AppTheme.muted, fontSize: 11)),
           ]),
         ),
         if (result.summary.isNotEmpty) ...[
@@ -1157,7 +1198,7 @@ class _OcrReviewSheet extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(result.summary,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 13)),
+                style: TextStyle(color: AppTheme.muted, fontSize: 13)),
           ),
         ],
         const Divider(height: 20),
@@ -1166,6 +1207,23 @@ class _OcrReviewSheet extends StatelessWidget {
             shrinkWrap: true,
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
             children: [
+              if (!result.complete) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: Text(
+                    result.warning.isEmpty
+                        ? '识别结果可能不完整，请对照原报告人工核对。'
+                        : result.warning,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               _AiAdviceCard(
                   text: _withAiDoctorDisclaimer(result.analysisAdvice)),
               const SizedBox(height: 14),
@@ -1184,7 +1242,7 @@ class _OcrReviewSheet extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 12, bottom: 6),
                     child: Text(
                       entry.key,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: AppTheme.muted,
@@ -1298,9 +1356,9 @@ class _ReportDetailSheet extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(top: 56),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const SizedBox(height: 12),
@@ -1315,7 +1373,7 @@ class _ReportDetailSheet extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
           child: Row(children: [
-            const Icon(Icons.description_outlined, color: AppTheme.deepBlue),
+            Icon(Icons.description_outlined, color: AppTheme.deepBlue),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -1328,7 +1386,7 @@ class _ReportDetailSheet extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     '${DateFormat('yyyy-MM-dd HH:mm').format(record.reportDateTime)} · ${record.provider.isBlank ? 'AI识别' : record.provider}',
-                    style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                    style: TextStyle(color: AppTheme.muted, fontSize: 12),
                   ),
                 ],
               ),
@@ -1393,7 +1451,7 @@ class _ReportDetailSheet extends StatelessWidget {
                   ),
                   child: Text(
                     summary,
-                    style: const TextStyle(color: AppTheme.muted, height: 1.5),
+                    style: TextStyle(color: AppTheme.muted, height: 1.5),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -1409,7 +1467,7 @@ class _ReportDetailSheet extends StatelessWidget {
                 ),
                 Text(
                   '${result.indicators.length} 项',
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 12),
+                  style: TextStyle(color: AppTheme.muted, fontSize: 12),
                 ),
               ]),
               const SizedBox(height: 8),
@@ -1424,7 +1482,7 @@ class _ReportDetailSheet extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 12, bottom: 6),
                     child: Text(
                       entry.key,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: AppTheme.muted,
@@ -1436,7 +1494,7 @@ class _ReportDetailSheet extends StatelessWidget {
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppTheme.pageBg,
+                        color: Theme.of(context).scaffoldBackgroundColor,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
@@ -1478,7 +1536,7 @@ class _ReportDetailSheet extends StatelessWidget {
                             const SizedBox(height: 4),
                             Text(
                               '参考范围：${indicator.referenceRange}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   color: AppTheme.muted, fontSize: 11),
                             ),
                           ],
@@ -1499,8 +1557,7 @@ class _ReportDetailSheet extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: Text(
                         rawText,
-                        style: const TextStyle(
-                            color: AppTheme.muted, height: 1.45),
+                        style: TextStyle(color: AppTheme.muted, height: 1.45),
                       ),
                     ),
                   ],
@@ -1543,13 +1600,15 @@ class _ReportHistoryPanelState extends State<_ReportHistoryPanel> {
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.cardBorder),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const Expanded(
+          Expanded(
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('最近识别结果',
@@ -1561,11 +1620,11 @@ class _ReportHistoryPanelState extends State<_ReportHistoryPanel> {
           ),
           if (widget.records.isNotEmpty)
             Text('共 ${widget.records.length} 份',
-                style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
+                style: TextStyle(color: AppTheme.muted, fontSize: 12)),
         ]),
         const SizedBox(height: 14),
         if (widget.records.isEmpty)
-          const Text('暂无报告历史。保存一次识别结果后会显示在这里。',
+          Text('暂无报告历史。保存一次识别结果后会显示在这里。',
               style: TextStyle(color: AppTheme.muted))
         else
           AnimatedSize(
@@ -1594,7 +1653,7 @@ class _ReportHistoryPanelState extends State<_ReportHistoryPanel> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
-                color: AppTheme.pageBg,
+                color: Theme.of(context).scaffoldBackgroundColor,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(
@@ -1602,7 +1661,7 @@ class _ReportHistoryPanelState extends State<_ReportHistoryPanel> {
                 children: [
                   Text(
                     _expanded ? '收起' : '展开全部 ${widget.records.length} 份',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       color: AppTheme.deepBlue,
                       fontWeight: FontWeight.w600,
@@ -1612,7 +1671,7 @@ class _ReportHistoryPanelState extends State<_ReportHistoryPanel> {
                   AnimatedRotation(
                     turns: _expanded ? 0.5 : 0,
                     duration: const Duration(milliseconds: 250),
-                    child: const Icon(Icons.keyboard_arrow_down,
+                    child: Icon(Icons.keyboard_arrow_down,
                         size: 18, color: AppTheme.deepBlue),
                   ),
                 ],
@@ -1644,7 +1703,7 @@ class _ReportHistoryRow extends StatelessWidget {
     final imageFile = reportImageProvider(record.imagePath);
 
     return Material(
-      color: AppTheme.pageBg,
+      color: Theme.of(context).scaffoldBackgroundColor,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -1670,7 +1729,7 @@ class _ReportHistoryRow extends StatelessWidget {
                   color: AppTheme.primaryBlue.withValues(alpha: 0.14),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.description_outlined,
                   color: AppTheme.deepBlue,
                   size: 20,
@@ -1693,8 +1752,7 @@ class _ReportHistoryRow extends StatelessWidget {
                       '${DateFormat('MM/dd HH:mm').format(record.reportDateTime)} · ${record.indicatorCount} 项指标 · $provider',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style:
-                          const TextStyle(color: AppTheme.muted, fontSize: 12),
+                      style: TextStyle(color: AppTheme.muted, fontSize: 12),
                     ),
                   ]),
             ),
@@ -1723,7 +1781,7 @@ class _ReportImagePreview extends StatelessWidget {
       child: Container(
         height: height,
         width: double.infinity,
-        color: AppTheme.pageBg,
+        color: Theme.of(context).scaffoldBackgroundColor,
         alignment: Alignment.center,
         child: Image(
           image: file,

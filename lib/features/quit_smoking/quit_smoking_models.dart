@@ -142,6 +142,7 @@ class QuitSmokingProgress {
     required this.savedMoney,
     required this.todaySavedMoney,
     required this.startedAt,
+    required this.smokeFreeStartedAt,
   });
 
   final int smokeFreeDays;
@@ -150,6 +151,7 @@ class QuitSmokingProgress {
   final double savedMoney;
   final double todaySavedMoney;
   final DateTime startedAt;
+  final DateTime smokeFreeStartedAt;
 }
 
 QuitSmokingProgress calculateQuitSmokingProgress({
@@ -163,22 +165,20 @@ QuitSmokingProgress calculateQuitSmokingProgress({
   final stageStart = DateTime.fromMillisecondsSinceEpoch(
     profile.stageStartDate > 0 ? profile.stageStartDate : profile.targetDate,
   );
-  final startedAt = profile.mode == QuitSmokingMode.immediate &&
-          targetDay.isAfter(today)
-      ? targetDay
-      : stageStart;
+  final startedAt =
+      profile.mode == QuitSmokingMode.immediate && targetDay.isAfter(today)
+          ? targetDay
+          : stageStart;
   final start = DateTime(startedAt.year, startedAt.month, startedAt.day);
   final smoked = events
       .where((event) => event.type == QuitSmokingEventType.smoked)
       .toList();
-  final todayCount = smoked
-      .where((event) {
-        final time = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
-        return time.year == today.year &&
-            time.month == today.month &&
-            time.day == today.day;
-      })
-      .fold<int>(0, (sum, event) => sum + event.cigarettes);
+  final todayCount = smoked.where((event) {
+    final time = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
+    return time.year == today.year &&
+        time.month == today.month &&
+        time.day == today.day;
+  }).fold<int>(0, (sum, event) => sum + event.cigarettes);
 
   if (today.isBefore(start)) {
     return QuitSmokingProgress(
@@ -188,6 +188,7 @@ QuitSmokingProgress calculateQuitSmokingProgress({
       savedMoney: 0,
       todaySavedMoney: 0,
       startedAt: startedAt,
+      smokeFreeStartedAt: startedAt,
     );
   }
 
@@ -211,12 +212,13 @@ QuitSmokingProgress calculateQuitSmokingProgress({
       .where((event) => event.occurredAt >= start.millisecondsSinceEpoch)
       .fold<QuitSmokingEvent?>(
         null,
-        (latest, event) => latest == null || event.occurredAt > latest.occurredAt
-            ? event
-            : latest,
+        (latest, event) =>
+            latest == null || event.occurredAt > latest.occurredAt
+                ? event
+                : latest,
       );
   final smokeFreeStart = lastSmoke == null
-      ? start
+      ? startedAt
       : DateTime.fromMillisecondsSinceEpoch(lastSmoke.occurredAt);
 
   return QuitSmokingProgress(
@@ -226,10 +228,12 @@ QuitSmokingProgress calculateQuitSmokingProgress({
     savedMoney: savedMoney,
     todaySavedMoney: todaySavedMoney,
     startedAt: startedAt,
+    smokeFreeStartedAt: smokeFreeStart,
   );
 }
 
-int? _asInt(Object? value) => value is num ? value.toInt() : int.tryParse('$value');
+int? _asInt(Object? value) =>
+    value is num ? value.toInt() : int.tryParse('$value');
 
 double? _asDouble(Object? value) =>
     value is num ? value.toDouble() : double.tryParse('$value');
