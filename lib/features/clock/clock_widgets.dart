@@ -535,14 +535,36 @@ class _ClockSkeletonBlock extends StatelessWidget {
 }
 
 // ── 今日进度卡片 ─────────────────────────────────────────────
-class _TodayProgressCard extends StatelessWidget {
-  const _TodayProgressCard({required this.done, required this.total});
-  final int done;
+class _TodayProgressTask {
+  const _TodayProgressTask({
+    required this.label,
+    required this.detail,
+    required this.completed,
+    required this.total,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final String detail;
+  final int completed;
   final int total;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  bool get isCompleted => completed >= total;
+}
+
+class _TodayProgressCard extends StatelessWidget {
+  const _TodayProgressCard({required this.tasks});
+
+  final List<_TodayProgressTask> tasks;
 
   @override
   Widget build(BuildContext context) {
-    final rate = total == 0 ? 0.0 : (done / total).clamp(0.0, 1.0);
+    final done = tasks.fold<int>(0, (sum, task) => sum + task.completed);
+    final total = tasks.fold<int>(0, (sum, task) => sum + task.total);
+    final rate = total == 0 ? 1.0 : (done / total).clamp(0.0, 1.0);
     final pct = (rate * 100).round();
     return Container(
       padding: const EdgeInsets.all(18),
@@ -550,49 +572,85 @@ class _TodayProgressCard extends StatelessWidget {
         gradient: AppTheme.accentGradient(context),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '今日打卡进度',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '$done / $total 条完成',
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '$done / $total 项完成',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    value: rate,
-                    minHeight: 8,
-                    backgroundColor: Colors.white24,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      Colors.white,
-                    ),
-                  ),
+              ),
+              Text(
+                '$pct%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.w900,
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: rate,
+              minHeight: 8,
+              backgroundColor: Colors.white24,
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
             ),
           ),
-          const SizedBox(width: 16),
-          Text(
-            '$pct%',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 36,
-              fontWeight: FontWeight.w900,
+          const SizedBox(height: 12),
+          for (var index = 0; index < tasks.length; index++) ...[
+            if (index > 0) const Divider(color: Colors.white24, height: 1),
+            InkWell(
+              onTap: tasks[index].onTap,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(tasks[index].icon, color: Colors.white, size: 21),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${tasks[index].label} ${tasks[index].completed}/${tasks[index].total}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            tasks[index].detail,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      tasks[index].isCompleted
+                          ? Icons.check_circle
+                          : Icons.chevron_right,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -1612,7 +1670,24 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.reminder == null ? '新增$_title' : '编辑$_title'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.reminder == null ? '新增$_title' : '编辑$_title'),
+          if (_validationMessage != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _validationMessage!,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ],
+      ),
       content: SizedBox(
         width: 360,
         child: SingleChildScrollView(
@@ -1766,6 +1841,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                   min: 0,
                   max: 10000,
                   step: 1,
+                  initialValue: 30,
                   optional: true,
                   onChanged: (_) => setState(() {}),
                 ),
@@ -1776,6 +1852,7 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                   min: 0,
                   max: 10000,
                   step: 1,
+                  initialValue: 5,
                   optional: true,
                   onChanged: (_) => setState(() {}),
                 ),
@@ -1976,19 +2053,6 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                     style: TextStyle(fontSize: 12, color: AppTheme.ink),
                   ),
                 ),
-              if (_validationMessage != null) ...[
-                const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _validationMessage!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
             ],
           ),
         ),

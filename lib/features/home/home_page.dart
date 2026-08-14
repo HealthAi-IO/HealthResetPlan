@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -77,15 +76,12 @@ class _HomePageState extends State<HomePage> {
   String? _loadError;
   bool _promptOpen = false;
   bool _entryPromptsRunning = false;
-  final Map<String, DateTime> _snoozedTasks = <String, DateTime>{};
-  Timer? _snoozeTimer;
 
   @override
   void initState() {
     super.initState();
     _repo.addListener(_onChanged);
     appSettingsController.addListener(_onChanged);
-    _loadSnoozedTasks();
     _load();
   }
 
@@ -93,7 +89,6 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _repo.removeListener(_onChanged);
     appSettingsController.removeListener(_onChanged);
-    _snoozeTimer?.cancel();
     super.dispose();
   }
 
@@ -373,110 +368,43 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  String? _nextHomeTask(Set<String> taskTypes, Set<String> handledTypes) {
-    const order = ['meal', 'weight', 'exercise', 'water'];
-    final pending = [
-      ...order.where(taskTypes.contains),
-      ...taskTypes.where((type) => !order.contains(type)),
-    ].where((type) => !handledTypes.contains(type)).toList();
-    if (pending.isEmpty) return null;
-    return pending.where((type) => !_isTaskSnoozed(type)).firstOrNull;
-  }
-
-  String _snoozeKey(String type) {
-    final now = DateTime.now();
-    final day =
-        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-    return 'home_task_snooze_${UserSession.instance.userId ?? 'local'}_${day}_$type';
-  }
-
-  bool _isTaskSnoozed(String type) {
-    final until = _snoozedTasks[type];
-    return until != null && until.isAfter(DateTime.now());
-  }
-
-  Future<void> _loadSnoozedTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-    const types = [
-      'meal',
-      'weight',
-      'exercise',
-      'water',
-      'medicine',
-      'quit_smoking',
-    ];
-    final loaded = <String, DateTime>{};
-    for (final type in types) {
-      final value = prefs.getInt(_snoozeKey(type));
-      if (value == null) continue;
-      final until = DateTime.fromMillisecondsSinceEpoch(value);
-      if (until.isAfter(now)) loaded[type] = until;
+  void _openHomeTask(HomeTodayTaskData task) {
+    switch (task.type) {
+      case 'meal':
+        final mealType = task.nextMealType;
+        if (mealType == null) {
+          context.go('/meals');
+          return;
+        }
+        context
+            .push(
+          '/meals/input',
+          extra: MealInputArgs(mealType: mealType, eatenDate: DateTime.now()),
+        )
+            .then((_) {
+          if (mounted) _load(silent: true);
+        });
+        return;
+      case 'weight':
+        _openIndicator('weight');
+        return;
+      case 'medicine':
+        final reminderId = task.reminderId;
+        context.go(reminderId == null
+            ? '/records?view=clock&manage=rules'
+            : '/records?view=clock&reminderId=$reminderId');
+        return;
+      case 'exercise':
+        if (!task.requiredToday) {
+          context.go('/plan');
+          return;
+        }
+        context.go('/records?view=clock');
+        return;
+      default:
+        context.go('/clock');
+        return;
     }
-    if (!mounted) return;
-    setState(() {
-      _snoozedTasks
-        ..clear()
-        ..addAll(loaded);
-    });
-    _scheduleSnoozeRefresh();
-  }
-
-  Future<void> _snoozeHomeTask(String type) async {
-    final until = DateTime.now().add(const Duration(minutes: 30));
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_snoozeKey(type), until.millisecondsSinceEpoch);
-    if (!mounted) return;
-    setState(() => _snoozedTasks[type] = until);
-    _scheduleSnoozeRefresh();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已延后至 ${DateFormat('HH:mm').format(until)}')),
-    );
-  }
-
-  void _scheduleSnoozeRefresh() {
-    _snoozeTimer?.cancel();
-    final now = DateTime.now();
-    final active = _snoozedTasks.values.where((value) => value.isAfter(now));
-    DateTime? next;
-    for (final value in active) {
-      if (next == null || value.isBefore(next)) next = value;
-    }
-    if (next == null) return;
-    _snoozeTimer = Timer(next.difference(now) + const Duration(seconds: 1), () {
-      if (!mounted) return;
-      setState(() => _snoozedTasks.removeWhere(
-            (_, value) => !value.isAfter(DateTime.now()),
-          ));
-      _scheduleSnoozeRefresh();
-    });
-  }
-
-  Future<void> _skipHomeTask(String type) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('跳过今天这项任务？'),
-        content: const Text('只跳过今天，不会影响之后的计划和提醒。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('返回'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认跳过'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    await _repo.addClockRecord(type: type, status: 'skip', note: '首页任务跳过');
-    if (!mounted) return;
-    _snoozedTasks.remove(type);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已跳过今天这项任务')),
-    );
   }
 
   Future<void> _takeSeniorMedicine(
@@ -623,12 +551,15 @@ class _HomePageState extends State<HomePage> {
     }).toList();
     final doneTypes =
         todayClocks.where((r) => r.status == 'done').map((r) => r.type).toSet();
-    final skippedTypes =
-        todayClocks.where((r) => r.status == 'skip').map((r) => r.type).toSet();
-    final taskTypes = data?.todayTaskTypes(now) ?? const <String>{};
-    final nextTaskType =
-        _nextHomeTask(taskTypes, {...doneTypes, ...skippedTypes});
-    final completion = data?.todayCompletion ?? 0;
+    final todayTasks = buildHomeTodayTasks(
+      date: now,
+      plans: data?.plans ?? const [],
+      reminders: data?.reminders ?? const [],
+      clockRecords: todayClocks,
+      mealRecords: _todayMealRecords,
+      indicators: data?.indicators ?? const [],
+    );
+    final completion = homeTodayTaskCompletion(todayTasks);
     final desktop = MediaQuery.sizeOf(context).width >= 1280;
     final seniorMode = appSettingsController.seniorMode;
 
@@ -712,15 +643,12 @@ class _HomePageState extends State<HomePage> {
       return _DesktopHomeDashboard(
         data: data,
         reports: _recentReports,
-        meals: _todayMealRecords,
-        todayPlans: todayPlans,
-        todayClocks: todayClocks,
-        taskTypes: taskTypes,
-        doneTypes: doneTypes,
+        tasks: todayTasks,
         completion: completion,
         todayLabel: todayLabel,
         onRefresh: _load,
         onMealRecord: _openMealInput,
+        onTaskTap: _openHomeTask,
         onOpenPlan: () => context.go('/plan'),
         onOpenClock: () => context.go('/clock'),
         onOpenStats: () => context.go('/stats'),
@@ -754,31 +682,8 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 14),
           ],
           _DashboardHero(
-            data: data,
-            completion: completion,
-            taskTypes: taskTypes,
-            doneTypes: doneTypes,
-            skippedTypes: skippedTypes,
-            snoozedTasks: _snoozedTasks,
-            nextTaskType: nextTaskType,
-            onNextAction: () {
-              if (nextTaskType == 'meal') {
-                _openMealInput('lunch');
-              } else if (nextTaskType == 'weight') {
-                context.push('/indicators/input', extra: 'weight').then((_) {
-                  if (mounted) _load(silent: true);
-                });
-              } else if (nextTaskType != null) {
-                context.go('/clock');
-              } else {
-                context.go('/plan');
-              }
-            },
-            onLater: nextTaskType == null
-                ? null
-                : () => _snoozeHomeTask(nextTaskType),
-            onSkip:
-                nextTaskType == null ? null : () => _skipHomeTask(nextTaskType),
+            tasks: todayTasks,
+            onTaskTap: _openHomeTask,
           ),
           const SizedBox(height: 14),
           _Panel(

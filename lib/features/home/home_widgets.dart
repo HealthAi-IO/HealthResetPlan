@@ -4,15 +4,12 @@ class _DesktopHomeDashboard extends StatelessWidget {
   const _DesktopHomeDashboard({
     required this.data,
     required this.reports,
-    required this.meals,
-    required this.todayPlans,
-    required this.todayClocks,
-    required this.taskTypes,
-    required this.doneTypes,
+    required this.tasks,
     required this.completion,
     required this.todayLabel,
     required this.onRefresh,
     required this.onMealRecord,
+    required this.onTaskTap,
     required this.onOpenPlan,
     required this.onOpenClock,
     required this.onOpenStats,
@@ -25,15 +22,12 @@ class _DesktopHomeDashboard extends StatelessWidget {
 
   final HealthDashboardData? data;
   final List<HealthReportRecord> reports;
-  final List<MealRecordData> meals;
-  final List<PlanRecordData> todayPlans;
-  final List<ClockRecordData> todayClocks;
-  final Set<String> taskTypes;
-  final Set<String> doneTypes;
+  final List<HomeTodayTaskData> tasks;
   final double completion;
   final String todayLabel;
   final Future<void> Function({bool silent}) onRefresh;
   final ValueChanged<String> onMealRecord;
+  final ValueChanged<HomeTodayTaskData> onTaskTap;
   final VoidCallback onOpenPlan;
   final VoidCallback onOpenClock;
   final VoidCallback onOpenStats;
@@ -54,15 +48,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
         ? null
         : profile.bmi.toStringAsFixed(1);
     final trends = data?.weightTrend(limit: 7) ?? const <double>[];
-    final mealTypes = meals.map((item) => item.mealType).toSet();
-    final now = DateTime.now();
-    final weightTime = weight?.measuredTime;
-    final weightDone = doneTypes.contains('weight') ||
-        (weightTime != null &&
-            weightTime.year == now.year &&
-            weightTime.month == now.month &&
-            weightTime.day == now.day);
-    final completed = doneTypes.intersection(taskTypes).length;
+    final completed = tasks.where((task) => task.completed).length;
     final taskCompletion = completion;
 
     return RefreshIndicator(
@@ -135,48 +121,15 @@ class _DesktopHomeDashboard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           const SizedBox(height: 14),
-                          if (taskTypes.contains('meal'))
+                          for (var index = 0; index < tasks.length; index++)
                             _DesktopTaskRow(
-                              icon: Icons.restaurant_outlined,
-                              label: '记录饮食',
-                              detail: mealTypes.isEmpty
-                                  ? '今天尚未记录'
-                                  : '已记录 ${mealTypes.length} 餐',
-                              done: doneTypes.contains('meal'),
-                              onTap: () => onMealRecord('lunch'),
-                            ),
-                          if (taskTypes.contains('exercise'))
-                            _DesktopTaskRow(
-                              icon: Icons.directions_run_outlined,
-                              label: '运动计划',
-                              detail: _planDetail(todayPlans, 'exercise'),
-                              done: doneTypes.contains('exercise'),
-                              onTap: onOpenClock,
-                            ),
-                          if (taskTypes.contains('medicine'))
-                            _DesktopTaskRow(
-                              icon: Icons.medication_outlined,
-                              label: '用药确认',
-                              detail: '按提醒逐项确认',
-                              done: doneTypes.contains('medicine'),
-                              onTap: onOpenClock,
-                            ),
-                          if (taskTypes.contains('water'))
-                            _DesktopTaskRow(
-                              icon: Icons.water_drop_outlined,
-                              label: '饮水目标',
-                              detail: '目标 2000 ml',
-                              done: doneTypes.contains('water'),
-                              onTap: onOpenClock,
-                            ),
-                          if (taskTypes.contains('weight'))
-                            _DesktopTaskRow(
-                              icon: Icons.scale_outlined,
-                              label: '记录体重',
-                              detail: weight?.displayValue ?? '今日尚未记录',
-                              done: weightDone,
-                              onTap: onAddIndicator,
-                              showDivider: false,
+                              icon: _homeTaskIcon(tasks[index].type),
+                              label: tasks[index].label,
+                              detail:
+                                  '${tasks[index].progressText} · ${tasks[index].description}',
+                              done: tasks[index].completed,
+                              onTap: () => onTaskTap(tasks[index]),
+                              showDivider: index < tasks.length - 1,
                             ),
                           const SizedBox(height: 10),
                           SizedBox(
@@ -280,7 +233,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
                               _DesktopActionRow(
                                 icon: Icons.restaurant_outlined,
                                 label: '记录饮食',
-                                onTap: () => onMealRecord('lunch'),
+                                onTap: () => onMealRecord(_mealTypeForNow()),
                               ),
                               _DesktopActionRow(
                                 icon: Icons.scale_outlined,
@@ -354,12 +307,6 @@ class _DesktopHomeDashboard extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static String _planDetail(List<PlanRecordData> plans, String type) {
-    final plan = plans.where((item) => item.type == type).firstOrNull;
-    if (plan == null) return '暂无计划';
-    return plan.summary.isEmpty ? plan.label : plan.summary;
   }
 }
 
@@ -1274,97 +1221,18 @@ class _HomeMessageButton extends StatelessWidget {
 
 class _DashboardHero extends StatelessWidget {
   const _DashboardHero({
-    required this.data,
-    required this.completion,
-    required this.taskTypes,
-    required this.doneTypes,
-    required this.skippedTypes,
-    required this.snoozedTasks,
-    required this.nextTaskType,
-    required this.onNextAction,
-    required this.onLater,
-    required this.onSkip,
+    required this.tasks,
+    required this.onTaskTap,
   });
 
-  final HealthDashboardData? data;
-  final double completion;
-  final Set<String> taskTypes;
-  final Set<String> doneTypes;
-  final Set<String> skippedTypes;
-  final Map<String, DateTime> snoozedTasks;
-  final String? nextTaskType;
-  final VoidCallback onNextAction;
-  final VoidCallback? onLater;
-  final VoidCallback? onSkip;
-
-  static const _clockItems = [
-    ('meal', '饮食', Icons.restaurant_outlined),
-    ('exercise', '运动', Icons.directions_run_outlined),
-    ('medicine', '用药', Icons.medication_outlined),
-    ('weight', '称重', Icons.scale_outlined),
-    ('water', '饮水', Icons.water_drop_outlined),
-    ('quit_smoking', '戒烟', Icons.smoke_free_outlined),
-  ];
+  final List<HomeTodayTaskData> tasks;
+  final ValueChanged<HomeTodayTaskData> onTaskTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final primary = colors.primary;
-    final pendingTypes = taskTypes.difference({...doneTypes, ...skippedTypes});
-    final snoozedUntil = pendingTypes
-        .map((type) => snoozedTasks[type])
-        .whereType<DateTime>()
-        .where((value) => value.isAfter(DateTime.now()))
-        .toList()
-      ..sort();
-    final nextAction = switch (nextTaskType) {
-      'meal' => '记录今天的饮食',
-      'weight' => '记录一次体重',
-      'exercise' => '完成今天的运动',
-      'water' => '记录今天的饮水',
-      _ when completion < 1 && snoozedUntil.isNotEmpty =>
-        '任务已延后至 ${DateFormat('HH:mm').format(snoozedUntil.first)}',
-      _ => '查看明天的计划',
-    };
-    final weights = (data?.indicators ?? const <HealthIndicatorEntry>[])
-        .where((item) => item.type == 'weight')
-        .toList();
-    final latestWeight = weights.firstOrNull;
-    final previousWeight = weights.skip(1).firstOrNull;
-    final latestWeightValue = latestWeight?.numericTrendValue;
-    final previousWeightValue = previousWeight?.numericTrendValue;
-    final weightDelta = latestWeightValue != null && previousWeightValue != null
-        ? latestWeightValue - previousWeightValue
-        : null;
-    final weightTrend = weightDelta == null
-        ? null
-        : weightDelta.abs() < 0.05
-            ? '与上次持平'
-            : weightDelta < 0
-                ? '较上次下降 ${weightDelta.abs().toStringAsFixed(1)} kg'
-                : '较上次上升 ${weightDelta.toStringAsFixed(1)} kg';
-    final details = <String, ({String primary, String? secondary})>{
-      for (final type in doneTypes) type: (primary: '今日已完成', secondary: null),
-      if (doneTypes.contains('meal'))
-        'meal': (primary: '今日已记录', secondary: null),
-      if (doneTypes.contains('medicine'))
-        'medicine': (primary: '今日已确认', secondary: null),
-      if (doneTypes.contains('weight') && latestWeight != null)
-        'weight': (
-          primary: latestWeight.displayValue,
-          secondary: weightTrend,
-        ),
-      for (final type in skippedTypes)
-        type: (primary: '今日已跳过', secondary: null),
-      for (final entry in snoozedTasks.entries)
-        if (entry.value.isAfter(DateTime.now()))
-          entry.key: (
-            primary: '已延后',
-            secondary: '将在 ${DateFormat('HH:mm').format(entry.value)} 提醒',
-          ),
-    };
-    final visibleItems =
-        _clockItems.where((item) => taskTypes.contains(item.$1)).toList();
+    final completion = homeTodayTaskCompletion(tasks);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1408,75 +1276,63 @@ class _DashboardHero extends StatelessWidget {
           const SizedBox(height: 14),
           Column(
             children: [
-              for (var index = 0; index < visibleItems.length; index += 2) ...[
+              for (var index = 0; index < tasks.length; index += 2) ...[
                 IntrinsicHeight(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Expanded(
                         child: HomeStatusItem(
-                          icon: visibleItems[index].$3,
-                          label: visibleItems[index].$2,
-                          done: doneTypes.contains(visibleItems[index].$1),
-                          skipped:
-                              skippedTypes.contains(visibleItems[index].$1),
-                          primaryText: details[visibleItems[index].$1]?.primary,
-                          secondaryText:
-                              details[visibleItems[index].$1]?.secondary,
-                          emphasizePrimary: visibleItems[index].$1 == 'weight',
+                          icon: _homeTaskIcon(tasks[index].type),
+                          label: tasks[index].label,
+                          done: tasks[index].completed,
+                          skipped: !tasks[index].requiredToday,
+                          primaryText: tasks[index].progressText,
+                          secondaryText: tasks[index].description,
+                          onTap: () => onTaskTap(tasks[index]),
                         ),
                       ),
-                      if (index + 1 < visibleItems.length) ...[
+                      if (index + 1 < tasks.length) ...[
                         const SizedBox(width: 8),
                         Expanded(
                           child: HomeStatusItem(
-                            icon: visibleItems[index + 1].$3,
-                            label: visibleItems[index + 1].$2,
-                            done:
-                                doneTypes.contains(visibleItems[index + 1].$1),
-                            skipped: skippedTypes
-                                .contains(visibleItems[index + 1].$1),
-                            primaryText:
-                                details[visibleItems[index + 1].$1]?.primary,
-                            secondaryText:
-                                details[visibleItems[index + 1].$1]?.secondary,
-                            emphasizePrimary:
-                                visibleItems[index + 1].$1 == 'weight',
+                            icon: _homeTaskIcon(tasks[index + 1].type),
+                            label: tasks[index + 1].label,
+                            done: tasks[index + 1].completed,
+                            skipped: !tasks[index + 1].requiredToday,
+                            primaryText: tasks[index + 1].progressText,
+                            secondaryText: tasks[index + 1].description,
+                            onTap: () => onTaskTap(tasks[index + 1]),
                           ),
                         ),
                       ],
                     ],
                   ),
                 ),
-                if (index + 2 < visibleItems.length) const SizedBox(height: 8),
+                if (index + 2 < tasks.length) const SizedBox(height: 8),
               ],
             ],
           ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed:
-                  nextTaskType == null && completion < 1 ? null : onNextAction,
-              icon: const Icon(Icons.arrow_forward_rounded),
-              label: Text(nextAction),
-            ),
-          ),
-          if (nextTaskType != null) ...[
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                TextButton(onPressed: onLater, child: const Text('稍后')),
-                const SizedBox(width: 8),
-                TextButton(onPressed: onSkip, child: const Text('跳过今天')),
-              ],
-            ),
-          ],
         ],
       ),
     );
   }
+}
+
+IconData _homeTaskIcon(String type) => switch (type) {
+      'meal' => Icons.restaurant_outlined,
+      'exercise' => Icons.directions_run_outlined,
+      'medicine' => Icons.medication_outlined,
+      'weight' => Icons.scale_outlined,
+      _ => Icons.task_alt_outlined,
+    };
+
+String _mealTypeForNow() {
+  final hour = DateTime.now().hour;
+  if (hour < 10) return 'breakfast';
+  if (hour < 15) return 'lunch';
+  if (hour < 20) return 'dinner';
+  return 'snack';
 }
 
 class HomeStatusItem extends StatelessWidget {
@@ -1489,6 +1345,7 @@ class HomeStatusItem extends StatelessWidget {
     this.primaryText,
     this.secondaryText,
     this.emphasizePrimary = false,
+    required this.onTap,
   });
 
   final IconData icon;
@@ -1498,6 +1355,7 @@ class HomeStatusItem extends StatelessWidget {
   final String? primaryText;
   final String? secondaryText;
   final bool emphasizePrimary;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1511,65 +1369,72 @@ class HomeStatusItem extends StatelessWidget {
     final displayPrimary = primaryText ?? '待记录';
 
     return Semantics(
+      button: true,
       label:
           [label, displayPrimary, secondaryText].whereType<String>().join('，'),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 104),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: done
-              ? colors.primaryContainer.withValues(alpha: 0.62)
-              : skipped
-                  ? colors.surfaceContainerHighest
-                  : colors.surface.withValues(alpha: 0.72),
+      child: Material(
+        color: done
+            ? colors.primaryContainer.withValues(alpha: 0.62)
+            : skipped
+                ? colors.surfaceContainerHighest
+                : colors.surface.withValues(alpha: 0.72),
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
+          side: BorderSide(
             color: done
                 ? colors.primary.withValues(alpha: 0.32)
                 : colors.outlineVariant,
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 104),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, color: stateColor, size: 22),
-                const Spacer(),
-                Icon(stateIcon, color: stateColor, size: 18),
+                Row(
+                  children: [
+                    Icon(icon, color: stateColor, size: 22),
+                    const Spacer(),
+                    Icon(stateIcon, color: stateColor, size: 18),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: done ? colors.primary : colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  displayPrimary,
+                  style: TextStyle(
+                    color: colors.onSurface,
+                    fontSize: emphasizePrimary ? 18 : 13,
+                    fontWeight:
+                        emphasizePrimary ? FontWeight.w800 : FontWeight.w600,
+                    height: 1.25,
+                  ),
+                ),
+                if (secondaryText != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    secondaryText!,
+                    style: TextStyle(
+                      color: colors.onSurfaceVariant,
+                      fontSize: 11,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
               ],
             ),
-            const SizedBox(height: 10),
-            Text(
-              label,
-              style: TextStyle(
-                color: done ? colors.primary : colors.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              displayPrimary,
-              style: TextStyle(
-                color: colors.onSurface,
-                fontSize: emphasizePrimary ? 18 : 13,
-                fontWeight:
-                    emphasizePrimary ? FontWeight.w800 : FontWeight.w600,
-                height: 1.25,
-              ),
-            ),
-            if (secondaryText != null) ...[
-              const SizedBox(height: 2),
-              Text(
-                secondaryText!,
-                style: TextStyle(
-                  color: colors.onSurfaceVariant,
-                  fontSize: 11,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );

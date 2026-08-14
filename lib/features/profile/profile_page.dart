@@ -20,6 +20,7 @@ import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/ai_consent_api.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/network/file_api.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
 import '../../core/storage/data_sync_status.dart';
@@ -225,14 +226,24 @@ class _ProfilePageState extends State<ProfilePage> {
       setState(() => _avatarUploading = true);
       final authApi = sl<AuthApi>();
       final avatarUrl = await authApi.uploadAvatar(image.path);
-      final account = await authApi.updateAccountProfile(avatarUrl: avatarUrl);
-      if (!mounted) return;
-      if (account != null) {
-        await UserSession.instance.setAccountDisplay(
-          nickname: account.nickname,
-          avatarUrl: account.avatarUrl,
-        );
+      AccountInfo? account;
+      try {
+        account = await authApi.updateAccountProfile(avatarUrl: avatarUrl);
+        if (account == null) throw StateError('头像资料更新失败');
+      } catch (_) {
+        final objectKey = Uri.tryParse(avatarUrl)?.queryParameters['objectKey'];
+        if (objectKey != null && objectKey.isNotEmpty) {
+          try {
+            await sl<FileApi>().delete(objectKey);
+          } catch (_) {}
+        }
+        rethrow;
       }
+      if (!mounted) return;
+      await UserSession.instance.setAccountDisplay(
+        nickname: account.nickname,
+        avatarUrl: account.avatarUrl,
+      );
       if (!mounted) return;
       setState(() => _accountInfo = account);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1627,8 +1638,7 @@ ImageProvider<Object>? _authenticatedAvatarProvider(AccountInfo? info) {
   final baseUrl =
       sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
   return NetworkImage(
-    '$baseUrl/files/content?objectKey=${Uri.encodeQueryComponent(objectKey)}'
-    '&contentType=image%2Fjpeg',
+    '$baseUrl/files/avatar?objectKey=${Uri.encodeQueryComponent(objectKey)}',
     headers: {'Authorization': 'Bearer $token'},
   );
 }
@@ -2966,6 +2976,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                         min: HealthRanges.minSystolic,
                         max: HealthRanges.maxSystolic,
                         step: 1,
+                        initialValue: 120,
                         validator: (value) => _validateRange(
                           value,
                           HealthRanges.minSystolic,
@@ -2982,6 +2993,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                         min: HealthRanges.minDiastolic,
                         max: HealthRanges.maxDiastolic,
                         step: 1,
+                        initialValue: 80,
                         validator: (value) {
                           final rangeError = _validateRange(
                             value,
@@ -3010,6 +3022,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   min: HealthRanges.minWeightKg,
                   max: HealthRanges.maxWeightKg,
                   step: 0.1,
+                  initialValue: 60,
                   decimals: 1,
                   validator: (value) => _validateRange(
                     value,
@@ -3025,6 +3038,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   min: HealthRanges.minGlucoseMmol,
                   max: HealthRanges.maxGlucoseMmol,
                   step: 0.1,
+                  initialValue: 5.6,
                   decimals: 1,
                   validator: (value) => _validateRange(
                     value,
@@ -3040,6 +3054,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   min: HealthRanges.minTcMmol,
                   max: HealthRanges.maxTcMmol,
                   step: 0.1,
+                  initialValue: 4.8,
                   decimals: 1,
                   validator: (value) => _validateRange(
                     value,
@@ -3055,6 +3070,7 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   min: HealthRanges.minLdlMmol,
                   max: HealthRanges.maxLdlMmol,
                   step: 0.1,
+                  initialValue: 2.8,
                   decimals: 1,
                   validator: (value) => _validateRange(
                     value,

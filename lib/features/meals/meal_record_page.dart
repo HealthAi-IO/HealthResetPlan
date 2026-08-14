@@ -85,7 +85,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
       _proteinG = record.proteinG;
       _carbsG = record.carbsG;
       _fatG = record.fatG;
-      _healthScore = record.healthScore;
+      _healthScore = mealHealthScoreOutOfTen(record.healthScore);
       _glycemicLoad = record.glycemicLoad;
       _portion = record.portion;
       _diningType = record.diningType;
@@ -207,10 +207,9 @@ class _MealRecordPageState extends State<MealRecordPage> {
               nutrition['carbsG']);
       _fatG = _num(
           _firstValue(data, const ['fatG', 'fat', '脂肪']) ?? nutrition['fatG']);
-      _healthScore =
-          _num(_firstValue(data, const ['healthScore', 'score', '健康评分']))
-              .clamp(0, 10)
-              .toDouble();
+      _healthScore = mealHealthScoreFromAi(
+        _num(_firstValue(data, const ['healthScore', 'score', '健康评分'])),
+      );
       _glycemicLoad =
           _num(_firstValue(data, const ['glycemicLoad', 'gl', '血糖负荷']));
       _nutrition = {
@@ -276,6 +275,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
             min: 0,
             max: 5000,
             step: 5,
+            initialValue: 100,
             optional: true,
           ),
           const SizedBox(height: 10),
@@ -286,6 +286,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
             min: 0,
             max: 5000,
             step: 10,
+            initialValue: 100,
             optional: true,
           ),
         ]),
@@ -340,6 +341,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
             min: 0,
             max: 5000,
             step: 5,
+            initialValue: 100,
             optional: true,
           ),
           const SizedBox(height: 10),
@@ -350,6 +352,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
             min: 0,
             max: 5000,
             step: 10,
+            initialValue: 100,
             optional: true,
           ),
         ]),
@@ -788,9 +791,87 @@ class _MealSummaryCard extends StatelessWidget {
           minHeight: 7,
           borderRadius: BorderRadius.circular(99),
         ),
+        const SizedBox(height: 10),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: Text(
+              '综合营养搭配、食材质量、膳食纤维、烹饪方式和份量评估。评分基于图片估算，仅供参考。',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    height: 1.45,
+                  ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton.icon(
+            onPressed: () => _showMealScoreRules(context),
+            icon: const Icon(Icons.info_outline, size: 18),
+            label: const Text('评分规则'),
+          ),
+        ]),
       ]),
     );
   }
+}
+
+void _showMealScoreRules(BuildContext context) {
+  const rules = [
+    ('营养搭配', '30%'),
+    ('食材质量', '25%'),
+    ('蔬菜与膳食纤维', '20%'),
+    ('烹饪方式', '15%'),
+    ('热量与份量', '10%'),
+  ];
+  showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    showDragHandle: true,
+    builder: (context) => Padding(
+      padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '餐食健康评分规则',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '满分 100 分，应用内换算为 10 分制。',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 18),
+          for (final rule in rules)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              child: Row(
+                children: [
+                  Expanded(child: Text(rule.$1)),
+                  Text(
+                    rule.$2,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 12),
+          Text(
+            'AI 只能依据图片中可见的食物进行估算，无法准确判断盐、油和实际重量。评分仅供日常饮食参考。',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _MealMetaCard extends StatelessWidget {
@@ -882,6 +963,7 @@ class _MealMetaCard extends StatelessWidget {
           min: 0,
           max: 5000,
           step: 1,
+          initialValue: 20,
           optional: true,
         ),
         const SizedBox(height: 12),

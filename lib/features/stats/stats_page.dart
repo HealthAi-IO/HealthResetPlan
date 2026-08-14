@@ -23,8 +23,7 @@ ImageProvider<Object>? _authenticatedAvatarProvider(AccountInfo? info) {
   final baseUrl =
       sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
   return NetworkImage(
-    '$baseUrl/files/content?objectKey=${Uri.encodeQueryComponent(objectKey)}'
-    '&contentType=image%2Fjpeg',
+    '$baseUrl/files/avatar?objectKey=${Uri.encodeQueryComponent(objectKey)}',
     headers: {'Authorization': 'Bearer $token'},
   );
 }

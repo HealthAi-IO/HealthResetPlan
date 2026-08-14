@@ -53,4 +53,123 @@ void main() {
     expect(progress.smokeFreeStartedAt, lastSmoke);
     expect(progress.smokeFreeDays, 0);
   });
+
+  test('连续打卡只统计截至当天不中断的日期', () {
+    QuitSmokingEvent checkIn(DateTime day) => QuitSmokingEvent(
+          type: QuitSmokingEventType.checkIn,
+          occurredAt: day.millisecondsSinceEpoch,
+          cigarettes: 0,
+          intensity: 0,
+          success: true,
+          trigger: '',
+          strategy: '',
+          note: '',
+          createdAt: day.millisecondsSinceEpoch,
+        );
+
+    final streak = calculateCheckInStreak(
+      events: [
+        checkIn(DateTime(2026, 8, 14, 20)),
+        checkIn(DateTime(2026, 8, 13, 20)),
+        checkIn(DateTime(2026, 8, 11, 20)),
+      ],
+      through: DateTime(2026, 8, 14, 21),
+    );
+
+    expect(streak, 2);
+  });
+
+  test('未达标的总结不会计入连续达标天数', () {
+    QuitSmokingEvent checkIn(DateTime day, bool success) => QuitSmokingEvent(
+          type: QuitSmokingEventType.checkIn,
+          occurredAt: day.millisecondsSinceEpoch,
+          cigarettes: 0,
+          intensity: 0,
+          success: success,
+          trigger: '',
+          strategy: '',
+          note: '',
+          createdAt: day.millisecondsSinceEpoch,
+        );
+
+    final streak = calculateCheckInStreak(
+      events: [
+        checkIn(DateTime(2026, 8, 14, 20), false),
+        checkIn(DateTime(2026, 8, 13, 20), true),
+      ],
+      through: DateTime(2026, 8, 14, 21),
+    );
+
+    expect(streak, 0);
+  });
+
+  test('总结后新增当天吸烟记录会使总结失效', () {
+    final checkInTime = DateTime(2026, 8, 14, 9, 29);
+    final checkIn = QuitSmokingEvent(
+      type: QuitSmokingEventType.checkIn,
+      occurredAt: checkInTime.millisecondsSinceEpoch,
+      cigarettes: 0,
+      intensity: 0,
+      success: true,
+      trigger: '',
+      strategy: '',
+      note: '',
+      createdAt: checkInTime.millisecondsSinceEpoch,
+    );
+    final smokedAt = DateTime(2026, 8, 14, 11, 48);
+    final smoked = QuitSmokingEvent(
+      type: QuitSmokingEventType.smoked,
+      occurredAt: smokedAt.millisecondsSinceEpoch,
+      cigarettes: 1,
+      intensity: 0,
+      success: null,
+      trigger: '',
+      strategy: '',
+      note: '',
+      createdAt: smokedAt.millisecondsSinceEpoch,
+    );
+
+    expect(
+      shouldInvalidateCheckIn(checkIn: checkIn, events: [checkIn, smoked]),
+      isTrue,
+    );
+  });
+
+  test('其他日期或总结前创建的吸烟记录不会使总结失效', () {
+    final checkInTime = DateTime(2026, 8, 14, 20);
+    final checkIn = QuitSmokingEvent(
+      type: QuitSmokingEventType.checkIn,
+      occurredAt: checkInTime.millisecondsSinceEpoch,
+      cigarettes: 0,
+      intensity: 0,
+      success: true,
+      trigger: '',
+      strategy: '',
+      note: '',
+      createdAt: checkInTime.millisecondsSinceEpoch,
+    );
+    QuitSmokingEvent smoked(DateTime occurredAt, DateTime createdAt) =>
+        QuitSmokingEvent(
+          type: QuitSmokingEventType.smoked,
+          occurredAt: occurredAt.millisecondsSinceEpoch,
+          cigarettes: 1,
+          intensity: 0,
+          success: null,
+          trigger: '',
+          strategy: '',
+          note: '',
+          createdAt: createdAt.millisecondsSinceEpoch,
+        );
+
+    expect(
+      shouldInvalidateCheckIn(
+        checkIn: checkIn,
+        events: [
+          smoked(DateTime(2026, 8, 13, 21), DateTime(2026, 8, 14, 21)),
+          smoked(DateTime(2026, 8, 14, 8), DateTime(2026, 8, 14, 8)),
+        ],
+      ),
+      isFalse,
+    );
+  });
 }

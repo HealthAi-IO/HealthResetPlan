@@ -72,6 +72,7 @@ class QuitSmokingRepository {
 
   Future<QuitSmokingEvent> addEvent({
     required QuitSmokingEventType type,
+    DateTime? occurredAt,
     required int cigarettes,
     required int intensity,
     required bool? success,
@@ -83,7 +84,7 @@ class QuitSmokingRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
     final event = QuitSmokingEvent(
       type: type,
-      occurredAt: now,
+      occurredAt: (occurredAt ?? DateTime.now()).millisecondsSinceEpoch,
       cigarettes: cigarettes,
       intensity: intensity,
       success: success,
@@ -94,6 +95,42 @@ class QuitSmokingRepository {
     );
     final id = await db.insert('smoking_event', event.toRow());
     return QuitSmokingEvent.fromRow({...event.toRow(), 'id': id});
+  }
+
+  Future<void> updateEvent(QuitSmokingEvent event) async {
+    if (event.id == null) return;
+    final db = await database.open();
+    await db.update(
+      'smoking_event',
+      event.toRow(),
+      where: 'id = ?',
+      whereArgs: [event.id],
+    );
+  }
+
+  Future<void> deleteEvent(QuitSmokingEvent event) async {
+    if (event.id == null) return;
+    final db = await database.open();
+    await db.delete(
+      'smoking_event',
+      where: 'id = ?',
+      whereArgs: [event.id],
+    );
+  }
+
+  Future<QuitSmokingEvent?> invalidateCheckInForDay(DateTime day) async {
+    final events = await loadEvents();
+    for (final event in events) {
+      if (event.type != QuitSmokingEventType.checkIn) continue;
+      final time = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
+      if (time.year == day.year &&
+          time.month == day.month &&
+          time.day == day.day) {
+        await deleteEvent(event);
+        return event;
+      }
+    }
+    return null;
   }
 
   Future<void> deleteAll() async {

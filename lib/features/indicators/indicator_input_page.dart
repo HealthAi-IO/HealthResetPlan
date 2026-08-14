@@ -441,6 +441,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           hint: '例如 70.5',
           min: HealthRanges.minWeightKg,
           max: HealthRanges.maxWeightKg,
+          initialValue: 60,
           decimal: true,
           required: true,
         )),
@@ -453,6 +454,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 hint: '例如 115',
                 min: HealthRanges.minSystolic,
                 max: HealthRanges.maxSystolic,
+                initialValue: 120,
                 required: true),
             const SizedBox(height: 14),
             _NumField(
@@ -462,6 +464,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               hint: '例如 75',
               min: HealthRanges.minDiastolic,
               max: HealthRanges.maxDiastolic,
+              initialValue: 80,
               required: true,
               extraValidator: (value) {
                 final systolic = double.tryParse(_systolicCtrl.text);
@@ -478,7 +481,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 unit: 'bpm',
                 hint: '例如 72',
                 min: 30,
-                max: 220),
+                max: 220,
+                initialValue: 75),
           ]),
         ),
       'glucose' => _Card(
@@ -491,6 +495,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 hint: '例如 5.0',
                 min: HealthRanges.minGlucoseMmol,
                 max: HealthRanges.maxGlucoseMmol,
+                initialValue: 5.6,
                 decimal: true,
                 required: true),
             const SizedBox(height: 14),
@@ -529,6 +534,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           hint: '例如 72',
           min: 30,
           max: 220,
+          initialValue: 75,
           required: true,
         )),
       'lipid' => _Card(
@@ -540,6 +546,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 hint: '例如 4.8',
                 min: HealthRanges.minTcMmol,
                 max: HealthRanges.maxTcMmol,
+                initialValue: 4.8,
                 decimal: true),
             const SizedBox(height: 14),
             _NumField(
@@ -549,6 +556,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 hint: '例如 2.8',
                 min: HealthRanges.minLdlMmol,
                 max: HealthRanges.maxLdlMmol,
+                initialValue: 2.8,
                 decimal: true),
             const SizedBox(height: 14),
             _NumField(
@@ -558,6 +566,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 hint: '例如 1.4',
                 min: 0.3,
                 max: 5,
+                initialValue: 1.4,
                 decimal: true),
             const SizedBox(height: 14),
             _NumField(
@@ -567,6 +576,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 hint: '例如 1.3',
                 min: 0.2,
                 max: 20,
+                initialValue: 1.3,
                 decimal: true),
             const SizedBox(height: 8),
             Text('血脂各项均为选填，录入已有检查报告结果即可。',
@@ -581,6 +591,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           hint: '例如 25.3',
           min: 3,
           max: 60,
+          initialValue: 25,
           decimal: true,
           required: true,
         )),
@@ -592,6 +603,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           hint: '例如 82.5',
           min: 40,
           max: 200,
+          initialValue: 82,
           decimal: true,
           required: true,
         )),
@@ -606,6 +618,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               hint: '例如 98',
               min: 70,
               max: 100,
+              initialValue: 98,
               required: true,
             ),
             const SizedBox(height: 8),
@@ -623,6 +636,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               hint: '例如 7.5',
               min: 0,
               max: 24,
+              initialValue: 7.5,
               decimal: true,
               required: true,
             ),
@@ -665,6 +679,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
               hint: '例如 8000',
               min: 0,
               max: 100000,
+              initialValue: 8000,
               required: true,
             ),
             const SizedBox(height: 8),
@@ -823,6 +838,7 @@ class _NumField extends StatelessWidget {
     required this.hint,
     required this.min,
     required this.max,
+    required this.initialValue,
     this.decimal = false,
     this.required = false,
     this.extraValidator,
@@ -834,6 +850,7 @@ class _NumField extends StatelessWidget {
   final String hint;
   final double min;
   final double max;
+  final double initialValue;
   final bool decimal;
   final bool required;
   final String? Function(double value)? extraValidator;
@@ -846,6 +863,7 @@ class _NumField extends StatelessWidget {
       unit: unit,
       min: min,
       max: max,
+      initialValue: initialValue,
       step: decimal ? 0.1 : 1,
       decimals: decimal ? 1 : 0,
       optional: !required,

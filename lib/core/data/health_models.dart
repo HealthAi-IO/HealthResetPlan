@@ -591,7 +591,7 @@ class MealRecordData {
       proteinG: _asDouble(row['protein_g']),
       carbsG: _asDouble(row['carbs_g']),
       fatG: _asDouble(row['fat_g']),
-      healthScore: _asDouble(row['health_score']),
+      healthScore: mealHealthScoreOutOfTen(_asDouble(row['health_score'])),
       glycemicLoad: _asDouble(row['glycemic_load']),
       foods: foods,
       nutrition: decodeJson(row['nutrition_json'] as String? ?? '{}'),
@@ -688,6 +688,12 @@ class MealRecordData {
     );
   }
 }
+
+double mealHealthScoreFromAi(double score) =>
+    score.clamp(0, 100).toDouble() / 10;
+
+double mealHealthScoreOutOfTen(double score) =>
+    score <= 10 ? score.clamp(0, 10).toDouble() : mealHealthScoreFromAi(score);
 
 class MealRecipeData {
   const MealRecipeData({
@@ -1408,6 +1414,210 @@ class HealthDashboardData {
         .toList();
   }
 }
+
+class HomeTodayTaskData {
+  const HomeTodayTaskData({
+    required this.type,
+    required this.label,
+    required this.description,
+    required this.requiredToday,
+    required this.requiredCount,
+    required this.completedCount,
+    this.reminderId,
+    this.nextMealType,
+  });
+
+  final String type;
+  final String label;
+  final String description;
+  final bool requiredToday;
+  final int requiredCount;
+  final int completedCount;
+  final int? reminderId;
+  final String? nextMealType;
+
+  bool get completed => requiredToday && completedCount >= requiredCount;
+
+  String get progressText {
+    if (!requiredToday) return '今天无任务';
+    return type == 'medicine'
+        ? '已处理 $completedCount/$requiredCount'
+        : '已完成 $completedCount/$requiredCount';
+  }
+}
+
+List<HomeTodayTaskData> buildHomeTodayTasks({
+  required DateTime date,
+  required List<PlanRecordData> plans,
+  required List<ReminderData> reminders,
+  required List<ClockRecordData> clockRecords,
+  required List<MealRecordData> mealRecords,
+  required List<HealthIndicatorEntry> indicators,
+}) {
+  final day = DateTime(date.year, date.month, date.day);
+  final todayPlans = plans.where((plan) => _sameDate(plan.date, day)).toList();
+  final todayReminders = reminders
+      .where((reminder) => reminder.isEnabled && reminder.occursOn(day))
+      .toList();
+  final todayClocks =
+      clockRecords.where((record) => _sameDate(record.clockTime, day)).toList();
+  final doneTypes = todayClocks
+      .where((record) => record.status == 'done')
+      .map((record) => record.type)
+      .toSet();
+
+  const mealTypes = ['breakfast', 'lunch', 'dinner'];
+  const mealLabels = {
+    'breakfast': '早餐',
+    'lunch': '午餐',
+    'dinner': '晚餐',
+  };
+  final completedMealTypes = mealRecords
+      .where((meal) => _sameDate(meal.eatenTime, day))
+      .map((meal) => meal.mealType)
+      .where(mealTypes.contains)
+      .toSet();
+  final missingMealTypes =
+      mealTypes.where((type) => !completedMealTypes.contains(type)).toList();
+
+  final exercisePlan =
+      todayPlans.where((plan) => plan.type == 'exercise').firstOrNull;
+  final exerciseReminder =
+      todayReminders.where((item) => item.type == 'exercise').firstOrNull;
+  final exerciseRequired = exercisePlan != null || exerciseReminder != null;
+  final exerciseDescription = exercisePlan?.summary.trim().isNotEmpty == true
+      ? exercisePlan!.summary.trim()
+      : exerciseReminder == null
+          ? '今天没有运动计划'
+          : _reminderDescription(exerciseReminder);
+
+  final medicineReminders =
+      todayReminders.where((item) => item.type == 'medicine').toList();
+  final medicineOccurrences = <({ReminderData reminder, DateTime time})>[
+    for (final reminder in medicineReminders)
+      for (final time in reminder.dailyTimes)
+        (
+          reminder: reminder,
+          time: DateTime(day.year, day.month, day.day, time.hour, time.minute),
+        ),
+  ];
+  medicineOccurrences.sort((a, b) => a.time.compareTo(b.time));
+  final takenCount = medicineOccurrences
+      .where((item) => item.reminder.actionAt(item.time) == 'taken')
+      .length;
+  final skippedCount = medicineOccurrences
+      .where((item) => item.reminder.actionAt(item.time) == 'skipped')
+      .length;
+  final handledCount = takenCount + skippedCount;
+  final nextMedicine = medicineOccurrences
+          .where((item) => item.reminder.actionAt(item.time) == null)
+          .firstOrNull ??
+      medicineOccurrences.firstOrNull;
+
+  final measurementPlan = todayPlans.where((plan) {
+    if (plan.type != 'measurement') return false;
+    return _planTexts(plan).any((text) => text.contains('体重'));
+  }).firstOrNull;
+  final weightReminder =
+      todayReminders.where((item) => item.type == 'weight').firstOrNull;
+  final weightRequired = measurementPlan != null || weightReminder != null;
+  final weightIndicator = indicators
+      .where(
+          (item) => item.type == 'weight' && _sameDate(item.measuredTime, day))
+      .firstOrNull;
+  final weightDescription = measurementPlan == null
+      ? weightReminder == null
+          ? '今天无需称重'
+          : _reminderDescription(weightReminder)
+      : _planTexts(measurementPlan).firstWhere(
+          (text) => text.contains('体重'),
+          orElse: () => '按今日计划记录体重',
+        );
+
+  return [
+    HomeTodayTaskData(
+      type: 'meal',
+      label: '饮食',
+      description: missingMealTypes.isEmpty
+          ? '早餐、午餐和晚餐均已记录'
+          : '还需记录${missingMealTypes.map((type) => mealLabels[type]).join('、')}',
+      requiredToday: true,
+      requiredCount: mealTypes.length,
+      completedCount: completedMealTypes.length,
+      nextMealType: missingMealTypes.firstOrNull,
+    ),
+    HomeTodayTaskData(
+      type: 'exercise',
+      label: '运动',
+      description: exerciseDescription,
+      requiredToday: exerciseRequired,
+      requiredCount: exerciseRequired ? 1 : 0,
+      completedCount:
+          exerciseRequired && doneTypes.contains('exercise') ? 1 : 0,
+      reminderId: exerciseReminder?.id,
+    ),
+    HomeTodayTaskData(
+      type: 'medicine',
+      label: '用药',
+      description: nextMedicine == null
+          ? '今天没有用药安排'
+          : '已服 $takenCount · 跳过 $skippedCount · ${nextMedicine.reminder.displayLabel} ${_timeText(nextMedicine.time)}',
+      requiredToday: medicineOccurrences.isNotEmpty,
+      requiredCount: medicineOccurrences.length,
+      completedCount: handledCount,
+      reminderId: nextMedicine?.reminder.id,
+    ),
+    HomeTodayTaskData(
+      type: 'weight',
+      label: '称重',
+      description: weightIndicator?.displayValue ?? weightDescription,
+      requiredToday: weightRequired,
+      requiredCount: weightRequired ? 1 : 0,
+      completedCount: weightRequired &&
+              (weightIndicator != null || doneTypes.contains('weight'))
+          ? 1
+          : 0,
+      reminderId: weightReminder?.id,
+    ),
+  ];
+}
+
+double homeTodayTaskCompletion(Iterable<HomeTodayTaskData> tasks) {
+  final required = tasks.where((task) => task.requiredToday);
+  final total = required.fold<int>(0, (sum, task) => sum + task.requiredCount);
+  if (total == 0) return 1;
+  final completed =
+      required.fold<int>(0, (sum, task) => sum + task.completedCount);
+  return (completed / total).clamp(0, 1).toDouble();
+}
+
+Iterable<String> _planTexts(PlanRecordData plan) sync* {
+  final summary = plan.summary.trim();
+  if (summary.isNotEmpty) yield summary;
+  final items = plan.payload['items'];
+  if (items is List) {
+    for (final item in items) {
+      final text = '$item'.trim();
+      if (text.isNotEmpty) yield text;
+    }
+  }
+}
+
+String _reminderDescription(ReminderData reminder) {
+  final note = reminder.payload['note']?.toString().trim() ?? '';
+  final time = reminder.dailyTimes.first;
+  final timeText =
+      '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  return note.isEmpty
+      ? '${reminder.displayLabel} · $timeText'
+      : '$timeText · $note';
+}
+
+String _timeText(DateTime value) =>
+    '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+bool _sameDate(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
 
 const _dailyTaskTypes = {
   'meal',

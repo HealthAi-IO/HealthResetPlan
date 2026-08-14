@@ -623,10 +623,13 @@ class ReminderScheduler {
     return details.isEmpty ? '请按医嘱用药并记录结果' : details.join(' · ');
   }
 
-  Future<void> snoozeMedication(ReminderData reminder) async {
+  Future<void> snoozeMedication(
+    ReminderData reminder, {
+    int minutes = 10,
+  }) async {
     if (!_supported || reminder.id == null) return;
     final scheduled = tz.TZDateTime.now(tz.local).add(
-      const Duration(minutes: 10),
+      Duration(minutes: minutes),
     );
     await _plugin.zonedSchedule(
       id: reminder.id! * 1000 + 998,

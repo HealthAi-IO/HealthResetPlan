@@ -101,6 +101,29 @@ class QuitSmokingEvent {
   final String note;
   final int createdAt;
 
+  QuitSmokingEvent copyWith({
+    QuitSmokingEventType? type,
+    int? occurredAt,
+    int? cigarettes,
+    int? intensity,
+    bool? success,
+    String? trigger,
+    String? strategy,
+    String? note,
+  }) =>
+      QuitSmokingEvent(
+        id: id,
+        type: type ?? this.type,
+        occurredAt: occurredAt ?? this.occurredAt,
+        cigarettes: cigarettes ?? this.cigarettes,
+        intensity: intensity ?? this.intensity,
+        success: success ?? this.success,
+        trigger: trigger ?? this.trigger,
+        strategy: strategy ?? this.strategy,
+        note: note ?? this.note,
+        createdAt: createdAt,
+      );
+
   Map<String, Object?> toRow() => {
         'event_type': type.name,
         'occurred_at': occurredAt,
@@ -132,6 +155,44 @@ class QuitSmokingEvent {
       createdAt: _asInt(row['created_at']) ?? 0,
     );
   }
+}
+
+bool shouldInvalidateCheckIn({
+  required QuitSmokingEvent checkIn,
+  required Iterable<QuitSmokingEvent> events,
+}) {
+  if (checkIn.type != QuitSmokingEventType.checkIn) return false;
+  final checkInTime = DateTime.fromMillisecondsSinceEpoch(checkIn.occurredAt);
+  return events.any((event) {
+    if (event.type != QuitSmokingEventType.smoked ||
+        event.createdAt <= checkIn.createdAt) {
+      return false;
+    }
+    final eventTime = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
+    return eventTime.year == checkInTime.year &&
+        eventTime.month == checkInTime.month &&
+        eventTime.day == checkInTime.day;
+  });
+}
+
+int calculateCheckInStreak({
+  required Iterable<QuitSmokingEvent> events,
+  required DateTime through,
+}) {
+  final checkInDays = events
+      .where((event) =>
+          event.type == QuitSmokingEventType.checkIn && event.success == true)
+      .map((event) {
+    final time = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
+    return DateTime(time.year, time.month, time.day);
+  }).toSet();
+  var day = DateTime(through.year, through.month, through.day);
+  var streak = 0;
+  while (checkInDays.contains(day)) {
+    streak++;
+    day = day.subtract(const Duration(days: 1));
+  }
+  return streak;
 }
 
 class QuitSmokingProgress {

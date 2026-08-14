@@ -870,6 +870,7 @@ class _PlanEditDialogState extends State<_PlanEditDialog> {
                   min: 5,
                   max: 300,
                   step: 5,
+                  initialValue: 30,
                   optional: true,
                 ),
                 TextField(

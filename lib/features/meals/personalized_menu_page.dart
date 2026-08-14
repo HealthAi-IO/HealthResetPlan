@@ -28,18 +28,22 @@ class PersonalizedMenuPage extends StatefulWidget {
 class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
   final _api = sl<AiApi>();
   final _repo = sl<HealthRepository>();
+  final _goalDetail = TextEditingController();
   final _allergies = TextEditingController();
   final _dislikedFoods = TextEditingController();
   final _budget = TextEditingController();
   final _cookingMinutes = TextEditingController(text: '30');
 
   bool _generating = false;
+  bool _noKnownAllergies = false;
   String? _error;
+  String? _goal;
   String _provider = 'qwen';
   Map<String, dynamic>? _menu;
 
   @override
   void dispose() {
+    _goalDetail.dispose();
     _allergies.dispose();
     _dislikedFoods.dispose();
     _budget.dispose();
@@ -53,8 +57,20 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
       .where((item) => item.isNotEmpty)
       .toList();
 
+  DailyNutritionTargets get _selectedTargets =>
+      DailyNutritionTargets.fromProfile(
+        widget.profile.copyWith(
+          goal: _goal == 'custom' ? 'maintain' : _goal ?? 'maintain',
+        ),
+      );
+
   Future<void> _generate() async {
     if (_generating) return;
+    final validationError = _menuValidationError();
+    if (validationError != null) {
+      setState(() => _error = validationError);
+      return;
+    }
     if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
     setState(() {
@@ -63,6 +79,8 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
     });
     try {
       final profile = widget.profile;
+      final goal = _goal!;
+      final targets = _selectedTargets;
       final result = await _api.generatePersonalizedMenu({
         'provider': _provider,
         'age': profile.age,
@@ -71,17 +89,18 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
         'weightKg': profile.weightKg,
         'medicalHistory': profile.medicalHistory,
         'medications': profile.medications,
-        'goal': profile.goal,
+        'goal': goal,
+        'goalDetail': _goalDetail.text.trim(),
         'dietPreference': profile.dietPreference,
         'allergies': _split(_allergies),
         'dislikedFoods': _split(_dislikedFoods),
         'budgetPerDay': double.tryParse(_budget.text),
         'cookingMinutes': int.tryParse(_cookingMinutes.text),
         'equipment': const ['炒锅', '蒸锅'],
-        'targetCalories': widget.targets.calories,
-        'proteinG': widget.targets.proteinG,
-        'carbsG': widget.targets.carbsG,
-        'fatG': widget.targets.fatG,
+        'targetCalories': targets.calories,
+        'proteinG': targets.proteinG,
+        'carbsG': targets.carbsG,
+        'fatG': targets.fatG,
         'startDate': DateFormat('yyyy-MM-dd').format(DateTime.now()),
       });
       if (!mounted) return;
@@ -94,6 +113,15 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
     } finally {
       if (mounted) setState(() => _generating = false);
     }
+  }
+
+  String? _menuValidationError() {
+    return personalizedMenuValidationError(
+      goal: _goal,
+      goalDetail: _goalDetail.text,
+      allergies: _split(_allergies),
+      noKnownAllergies: _noKnownAllergies,
+    );
   }
 
   Future<void> _swap(int dayIndex, String mealType) async {
@@ -118,7 +146,7 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
         'currentMeal': Map<String, dynamic>.from(meals[mealType] as Map),
         'allergies': _split(_allergies),
         'dislikedFoods': _split(_dislikedFoods),
-        'targetCalories': widget.targets.calories,
+        'targetCalories': _selectedTargets.calories,
       });
       meals[mealType] = result.data;
       if (mounted) setState(() {});
@@ -151,19 +179,64 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
           if (menu == null) ...[
             const _MenuIntro(),
             const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: _goal,
+              decoration: const InputDecoration(
+                labelText: '本次菜单目标（必选）',
+                helperText: '只影响这次菜单，不修改个人档案',
+              ),
+              items: const [
+                DropdownMenuItem(value: 'fat_loss', child: Text('减脂')),
+                DropdownMenuItem(value: 'glucose_control', child: Text('控糖')),
+                DropdownMenuItem(value: 'bp_control', child: Text('控压')),
+                DropdownMenuItem(value: 'maintain', child: Text('保持健康')),
+                DropdownMenuItem(value: 'custom', child: Text('其他目标')),
+              ],
+              onChanged: _generating
+                  ? null
+                  : (value) => setState(() {
+                        _goal = value;
+                        _error = null;
+                      }),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _goalDetail,
+              decoration: InputDecoration(
+                labelText: _goal == 'custom' ? '具体目标（必填）' : '具体目标（选填）',
+                hintText: '例如：晚餐清淡一些、减少精制碳水',
+              ),
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: _allergies,
+              enabled: !_noKnownAllergies,
               decoration: const InputDecoration(
-                labelText: '过敏食物（必填则严格避开）',
+                labelText: '过敏食物',
                 hintText: '例如：花生、虾',
+                helperText: '填写后将在菜单中严格避开',
               ),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _noKnownAllergies,
+              title: const Text('没有已知食物过敏'),
+              controlAffinity: ListTileControlAffinity.leading,
+              onChanged: _generating
+                  ? null
+                  : (value) => setState(() {
+                        _noKnownAllergies = value ?? false;
+                        if (_noKnownAllergies) _allergies.clear();
+                        _error = null;
+                      }),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _dislikedFoods,
               decoration: const InputDecoration(
-                labelText: '不喜欢的食物',
+                labelText: '不喜欢的食物（选填）',
                 hintText: '例如：香菜、芹菜',
+                helperText: '没有不喜欢的食物可以不填',
               ),
             ),
             const SizedBox(height: 12),
@@ -177,6 +250,7 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
                     min: 1,
                     max: 1000,
                     step: 1,
+                    initialValue: 50,
                     optional: true,
                   ),
                 ),
@@ -189,6 +263,7 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
                     min: 5,
                     max: 240,
                     step: 5,
+                    initialValue: 30,
                     optional: true,
                   ),
                 ),
@@ -206,6 +281,26 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
               label: Text(_generating ? '正在生成 7 天菜单' : '预览我的 7 天菜单'),
             ),
           ] else ...[
+            Text(
+              '本次目标：${_menuGoalLabel(_goal)}',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _noKnownAllergies
+                  ? '过敏信息：没有已知食物过敏'
+                  : '严格避开：${_split(_allergies).join('、')}',
+              style: TextStyle(color: AppTheme.muted),
+            ),
+            if (_split(_dislikedFoods).isNotEmpty)
+              Text(
+                '尽量避开：${_split(_dislikedFoods).join('、')}',
+                style: TextStyle(color: AppTheme.muted),
+              ),
+            const SizedBox(height: 14),
             Text(
               '${menu['summary'] ?? '你的个性化菜单'}',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -243,6 +338,31 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
       ),
     );
   }
+}
+
+String _menuGoalLabel(String? goal) => switch (goal) {
+      'fat_loss' => '减脂',
+      'glucose_control' => '控糖',
+      'bp_control' => '控压',
+      'maintain' => '保持健康',
+      'custom' => '其他目标',
+      _ => '未选择',
+    };
+
+String? personalizedMenuValidationError({
+  required String? goal,
+  required String goalDetail,
+  required List<String> allergies,
+  required bool noKnownAllergies,
+}) {
+  if (goal == null) return '请先选择本次菜单想达成的目标';
+  if (goal == 'custom' && goalDetail.trim().isEmpty) {
+    return '选择“其他目标”后，请填写具体目标';
+  }
+  if (!noKnownAllergies && allergies.isEmpty) {
+    return '请填写过敏食物，或确认没有已知食物过敏';
+  }
+  return null;
 }
 
 class _MenuIntro extends StatelessWidget {

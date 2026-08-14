@@ -21,7 +21,7 @@ class MealSlots extends StatelessWidget {
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(20),
-          boxShadow:  [
+          boxShadow: [
             BoxShadow(
               color: AppTheme.softShadow,
               blurRadius: 18,
@@ -40,8 +40,7 @@ class MealSlots extends StatelessWidget {
                 type: type.$1,
                 label: type.$2,
                 icon: type.$3,
-                meal:
-                    meals.where((meal) => meal.mealType == type.$1).firstOrNull,
+                meals: meals.where((meal) => meal.mealType == type.$1).toList(),
                 onAdd: onAdd,
                 onEdit: onEdit,
               ),
@@ -55,7 +54,7 @@ class _MealSlot extends StatelessWidget {
     required this.type,
     required this.label,
     required this.icon,
-    required this.meal,
+    required this.meals,
     required this.onAdd,
     required this.onEdit,
   });
@@ -63,27 +62,44 @@ class _MealSlot extends StatelessWidget {
   final String type;
   final String label;
   final IconData icon;
-  final MealRecordData? meal;
+  final List<MealRecordData> meals;
   final ValueChanged<String> onAdd;
   final ValueChanged<MealRecordData> onEdit;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(16),
+  Widget build(BuildContext context) => Column(
+        children: [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, color: Theme.of(context).colorScheme.primary),
+            ),
+            title: Text(label,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text(meals.isEmpty ? '尚未记录' : '已记录 ${meals.length} 次'),
+            trailing: TextButton(
+              onPressed: () => onAdd(type),
+              child: Text(meals.isEmpty ? '记录' : '继续添加'),
+            ),
           ),
-          child: Icon(icon, color: Theme.of(context).colorScheme.primary),
-        ),
-        title: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Text(meal?.name.isNotEmpty == true ? meal!.name : '尚未记录'),
-        trailing: TextButton(
-          onPressed: meal == null ? () => onAdd(type) : () => onEdit(meal!),
-          child: Text(meal == null ? '记录' : '查看'),
-        ),
+          for (final meal in meals)
+            ListTile(
+              contentPadding: const EdgeInsets.only(left: 50),
+              onTap: () => onEdit(meal),
+              title: Text(
+                meal.name.isEmpty ? '未命名餐单' : meal.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text('${meal.totalCalories.round()} kcal'),
+              trailing: const Icon(Icons.chevron_right),
+            ),
+        ],
       );
 }
