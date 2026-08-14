@@ -8,9 +8,10 @@ plugins {
 def keystoreProperties = new Properties()
 def configuredKeystoreProperties = System.getenv("HEALTH_KEY_PROPERTIES")
 def configuredKeystoreFile = System.getenv("HEALTH_KEYSTORE")
+def defaultKeystoreFile = file("D:/HuaweiMoveData/Users/Tong/Desktop/WeiLingJi/H-ziyuan/Health-sensitive/android-signing/jkcqplan-release.jks")
 def keystorePropertiesFile = configuredKeystoreProperties
         ? file(configuredKeystoreProperties)
-        : file("D:/ziyuan/Health-sensitive/android-signing/key.properties")
+        : file("D:/HuaweiMoveData/Users/Tong/Desktop/WeiLingJi/H-ziyuan/Health-sensitive/android-signing/key.properties")
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
@@ -62,7 +63,7 @@ android {
                 keyPassword = keystoreProperties["keyPassword"]
                 storeFile = configuredKeystoreFile
                         ? file(configuredKeystoreFile)
-                        : rootProject.file(keystoreProperties["storeFile"])
+                        : defaultKeystoreFile
                 storePassword = keystoreProperties["storePassword"]
             }
         }

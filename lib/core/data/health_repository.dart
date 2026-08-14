@@ -29,6 +29,7 @@ class HealthRepository extends ChangeNotifier {
     if (_ready) return;
     await database.open();
     await cleanupAiPlanReminders();
+    await cleanupDuplicateReminders();
     _ready = true;
   }
 
@@ -52,7 +53,7 @@ class HealthRepository extends ChangeNotifier {
     return HealthDashboardData(
       profile: await loadProfile(),
       indicators: indicators,
-      plans: await loadPlans(limit: 18),
+      plans: await loadPlansForDate(DateTime.now()),
       clockRecords: await loadClockRecords(limit: 18),
       reminders: await loadReminders(),
     );
@@ -211,7 +212,7 @@ class HealthRepository extends ChangeNotifier {
         _ => '最近两次记录均超出参考范围，建议复测并持续观察。',
       };
 
-  Future<void> addIndicator({
+  Future<int> addIndicator({
     required String type,
     required Map<String, dynamic> payload,
     String source = 'manual',
@@ -228,7 +229,7 @@ class HealthRepository extends ChangeNotifier {
       createdAt: now,
       updatedAt: now,
     );
-    await db.insert('health_indicator', entry.toRow());
+    final id = await db.insert('health_indicator', entry.toRow());
 
     await _applyCriticalIndicatorSafety(type, db);
 
@@ -266,6 +267,7 @@ class HealthRepository extends ChangeNotifier {
       }
     }
     notifyListeners();
+    return id;
   }
 
   Future<void> _applyCriticalIndicatorSafety(
@@ -294,6 +296,23 @@ class HealthRepository extends ChangeNotifier {
       whereArgs: [kLocalUserId],
       orderBy: 'plan_date ASC, type ASC',
       limit: limit,
+    );
+    return rows.map(PlanRecordData.fromRow).toList();
+  }
+
+  Future<List<PlanRecordData>> loadPlansForDate(DateTime date) async {
+    final db = await database.open();
+    final start = DateTime(date.year, date.month, date.day);
+    final end = start.add(const Duration(days: 1));
+    final rows = await db.query(
+      'plan',
+      where: 'user_id = ? AND plan_date >= ? AND plan_date < ?',
+      whereArgs: [
+        kLocalUserId,
+        start.millisecondsSinceEpoch,
+        end.millisecondsSinceEpoch,
+      ],
+      orderBy: 'plan_date ASC, type ASC',
     );
     return rows.map(PlanRecordData.fromRow).toList();
   }
@@ -436,6 +455,9 @@ class HealthRepository extends ChangeNotifier {
         type: 'meal',
         note:
             '${next.mealLabel} ${next.name} ${next.totalCalories.round()} kcal',
+        value: next.totalCalories.round(),
+        unit: 'kcal',
+        detail: next.mealLabel,
         clockAt: next.eatenTime,
       );
     }
@@ -1521,15 +1543,18 @@ class HealthRepository extends ChangeNotifier {
     return rows.map(ClockRecordData.fromRow).toList();
   }
 
-  Future<void> addClockRecord({
+  Future<int> addClockRecord({
     required String type,
     String status = 'done',
     String note = '',
+    num? value,
+    String unit = '',
+    String detail = '',
     DateTime? clockAt,
   }) async {
     final db = await database.open();
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert(
+    final id = await db.insert(
       'clock_record',
       ClockRecordData(
         type: type,
@@ -1537,11 +1562,15 @@ class HealthRepository extends ChangeNotifier {
         clockAt: (clockAt ?? DateTime.now()).millisecondsSinceEpoch,
         note: note,
         photoPath: '',
+        value: value,
+        unit: unit,
+        detail: detail,
         createdAt: now,
         updatedAt: now,
       ).toRow(),
     );
     notifyListeners();
+    return id;
   }
 
   Future<void> deleteClockRecord(int id) async {
@@ -1557,6 +1586,30 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateClockRecord(
+    ClockRecordData record, {
+    required String note,
+    num? value,
+    String unit = '',
+    String detail = '',
+  }) async {
+    if (record.id == null) return;
+    final db = await database.open();
+    await db.update(
+      'clock_record',
+      record.toRow()
+        ..remove('id')
+        ..['note'] = note
+        ..['value'] = value
+        ..['unit'] = unit
+        ..['detail'] = detail
+        ..['updated_at'] = DateTime.now().millisecondsSinceEpoch,
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [record.id, kLocalUserId],
+    );
+    notifyListeners();
+  }
+
   Future<List<ReminderData>> loadReminders() async {
     final db = await database.open();
     final rows = await db.query(
@@ -1566,6 +1619,31 @@ class HealthRepository extends ChangeNotifier {
       orderBy: 'remind_at ASC',
     );
     return rows.map(ReminderData.fromRow).toList();
+  }
+
+  Future<int> cleanupDuplicateReminders() async {
+    final db = await database.open();
+    var deleted = 0;
+    await db.transaction((txn) async {
+      final rows = await txn.query(
+        'reminder',
+        where: 'user_id = ?',
+        whereArgs: [kLocalUserId],
+        orderBy: 'updated_at DESC',
+      );
+      final seen = <String>{};
+      for (final row in rows) {
+        final reminder = ReminderData.fromRow(row);
+        if (!reminder.isEnabled) continue;
+        final key = _reminderDefinitionKey(reminder);
+        if (seen.add(key)) continue;
+        await _queueDelete(txn, 'reminder', row);
+        await txn.delete('reminder', where: 'id = ?', whereArgs: [row['id']]);
+        deleted++;
+      }
+    });
+    if (deleted > 0) notifyListeners();
+    return deleted;
   }
 
   Future<int> cleanupAiPlanReminders() async {
@@ -1662,6 +1740,11 @@ class HealthRepository extends ChangeNotifier {
       createdAt: timestamp,
       updatedAt: timestamp,
     );
+    final definitionKey = _reminderDefinitionKey(reminder);
+    final existing = (await loadReminders()).where(
+      (item) => item.isEnabled && _reminderDefinitionKey(item) == definitionKey,
+    );
+    if (existing.isNotEmpty) return existing.first;
     final id = await db.insert('reminder', reminder.toRow());
     notifyListeners();
     return ReminderData(
@@ -2042,6 +2125,82 @@ class HealthRepository extends ChangeNotifier {
         whereArgs: [id],
       );
     });
+    notifyListeners();
+  }
+
+  Future<void> deleteWeightMeasurementAt(DateTime measuredAt) async {
+    final db = await database.open();
+    final timestamp = measuredAt.millisecondsSinceEpoch;
+    await db.transaction((txn) async {
+      for (final type in const ['weight', 'bmi']) {
+        await txn.delete(
+          'health_indicator',
+          where: 'user_id = ? AND type = ? AND measured_at = ?',
+          whereArgs: [kLocalUserId, type, timestamp],
+        );
+      }
+    });
+    notifyListeners();
+  }
+
+  Future<void> updateWeightMeasurementAt(
+    DateTime measuredAt,
+    double weightKg,
+  ) async {
+    final db = await database.open();
+    final timestamp = measuredAt.millisecondsSinceEpoch;
+    await db.update(
+      'health_indicator',
+      HealthIndicatorEntry(
+        clientId: _uuid.v4(),
+        type: 'weight',
+        payload: {'weightKg': weightKg},
+        source: 'manual',
+        measuredAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      ).toRow()
+        ..remove('id'),
+      where: 'user_id = ? AND type = ? AND measured_at = ?',
+      whereArgs: [kLocalUserId, 'weight', timestamp],
+    );
+    final profile = await loadProfile();
+    if (profile != null) {
+      final updatedProfile = profile.copyWith(weightKg: weightKg);
+      await saveProfile(updatedProfile);
+      final bmiValue = updatedProfile.bmi;
+      if (bmiValue > 0) {
+        final rows = await db.query(
+          'health_indicator',
+          where: 'user_id = ? AND type = ? AND measured_at = ?',
+          whereArgs: [kLocalUserId, 'bmi', timestamp],
+          limit: 1,
+        );
+        final existing =
+            rows.isEmpty ? null : HealthIndicatorEntry.fromRow(rows.first);
+        final bmiEntry = HealthIndicatorEntry(
+          clientId: existing?.clientId ?? _uuid.v4(),
+          type: 'bmi',
+          payload: {
+            'bmiValue': double.parse(bmiValue.toStringAsFixed(2)),
+          },
+          source: 'calculated',
+          measuredAt: timestamp,
+          createdAt: existing?.createdAt ?? timestamp,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+        if (existing == null) {
+          await db.insert('health_indicator', bmiEntry.toRow());
+        } else {
+          await db.update(
+            'health_indicator',
+            bmiEntry.toRow(),
+            where: 'id = ?',
+            whereArgs: [existing.id],
+          );
+        }
+      }
+    }
     notifyListeners();
   }
 
@@ -3090,6 +3249,36 @@ class _RiskResult {
 
 extension _IterableX<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+String _reminderDefinitionKey(ReminderData reminder) => jsonEncode({
+      'type': reminder.type,
+      'remindAt': reminder.remindAt,
+      'channel': reminder.channel,
+      'payload': _canonicalReminderValue(reminder.payload),
+    });
+
+Object? _canonicalReminderValue(Object? value) {
+  const ignoredKeys = {
+    'ackHistory',
+    'actionHistory',
+    'archived',
+    'inventoryRemaining',
+  };
+  if (value is Map) {
+    final keys = value.keys
+        .map((key) => key.toString())
+        .where((key) => !ignoredKeys.contains(key))
+        .toList()
+      ..sort();
+    return {
+      for (final key in keys) key: _canonicalReminderValue(value[key]),
+    };
+  }
+  if (value is List) {
+    return value.map(_canonicalReminderValue).toList(growable: false);
+  }
+  return value;
 }
 
 String _reminderOccurrenceKey(DateTime value) =>

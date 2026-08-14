@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/app_theme.dart';
+import '../../app/app_settings_controller.dart';
 import '../../core/auth/user_session.dart';
 import '../../core/content/site_message_service.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/network/api_client.dart';
 
 class AppShell extends StatefulWidget {
   const AppShell({
@@ -25,7 +27,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  static const _tabs = [
+  static const _regularTabs = [
     _TabItem(
       label: '首页',
       path: '/home',
@@ -52,6 +54,36 @@ class _AppShellState extends State<AppShell> {
     ),
   ];
 
+  static const _seniorTabs = [
+    _TabItem(
+      label: '今日',
+      path: '/home',
+      icon: Icons.home_outlined,
+      selectedIcon: Icons.home,
+    ),
+    _TabItem(
+      label: '记录',
+      path: '/plan',
+      icon: Icons.edit_note_outlined,
+      selectedIcon: Icons.edit_note,
+    ),
+    _TabItem(
+      label: '提醒',
+      path: '/meals',
+      icon: Icons.notifications_outlined,
+      selectedIcon: Icons.notifications,
+    ),
+    _TabItem(
+      label: '我的',
+      path: '/records',
+      icon: Icons.person_outline,
+      selectedIcon: Icons.person,
+    ),
+  ];
+
+  List<_TabItem> get _tabs =>
+      appSettingsController.seniorMode ? _seniorTabs : _regularTabs;
+
   int get _index {
     final branchIndex = widget.navigationShell?.currentIndex;
     if (branchIndex != null) return branchIndex;
@@ -77,80 +109,103 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     final pageHost = widget.child;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 1100;
-        final colors = Theme.of(context).colorScheme;
-        return Scaffold(
-          backgroundColor: colors.surface,
-          resizeToAvoidBottomInset: true,
-          appBar: null,
-          drawer: wide ? null : const _AppDrawer(),
-          drawerEnableOpenDragGesture: !wide,
-          body: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colors.surfaceContainerLowest, colors.surface],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-            child: wide
-                ? Row(
-                    children: [
-                      _DesktopNavigation(
-                        selectedIndex: _index,
-                        onDestinationSelected: (value) =>
-                            _goTab(context, value),
-                      ),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            const _DesktopCommandBar(),
-                            const Divider(height: 1),
-                            Expanded(child: pageHost),
-                          ],
-                        ),
-                      ),
-                    ],
-                  )
-                : SafeArea(
-                    top: true,
-                    bottom: false,
-                    child: pageHost,
+    return AnimatedBuilder(
+      animation: appSettingsController,
+      builder: (context, _) {
+        final seniorMode = appSettingsController.seniorMode;
+        final tabs = _tabs;
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 720;
+            final colors = Theme.of(context).colorScheme;
+            return Scaffold(
+              backgroundColor: colors.surface,
+              resizeToAvoidBottomInset: true,
+              appBar: null,
+              drawer: wide || seniorMode ? null : const _AppDrawer(),
+              drawerEnableOpenDragGesture: !wide && !seniorMode,
+              body: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [colors.surfaceContainerLowest, colors.surface],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
                   ),
-          ),
-          bottomNavigationBar: wide
-              ? null
-              : defaultTargetPlatform == TargetPlatform.iOS
-                  ? CupertinoTabBar(
-                      currentIndex: _index,
-                      onTap: (value) => _goTab(context, value),
-                      activeColor: colors.primary,
-                      inactiveColor: AppTheme.muted,
-                      backgroundColor: colors.surface.withValues(alpha: 0.96),
-                      items: [
-                        for (final tab in _tabs)
-                          BottomNavigationBarItem(
-                            icon: Icon(tab.icon),
-                            activeIcon: Icon(tab.selectedIcon),
-                            label: tab.label,
+                ),
+                child: wide
+                    ? Row(
+                        children: [
+                          _DesktopNavigation(
+                            tabs: tabs,
+                            seniorMode: seniorMode,
+                            compact: constraints.maxWidth < 1200,
+                            selectedIndex: _index,
+                            onDestinationSelected: (value) =>
+                                _goTab(context, value),
                           ),
-                      ],
-                    )
-                  : NavigationBar(
-                      selectedIndex: _index,
-                      onDestinationSelected: (value) => _goTab(context, value),
-                      destinations: [
-                        for (final tab in _tabs)
-                          NavigationDestination(
-                            icon: Icon(tab.icon),
-                            selectedIcon: Icon(tab.selectedIcon),
-                            label: tab.label,
+                          Expanded(
+                            child: Column(
+                              children: [
+                                const _DesktopCommandBar(),
+                                const Divider(height: 1),
+                                Expanded(child: pageHost),
+                              ],
+                            ),
                           ),
-                      ],
-                      indicatorColor: colors.primary.withValues(alpha: 0.14),
-                    ),
+                        ],
+                      )
+                    : SafeArea(
+                        top: true,
+                        bottom: false,
+                        child: pageHost,
+                      ),
+              ),
+              bottomNavigationBar: wide
+                  ? null
+                  : defaultTargetPlatform == TargetPlatform.iOS
+                      ? CupertinoTabBar(
+                          key: ValueKey(
+                            seniorMode
+                                ? 'senior-navigation'
+                                : 'regular-navigation',
+                          ),
+                          currentIndex: _index,
+                          onTap: (value) => _goTab(context, value),
+                          activeColor: colors.primary,
+                          inactiveColor: AppTheme.muted,
+                          backgroundColor:
+                              colors.surface.withValues(alpha: 0.96),
+                          items: [
+                            for (final tab in tabs)
+                              BottomNavigationBarItem(
+                                icon: Icon(tab.icon),
+                                activeIcon: Icon(tab.selectedIcon),
+                                label: tab.label,
+                              ),
+                          ],
+                        )
+                      : NavigationBar(
+                          key: ValueKey(
+                            seniorMode
+                                ? 'senior-navigation'
+                                : 'regular-navigation',
+                          ),
+                          selectedIndex: _index,
+                          onDestinationSelected: (value) =>
+                              _goTab(context, value),
+                          destinations: [
+                            for (final tab in tabs)
+                              NavigationDestination(
+                                icon: Icon(tab.icon),
+                                selectedIcon: Icon(tab.selectedIcon),
+                                label: tab.label,
+                              ),
+                          ],
+                          indicatorColor:
+                              colors.primary.withValues(alpha: 0.14),
+                        ),
+            );
+          },
         );
       },
     );
@@ -181,6 +236,7 @@ class _AppDrawer extends StatelessWidget {
             final displayName =
                 session.name.trim().isEmpty ? '健康用户' : session.name.trim();
             final initial = displayName.characters.first.toUpperCase();
+            final avatar = _sessionAvatarProvider();
             return ListView(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
               children: [
@@ -198,6 +254,7 @@ class _AppDrawer extends StatelessWidget {
                             radius: 22,
                             backgroundColor: colors.primary,
                             foregroundColor: colors.onPrimary,
+                            foregroundImage: avatar,
                             child: Text(
                               initial,
                               style: const TextStyle(
@@ -250,7 +307,7 @@ class _AppDrawer extends StatelessWidget {
                     ),
                     _DrawerItem(
                       icon: Icons.smart_toy_outlined,
-                      label: 'AI 健康顾问',
+                      label: '健康管家 AI',
                       onTap: () => _open(context, '/chat'),
                     ),
                     _DrawerItem(
@@ -399,17 +456,23 @@ class _DrawerItem extends StatelessWidget {
 
 class _DesktopNavigation extends StatelessWidget {
   const _DesktopNavigation({
+    required this.tabs,
+    required this.seniorMode,
+    required this.compact,
     required this.selectedIndex,
     required this.onDestinationSelected,
   });
 
+  final List<_TabItem> tabs;
+  final bool seniorMode;
+  final bool compact;
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 200,
+      width: compact ? 176 : 200,
       color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: Column(
         children: [
@@ -431,39 +494,39 @@ class _DesktopNavigation extends StatelessWidget {
           ),
           const Divider(height: 1),
           const SizedBox(height: 14),
-          for (var i = 0; i < _AppShellState._tabs.length; i++)
+          for (var i = 0; i < tabs.length; i++)
             _NavigationItem(
-              label: _AppShellState._tabs[i].label,
-              icon: selectedIndex == i
-                  ? _AppShellState._tabs[i].selectedIcon
-                  : _AppShellState._tabs[i].icon,
+              label: tabs[i].label,
+              icon: selectedIndex == i ? tabs[i].selectedIcon : tabs[i].icon,
               selected: selectedIndex == i,
               onTap: () => onDestinationSelected(i),
             ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Divider(),
-          ),
-          _NavigationItem(
-            label: '报告识别',
-            icon: Icons.document_scanner_outlined,
-            onTap: () => context.push('/report'),
-          ),
-          _NavigationItem(
-            label: '戒烟计划',
-            icon: Icons.smoke_free_outlined,
-            onTap: () => context.push('/quit-smoking'),
-          ),
-          _NavigationItem(
-            label: 'AI 健康助手',
-            icon: Icons.smart_toy_outlined,
-            onTap: () => context.push('/chat'),
-          ),
-          _NavigationItem(
-            label: '健康资讯',
-            icon: Icons.auto_stories_outlined,
-            onTap: () => context.push('/content'),
-          ),
+          if (!seniorMode && !compact) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Divider(),
+            ),
+            _NavigationItem(
+              label: '报告识别',
+              icon: Icons.document_scanner_outlined,
+              onTap: () => context.push('/report'),
+            ),
+            _NavigationItem(
+              label: '戒烟计划',
+              icon: Icons.smoke_free_outlined,
+              onTap: () => context.push('/quit-smoking'),
+            ),
+            _NavigationItem(
+              label: '健康管家 AI',
+              icon: Icons.smart_toy_outlined,
+              onTap: () => context.push('/chat'),
+            ),
+            _NavigationItem(
+              label: '健康资讯',
+              icon: Icons.auto_stories_outlined,
+              onTap: () => context.push('/content'),
+            ),
+          ],
           const Spacer(),
           _NavigationItem(
             label: '账号与数据',
@@ -532,6 +595,7 @@ class _DesktopCommandBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = UserSession.instance;
     final displayName = session.name.isEmpty ? '健康用户' : session.name;
+    final avatar = _sessionAvatarProvider();
     return Container(
       height: 64,
       color: Theme.of(context).colorScheme.surfaceContainerLow,
@@ -556,6 +620,7 @@ class _DesktopCommandBar extends StatelessWidget {
           const SizedBox(width: 8),
           CircleAvatar(
             radius: 16,
+            foregroundImage: avatar,
             child: Text(displayName.characters.first.toUpperCase()),
           ),
           const SizedBox(width: 10),
@@ -571,6 +636,22 @@ class _DesktopCommandBar extends StatelessWidget {
       ),
     );
   }
+}
+
+ImageProvider<Object>? _sessionAvatarProvider() {
+  final session = UserSession.instance;
+  if (session.avatarUrl.isEmpty) return null;
+  final objectKey =
+      Uri.tryParse(session.avatarUrl)?.queryParameters['objectKey'];
+  final token = session.accessToken;
+  if (objectKey == null || objectKey.isEmpty || token == null) return null;
+  final baseUrl =
+      sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
+  return NetworkImage(
+    '$baseUrl/files/content?objectKey=${Uri.encodeQueryComponent(objectKey)}'
+    '&contentType=image%2Fjpeg',
+    headers: {'Authorization': 'Bearer $token'},
+  );
 }
 
 class _MessageButton extends StatelessWidget {

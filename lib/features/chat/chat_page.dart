@@ -11,6 +11,7 @@ import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import '../../core/widgets/health_ui.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key});
@@ -31,17 +32,10 @@ class _ChatPageState extends State<ChatPage> {
   ChatSession? _currentSession;
   List<_UiMessage> _messages = [];
 
-  String _selectedProvider = 'doubao';
+  static const String _selectedProvider = 'qwen';
   bool _sending = false;
   bool _loadingHistory = true;
   UserProfileData? _profile;
-
-  static const _providers = [
-    _ProviderOption('doubao', '豆包 Seed 2.1 Pro', '🫘'),
-    _ProviderOption('qwen', '通义千问 3.7 Plus', '🌟'),
-    _ProviderOption('glm', '智谱 GLM-5.2', 'GLM'),
-    _ProviderOption('deepseek', 'DeepSeek V4 Pro', '🤖'),
-  ];
 
   static const _quickQuestions = [
     '我的血压今天偏高，有什么需要注意的？',
@@ -86,7 +80,6 @@ class _ChatPageState extends State<ChatPage> {
       _currentSession = sessions.first;
       final history = await _chatRepo.loadMessages(_currentSession!.id);
       _messages = history.map(_UiMessage.fromDb).toList();
-      _selectedProvider = _normalizeProvider(_currentSession!.provider);
     }
 
     if (!mounted) return;
@@ -126,7 +119,6 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {
       _currentSession = session;
       _messages = history.map(_UiMessage.fromDb).toList();
-      _selectedProvider = _normalizeProvider(session.provider);
       _loadingHistory = false;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
@@ -157,7 +149,7 @@ class _ChatPageState extends State<ChatPage> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
+                  color: Theme.of(context).colorScheme.outlineVariant,
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
@@ -188,7 +180,7 @@ class _ChatPageState extends State<ChatPage> {
               const Divider(height: 1),
               Expanded(
                 child: sessions.isEmpty
-                    ?  Center(
+                    ? Center(
                         child: Padding(
                           padding: EdgeInsets.all(32),
                           child: Text(
@@ -238,7 +230,7 @@ class _ChatPageState extends State<ChatPage> {
                             ),
                             subtitle: Text(
                               '$time · ${s.messageCount} 条消息',
-                              style:  TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 color: AppTheme.muted,
                               ),
@@ -248,7 +240,9 @@ class _ChatPageState extends State<ChatPage> {
                               icon: Icon(
                                 Icons.delete_outline,
                                 size: 18,
-                                color: Colors.grey.shade500,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                               onPressed: () async {
                                 final confirm = await showDialog<bool>(
@@ -440,10 +434,6 @@ class _ChatPageState extends State<ChatPage> {
 
   String get _apiProvider => _selectedProvider;
 
-  String _normalizeProvider(String provider) {
-    return _providers.any((p) => p.id == provider) ? provider : 'doubao';
-  }
-
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients) {
@@ -469,11 +459,11 @@ class _ChatPageState extends State<ChatPage> {
         title: Text(
           _currentSession?.title.isNotEmpty == true
               ? _currentSession!.title
-              : 'AI 健康顾问',
+              : '健康管家',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        bottom:  PreferredSize(
+        bottom: PreferredSize(
           preferredSize: Size.fromHeight(22),
           child: Padding(
             padding: EdgeInsets.only(bottom: 6),
@@ -496,80 +486,46 @@ class _ChatPageState extends State<ChatPage> {
             icon: const Icon(Icons.add_comment_outlined),
             onPressed: _newSession,
           ),
-          // 模型选择
-          PopupMenuButton<String>(
-            tooltip: '切换模型',
-            initialValue: _selectedProvider,
-            onSelected: (v) => setState(() => _selectedProvider = v),
-            itemBuilder: (_) => [
-              for (final p in _providers)
-                PopupMenuItem(
-                  value: p.id,
-                  child: Row(
-                    children: [
-                      Text(p.emoji, style: const TextStyle(fontSize: 16)),
-                      const SizedBox(width: 8),
-                      Text(p.name),
-                      if (p.id == _selectedProvider) ...[
-                        const Spacer(),
-                        Icon(
-                          Icons.check,
-                          size: 16,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-            ],
+          const Tooltip(
+            message: 'AI 健康管家',
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Row(
-                children: [
-                  Text(
-                    _providers
-                        .firstWhere(
-                          (p) => p.id == _selectedProvider,
-                          orElse: () => _providers.first,
-                        )
-                        .emoji,
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                  const Icon(Icons.arrow_drop_down, size: 18),
-                ],
-              ),
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Center(child: Text('AI', style: TextStyle(fontSize: 12))),
             ),
           ),
         ],
       ),
       body: _loadingHistory
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: _messages.isEmpty
-                      ? _buildEmptyState()
-                      : ListView.builder(
-                          controller: _scrollCtrl,
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                          itemCount: _messages.length,
-                          itemBuilder: (_, i) {
-                            final m = _messages[i];
-                            return _MessageBubble(
-                              role: m.role,
-                              content: m.content.isEmpty && m.streaming
-                                  ? '...'
-                                  : m.content,
-                              provider: m.provider,
-                              isError: m.isError,
-                              streaming: m.streaming,
-                            );
-                          },
-                        ),
-                ),
-                if (_messages.isEmpty) _buildQuickQuestions(),
-                _buildInputBar(),
-              ],
+          : HealthResponsiveContent(
+              maxWidth: 960,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: _messages.isEmpty
+                        ? _buildEmptyState()
+                        : ListView.builder(
+                            controller: _scrollCtrl,
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                            itemCount: _messages.length,
+                            itemBuilder: (_, i) {
+                              final m = _messages[i];
+                              return _MessageBubble(
+                                role: m.role,
+                                content: m.content.isEmpty && m.streaming
+                                    ? '...'
+                                    : m.content,
+                                provider: m.provider,
+                                isError: m.isError,
+                                streaming: m.streaming,
+                              );
+                            },
+                          ),
+                  ),
+                  if (_messages.isEmpty) _buildQuickQuestions(),
+                  _buildInputBar(),
+                ],
+              ),
             ),
     );
   }
@@ -587,11 +543,11 @@ class _ChatPageState extends State<ChatPage> {
           ),
           const SizedBox(height: 16),
           const Text(
-            'AI 健康顾问',
+            '健康管家',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 8),
-           Text(
+          Text(
             '有什么健康问题，直接问我吧',
             style: TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
@@ -658,7 +614,7 @@ class _ChatPageState extends State<ChatPage> {
                 textInputAction: TextInputAction.newline,
                 decoration: InputDecoration(
                   hintText: '输入健康问题…',
-                  hintStyle:  TextStyle(
+                  hintStyle: TextStyle(
                     color: AppTheme.muted,
                     fontSize: 14,
                   ),
@@ -819,7 +775,7 @@ class _MessageBubble extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (!isUser && !isError && !streaming) ...[
-                      const AiContentNotice(feature: 'AI健康顾问'),
+                      const AiContentNotice(feature: '健康管家'),
                       const SizedBox(height: 8),
                     ],
                     Text(
@@ -844,11 +800,4 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
-}
-
-class _ProviderOption {
-  const _ProviderOption(this.id, this.name, this.emoji);
-  final String id;
-  final String name;
-  final String emoji;
 }

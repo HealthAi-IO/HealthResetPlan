@@ -107,6 +107,7 @@ class ContentComment {
   const ContentComment({
     required this.id,
     required this.authorName,
+    required this.avatarUrl,
     required this.content,
     required this.createdAt,
     required this.isMine,
@@ -116,6 +117,7 @@ class ContentComment {
     return ContentComment(
       id: _int(json['id']),
       authorName: '${json['authorName'] ?? '健康用户'}',
+      avatarUrl: '${json['avatarUrl'] ?? ''}',
       content: '${json['content'] ?? ''}',
       createdAt: _date(json['createdAt']),
       isMine: json['isMine'] == true || json['isMine'] == 1,
@@ -124,6 +126,7 @@ class ContentComment {
 
   final int id;
   final String authorName;
+  final String avatarUrl;
   final String content;
   final DateTime? createdAt;
   final bool isMine;

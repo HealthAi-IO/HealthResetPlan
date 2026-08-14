@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -14,7 +15,6 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
-import '../../core/widgets/health_ui.dart';
 import '../meals/meal_input_args.dart';
 import '../meals/macro_ring.dart';
 
@@ -77,12 +77,15 @@ class _HomePageState extends State<HomePage> {
   String? _loadError;
   bool _promptOpen = false;
   bool _entryPromptsRunning = false;
+  final Map<String, DateTime> _snoozedTasks = <String, DateTime>{};
+  Timer? _snoozeTimer;
 
   @override
   void initState() {
     super.initState();
     _repo.addListener(_onChanged);
     appSettingsController.addListener(_onChanged);
+    _loadSnoozedTasks();
     _load();
   }
 
@@ -90,6 +93,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _repo.removeListener(_onChanged);
     appSettingsController.removeListener(_onChanged);
+    _snoozeTimer?.cancel();
     super.dispose();
   }
 
@@ -369,6 +373,112 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  String? _nextHomeTask(Set<String> taskTypes, Set<String> handledTypes) {
+    const order = ['meal', 'weight', 'exercise', 'water'];
+    final pending = [
+      ...order.where(taskTypes.contains),
+      ...taskTypes.where((type) => !order.contains(type)),
+    ].where((type) => !handledTypes.contains(type)).toList();
+    if (pending.isEmpty) return null;
+    return pending.where((type) => !_isTaskSnoozed(type)).firstOrNull;
+  }
+
+  String _snoozeKey(String type) {
+    final now = DateTime.now();
+    final day =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    return 'home_task_snooze_${UserSession.instance.userId ?? 'local'}_${day}_$type';
+  }
+
+  bool _isTaskSnoozed(String type) {
+    final until = _snoozedTasks[type];
+    return until != null && until.isAfter(DateTime.now());
+  }
+
+  Future<void> _loadSnoozedTasks() async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    const types = [
+      'meal',
+      'weight',
+      'exercise',
+      'water',
+      'medicine',
+      'quit_smoking',
+    ];
+    final loaded = <String, DateTime>{};
+    for (final type in types) {
+      final value = prefs.getInt(_snoozeKey(type));
+      if (value == null) continue;
+      final until = DateTime.fromMillisecondsSinceEpoch(value);
+      if (until.isAfter(now)) loaded[type] = until;
+    }
+    if (!mounted) return;
+    setState(() {
+      _snoozedTasks
+        ..clear()
+        ..addAll(loaded);
+    });
+    _scheduleSnoozeRefresh();
+  }
+
+  Future<void> _snoozeHomeTask(String type) async {
+    final until = DateTime.now().add(const Duration(minutes: 30));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_snoozeKey(type), until.millisecondsSinceEpoch);
+    if (!mounted) return;
+    setState(() => _snoozedTasks[type] = until);
+    _scheduleSnoozeRefresh();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已延后至 ${DateFormat('HH:mm').format(until)}')),
+    );
+  }
+
+  void _scheduleSnoozeRefresh() {
+    _snoozeTimer?.cancel();
+    final now = DateTime.now();
+    final active = _snoozedTasks.values.where((value) => value.isAfter(now));
+    DateTime? next;
+    for (final value in active) {
+      if (next == null || value.isBefore(next)) next = value;
+    }
+    if (next == null) return;
+    _snoozeTimer = Timer(next.difference(now) + const Duration(seconds: 1), () {
+      if (!mounted) return;
+      setState(() => _snoozedTasks.removeWhere(
+            (_, value) => !value.isAfter(DateTime.now()),
+          ));
+      _scheduleSnoozeRefresh();
+    });
+  }
+
+  Future<void> _skipHomeTask(String type) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('跳过今天这项任务？'),
+        content: const Text('只跳过今天，不会影响之后的计划和提醒。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('返回'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认跳过'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _repo.addClockRecord(type: type, status: 'skip', note: '首页任务跳过');
+    if (!mounted) return;
+    _snoozedTasks.remove(type);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('已跳过今天这项任务')),
+    );
+  }
+
   Future<void> _takeSeniorMedicine(
     ReminderData reminder,
     DateTime occurrence,
@@ -504,6 +614,7 @@ class _HomePageState extends State<HomePage> {
         todayPlans.where((p) => p.type == 'exercise').firstOrNull;
     final todayMeasurement =
         todayPlans.where((p) => p.type == 'measurement').firstOrNull;
+    final todayMeal = todayPlans.where((p) => p.type == 'meal').firstOrNull;
 
     // 今日打卡
     final todayClocks = (data?.clockRecords ?? []).where((r) {
@@ -512,8 +623,13 @@ class _HomePageState extends State<HomePage> {
     }).toList();
     final doneTypes =
         todayClocks.where((r) => r.status == 'done').map((r) => r.type).toSet();
+    final skippedTypes =
+        todayClocks.where((r) => r.status == 'skip').map((r) => r.type).toSet();
+    final taskTypes = data?.todayTaskTypes(now) ?? const <String>{};
+    final nextTaskType =
+        _nextHomeTask(taskTypes, {...doneTypes, ...skippedTypes});
     final completion = data?.todayCompletion ?? 0;
-    final desktop = MediaQuery.sizeOf(context).width >= 1100;
+    final desktop = MediaQuery.sizeOf(context).width >= 1280;
     final seniorMode = appSettingsController.seniorMode;
 
     if (seniorMode) {
@@ -525,9 +641,26 @@ class _HomePageState extends State<HomePage> {
           children: [
             Row(
               children: [
-                if (Scaffold.maybeOf(context)?.hasDrawer ?? false)
-                  const HealthDrawerButton(),
-                const Spacer(),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '今天',
+                        style: TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      Text(
+                        '你好，${profile?.nickname.trim().isNotEmpty == true ? profile!.nickname.trim() : '健康用户'} · $todayLabel',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 IconButton(
                   tooltip: '选择主题',
                   onPressed: _showThemePicker,
@@ -535,6 +668,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               ],
             ),
+            const SizedBox(height: 18),
             if (_loadError != null) ...[
               _HomeLoadErrorBanner(onRetry: _load),
               const SizedBox(height: 14),
@@ -581,6 +715,7 @@ class _HomePageState extends State<HomePage> {
         meals: _todayMealRecords,
         todayPlans: todayPlans,
         todayClocks: todayClocks,
+        taskTypes: taskTypes,
         doneTypes: doneTypes,
         completion: completion,
         todayLabel: todayLabel,
@@ -619,21 +754,31 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 14),
           ],
           _DashboardHero(
+            data: data,
             completion: completion,
+            taskTypes: taskTypes,
             doneTypes: doneTypes,
+            skippedTypes: skippedTypes,
+            snoozedTasks: _snoozedTasks,
+            nextTaskType: nextTaskType,
             onNextAction: () {
-              if (!doneTypes.contains('meal')) {
+              if (nextTaskType == 'meal') {
                 _openMealInput('lunch');
-              } else if (!doneTypes.contains('weight')) {
+              } else if (nextTaskType == 'weight') {
                 context.push('/indicators/input', extra: 'weight').then((_) {
                   if (mounted) _load(silent: true);
                 });
-              } else if (completion < 1) {
+              } else if (nextTaskType != null) {
                 context.go('/clock');
               } else {
                 context.go('/plan');
               }
             },
+            onLater: nextTaskType == null
+                ? null
+                : () => _snoozeHomeTask(nextTaskType),
+            onSkip:
+                nextTaskType == null ? null : () => _skipHomeTask(nextTaskType),
           ),
           const SizedBox(height: 14),
           _Panel(
@@ -646,7 +791,7 @@ class _HomePageState extends State<HomePage> {
                 physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 10,
                 crossAxisSpacing: 10,
-                childAspectRatio: 0.95,
+                childAspectRatio: c.maxWidth >= 700 ? 1.8 : 0.95,
                 children: [
                   _QuickEntry(
                       icon: Icons.document_scanner_outlined,
@@ -655,7 +800,7 @@ class _HomePageState extends State<HomePage> {
                       onTap: () => context.push('/report')),
                   _QuickEntry(
                       icon: Icons.smart_toy_outlined,
-                      label: 'AI 健康顾问',
+                      label: '健康管家 AI',
                       color: AppTheme.aiPurple,
                       onTap: () => context.push('/chat')),
                   _QuickEntry(
@@ -671,6 +816,7 @@ class _HomePageState extends State<HomePage> {
           _TodayPlanCard(
             exercise: todayExercise,
             measurement: todayMeasurement,
+            meal: todayMeal,
             onGenerate: () async {
               try {
                 await _repo.generateWeeklyPlan();

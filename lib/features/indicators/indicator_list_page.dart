@@ -6,6 +6,7 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/widgets/health_ui.dart';
 
 class IndicatorListPage extends StatefulWidget {
   const IndicatorListPage({super.key});
@@ -97,30 +98,33 @@ class _IndicatorListPageState extends State<IndicatorListPage> {
       appBar: AppBar(
         title: const Text('健康指标记录'),
       ),
-      body: Column(
-        children: [
-          _buildFilterBar(),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _items.isEmpty
-                    ? _buildEmpty()
-                    : RefreshIndicator(
-                        onRefresh: _load,
-                        child: ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-                          itemCount: _items.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (_, i) => _IndicatorCard(
-                            item: _items[i],
-                            onDelete: () => _delete(_items[i]),
-                            onEdit: () => _edit(_items[i]),
+      body: HealthResponsiveContent(
+        maxWidth: 1000,
+        child: Column(
+          children: [
+            _buildFilterBar(),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _items.isEmpty
+                      ? _buildEmpty()
+                      : RefreshIndicator(
+                          onRefresh: _load,
+                          child: ListView.separated(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                            itemCount: _items.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (_, i) => _IndicatorCard(
+                              item: _items[i],
+                              onDelete: () => _delete(_items[i]),
+                              onEdit: () => _edit(_items[i]),
+                            ),
                           ),
                         ),
-                      ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
       floatingActionButton: _items.isEmpty
           ? null

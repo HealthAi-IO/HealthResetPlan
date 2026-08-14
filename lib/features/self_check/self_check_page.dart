@@ -9,6 +9,7 @@ import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import '../../core/widgets/health_ui.dart';
 
 class SelfCheckPage extends StatefulWidget {
   const SelfCheckPage({super.key});
@@ -101,53 +102,56 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
 
     return Scaffold(
       appBar: AppBar(title: Text(_type.appBarTitle)),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final type in _CheckType.values)
-                ChoiceChip(
-                  label: Text(type.label),
-                  selected: _type == type,
-                  onSelected: _loading ? null : (_) => _selectType(type),
-                ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          if (_type == _CheckType.skin && !_skinStarted)
-            _SkinIntroCard(
-              agreed: _privacyAgreed,
-              onAgreedChanged: (value) =>
-                  setState(() => _privacyAgreed = value ?? false),
-              onStart: _privacyAgreed
-                  ? () => setState(() => _skinStarted = true)
-                  : null,
-            )
-          else
-            _UploadCard(
-              type: _type,
-              imageName: _image?.name,
-              loading: _loading,
-              canUseCamera: canUseCamera,
-              onPickCamera: () => _pick(ImageSource.camera),
-              onPickGallery: () => _pick(ImageSource.gallery),
+      body: HealthResponsiveContent(
+        maxWidth: 920,
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final type in _CheckType.values)
+                  ChoiceChip(
+                    label: Text(type.label),
+                    selected: _type == type,
+                    onSelected: _loading ? null : (_) => _selectType(type),
+                  ),
+              ],
             ),
-          const SizedBox(height: 16),
-          if (_loading)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            if (_type == _CheckType.skin && !_skinStarted)
+              _SkinIntroCard(
+                agreed: _privacyAgreed,
+                onAgreedChanged: (value) =>
+                    setState(() => _privacyAgreed = value ?? false),
+                onStart: _privacyAgreed
+                    ? () => setState(() => _skinStarted = true)
+                    : null,
+              )
+            else
+              _UploadCard(
+                type: _type,
+                imageName: _image?.name,
+                loading: _loading,
+                canUseCamera: canUseCamera,
+                onPickCamera: () => _pick(ImageSource.camera),
+                onPickGallery: () => _pick(ImageSource.gallery),
               ),
-            )
-          else if (_error != null)
-            _ErrorCard(message: _error!)
-          else if (_result != null)
-            _ResultCard(result: _result!),
-        ],
+            const SizedBox(height: 16),
+            if (_loading)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            else if (_error != null)
+              _ErrorCard(message: _error!)
+            else if (_result != null)
+              _ResultCard(result: _result!),
+          ],
+        ),
       ),
     );
   }
@@ -478,17 +482,18 @@ class _DisclaimerBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF1F2),
+        color: colors.errorContainer,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFECACA)),
+        border: Border.all(color: colors.error.withValues(alpha: 0.35)),
       ),
-      child: const Text(
+      child: Text(
         'AI 视觉识别仅作日常健康参考，不能替代中医师 / 皮肤科医生线下专业诊断、开药；身体不适或脱发持续加重请前往正规医院就诊。',
-        style: TextStyle(color: Color(0xFFB91C1C), height: 1.45),
+        style: TextStyle(color: colors.onErrorContainer, height: 1.45),
       ),
     );
   }

@@ -2,6 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_theme.dart';
 
+class HealthResponsiveContent extends StatelessWidget {
+  const HealthResponsiveContent({
+    super.key,
+    required this.child,
+    this.maxWidth = 1040,
+  });
+
+  final Widget child;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) => Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(
+          width: constraints.maxWidth.clamp(0, maxWidth).toDouble(),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
 class HealthDrawerButton extends StatelessWidget {
   const HealthDrawerButton({super.key});
 

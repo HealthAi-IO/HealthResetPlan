@@ -25,7 +25,7 @@ class AuthPageShell extends StatelessWidget {
             child: Container(
               width: 390,
               height: 390,
-              decoration:  BoxDecoration(
+              decoration: BoxDecoration(
                 color: AppTheme.softBlue,
                 shape: BoxShape.circle,
               ),
@@ -83,7 +83,7 @@ class _BrandDots extends StatelessWidget {
       child: Wrap(
         spacing: 6,
         runSpacing: 6,
-        children:  [
+        children: [
           _Dot(AppTheme.primaryBlue),
           _Dot(AppTheme.accentCyan),
           _Dot(AppTheme.leafGreen),
@@ -131,14 +131,16 @@ class SeniorModeEntry extends StatelessWidget {
                 foregroundColor: enabled
                     ? Theme.of(context).colorScheme.primary
                     : AppTheme.ink,
-                backgroundColor: enabled ? AppTheme.softBlue : Colors.white,
-                side:  BorderSide(color: AppTheme.cardBorder),
+                backgroundColor: enabled
+                    ? AppTheme.softBlue
+                    : Theme.of(context).colorScheme.surfaceContainerLow,
+                side: BorderSide(color: AppTheme.cardBorder),
               ),
             ),
             const SizedBox(height: 6),
             Text(
               enabled ? '长辈模式已开启' : '长辈模式',
-              style:  TextStyle(
+              style: TextStyle(
                 color: AppTheme.muted,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,

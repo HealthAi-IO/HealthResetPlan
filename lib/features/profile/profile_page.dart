@@ -24,6 +24,8 @@ import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
 import '../../core/storage/data_sync_status.dart';
 import '../../core/storage/data_sync_merge.dart';
+import '../../core/widgets/health_ui.dart';
+import '../../core/widgets/numeric_picker_field.dart';
 import 'cancel_account_dialog.dart';
 import 'gender_selector.dart';
 
@@ -146,6 +148,12 @@ class _ProfilePageState extends State<ProfilePage> {
     if (UserSession.instance.isAccountLogin) {
       try {
         accountInfo = await sl<AuthApi>().fetchAccountInfo();
+        if (accountInfo != null) {
+          await UserSession.instance.setAccountDisplay(
+            nickname: accountInfo.nickname,
+            avatarUrl: accountInfo.avatarUrl,
+          );
+        }
       } catch (_) {}
     } else {
       accountInfo = null;
@@ -218,6 +226,13 @@ class _ProfilePageState extends State<ProfilePage> {
       final authApi = sl<AuthApi>();
       final avatarUrl = await authApi.uploadAvatar(image.path);
       final account = await authApi.updateAccountProfile(avatarUrl: avatarUrl);
+      if (!mounted) return;
+      if (account != null) {
+        await UserSession.instance.setAccountDisplay(
+          nickname: account.nickname,
+          avatarUrl: account.avatarUrl,
+        );
+      }
       if (!mounted) return;
       setState(() => _accountInfo = account);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -507,8 +522,8 @@ class _ProfilePageState extends State<ProfilePage> {
       builder: (context) => AlertDialog(
         title: Text(accepted ? '管理 AI 数据处理授权' : 'AI 数据处理说明'),
         content: Text(accepted
-            ? '你已同意云端 AI 数据处理。撤回后，AI 健康顾问、智能计划、报告识别、餐食识别和图像分析将停止；账号中的健康记录不受影响。'
-            : '使用 AI 健康顾问、智能计划、报告识别、餐食识别或图像分析时，你主动提交的必要健康信息或图片会由本服务的受控服务器短暂转发给已配置的千问、豆包、智谱 GLM 或 DeepSeek 模型处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
+            ? '你已同意云端 AI 数据处理。撤回后，健康管家、智能计划、报告识别、餐食识别和图像分析将停止；账号中的健康记录不受影响。'
+            : '使用健康管家、智能计划、报告识别、餐食识别或图像分析时，你主动提交的必要健康信息或图片会由本服务的受控服务器短暂转发给通义千问处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context), child: const Text('取消')),
@@ -685,8 +700,8 @@ class _ProfilePageState extends State<ProfilePage> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('关闭长辈模式'),
-          content: const Text('关闭后将恢复普通首页和标准字号。确认关闭吗？'),
+          title: const Text('切换到普通模式'),
+          content: const Text('切换后会恢复完整功能入口和标准字号，健康数据不会改变。'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -694,7 +709,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('确认关闭'),
+              child: const Text('切换模式'),
             ),
           ],
         ),
@@ -702,6 +717,12 @@ class _ProfilePageState extends State<ProfilePage> {
       if (confirmed != true) return;
     }
     await appSettingsController.setSeniorMode(value);
+    if (mounted) context.go('/home');
+  }
+
+  Future<void> _setSeniorClockVoice(bool value) async {
+    await appSettingsController.setSeniorClockVoice(value);
+    if (mounted) setState(() {});
   }
 
   Future<void> _requestNotificationPermission() async {
@@ -855,8 +876,61 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           children: [
             const ListTile(
-              title: Text('更多设置',
+              title: Text('更多功能',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.document_scanner_outlined,
+              title: '报告识别',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/report');
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.smart_toy_outlined,
+              title: '健康管家 AI',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/chat');
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.image_search_outlined,
+              title: '拍照自查',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/self-check');
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.smoke_free_outlined,
+              title: '戒烟计划',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/quit-smoking');
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.auto_stories_outlined,
+              title: '健康资讯',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/content');
+              },
+            ),
+            _SeniorSettingsTile(
+              icon: Icons.notifications_outlined,
+              title: '消息中心',
+              onTap: () {
+                Navigator.pop(sheetContext);
+                context.push('/messages');
+              },
+            ),
+            const Divider(height: 24),
+            const ListTile(
+              title: Text('设置与数据',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             ),
             _SeniorSettingsTile(
               icon: Icons.psychology_outlined,
@@ -944,482 +1018,501 @@ class _ProfilePageState extends State<ProfilePage> {
 
     if (appSettingsController.seniorMode) {
       return Scaffold(
-        appBar: AppBar(title: const Text('个人中心')),
-        body: _SeniorProfileView(
-          profile: profile,
-          accountInfo: _accountInfo,
-          seniorMode: appSettingsController.seniorMode,
-          notificationsEnabled: _notificationsEnabled,
-          exactAlarmEnabled: _exactAlarmEnabled,
-          syncStatus: dataSyncStatusController,
-          onEditProfile: _showSeniorProfileEditor,
-          onNotificationPermission: _requestNotificationPermission,
-          onExactAlarmPermission: _requestExactAlarmPermission,
-          onToggleSeniorMode: _setSeniorMode,
-          onReminderSettings: () => context.go('/clock?manage=rules'),
-          onMoreSettings: _showSeniorMoreSettings,
-          onLogin: () => context
-              .push('/login', extra: true)
-              .then((_) => _load(silent: true)),
-          onSignOut: _signOut,
-          onAvatarTap: _changeAvatar,
-          avatarUploading: _avatarUploading,
-          onRefresh: () => _load(silent: true),
+        body: HealthResponsiveContent(
+          maxWidth: 1040,
+          child: _SeniorProfileView(
+            profile: profile,
+            accountInfo: _accountInfo,
+            seniorMode: appSettingsController.seniorMode,
+            notificationsEnabled: _notificationsEnabled,
+            exactAlarmEnabled: _exactAlarmEnabled,
+            syncStatus: dataSyncStatusController,
+            onEditProfile: _showSeniorProfileEditor,
+            onNotificationPermission: _requestNotificationPermission,
+            onExactAlarmPermission: _requestExactAlarmPermission,
+            onToggleSeniorMode: _setSeniorMode,
+            onReminderSettings: () => context.go('/clock?manage=rules'),
+            onMoreSettings: _showSeniorMoreSettings,
+            onLogin: () => context
+                .push('/login', extra: true)
+                .then((_) => _load(silent: true)),
+            onSignOut: _signOut,
+            onAvatarTap: _changeAvatar,
+            avatarUploading: _avatarUploading,
+            onRefresh: () => _load(silent: true),
+          ),
         ),
       );
     }
 
     return Scaffold(
       appBar: AppBar(title: const Text('个人中心')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          controller: _scrollController,
-          padding: EdgeInsets.fromLTRB(20, 4, 20, bottomPadding),
-          children: [
-            _ProfileHero(
-              profile: profile,
-              indicators: _indicators,
-              accountInfo: _accountInfo,
-              onAvatarTap: _changeAvatar,
-              avatarUploading: _avatarUploading,
-            ),
-            const SizedBox(height: 16),
-            _Panel(
-              title: '健康与智能',
-              subtitle: '提醒与 AI 能力管理',
-              child: Column(
-                children: [
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.alarm_outlined),
-                    title: const Text('提醒设置'),
-                    subtitle: const Text('管理用药、长期和重复提醒'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => context.go('/clock?manage=rules'),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.psychology_outlined),
-                    title: const Text('AI 数据处理授权'),
-                    subtitle: const Text('管理 AI 顾问、计划、报告、餐食和图像分析授权'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: _manageAiConsent,
-                  ),
-                ],
+      body: HealthResponsiveContent(
+        maxWidth: 1100,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(20, 4, 20, bottomPadding),
+            children: [
+              _ProfileHero(
+                profile: profile,
+                indicators: _indicators,
+                accountInfo: _accountInfo,
+                onAvatarTap: _changeAvatar,
+                avatarUploading: _avatarUploading,
               ),
-            ),
-            const SizedBox(height: 16),
-            _Panel(
-              title: '隐私与协议',
-              subtitle: '了解数据使用方式与服务条款',
-              child: Column(
-                children: [
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.privacy_tip_outlined),
-                    title: const Text('隐私政策'),
-                    subtitle: const Text('查看完整的个人信息与数据安全说明'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => context.push('/privacy-policy'),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.description_outlined),
-                    title: const Text('用户协议'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => _openLegalDocument(termsOfServiceUrl),
-                  ),
-                ],
+              const SizedBox(height: 16),
+              _Panel(
+                title: '健康与智能',
+                subtitle: '提醒与 AI 能力管理',
+                child: Column(
+                  children: [
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.alarm_outlined),
+                      title: const Text('提醒设置'),
+                      subtitle: const Text('管理用药、长期和重复提醒'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.go('/clock?manage=rules'),
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.psychology_outlined),
+                      title: const Text('AI 数据处理授权'),
+                      subtitle: const Text('管理 AI 顾问、计划、报告、餐食和图像分析授权'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _manageAiConsent,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            LayoutBuilder(
-              key: _profileFormSectionKey,
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 960;
-                final form = Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_profileGuideVisible) ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color:
-                                Theme.of(context).colorScheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                Icons.info_outline,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onPrimaryContainer,
-                              ),
-                              const SizedBox(width: 10),
-                              const Expanded(
-                                child: Text(
-                                  '先完善性别、出生年份、身高和体重，保存后即可生成健康计划。',
-                                  style: TextStyle(
-                                    height: 1.5,
-                                    fontWeight: FontWeight.w600,
+              const SizedBox(height: 16),
+              _Panel(
+                title: '隐私与协议',
+                subtitle: '了解数据使用方式与服务条款',
+                child: Column(
+                  children: [
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.privacy_tip_outlined),
+                      title: const Text('隐私政策'),
+                      subtitle: const Text('查看完整的个人信息与数据安全说明'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push('/privacy-policy'),
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.description_outlined),
+                      title: const Text('用户协议'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _openLegalDocument(termsOfServiceUrl),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              LayoutBuilder(
+                key: _profileFormSectionKey,
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 960;
+                  final form = Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (_profileGuideVisible) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primaryContainer,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onPrimaryContainer,
+                                ),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    '先完善性别、出生年份、身高和体重，保存后即可生成健康计划。',
+                                    style: TextStyle(
+                                      height: 1.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
+                        TextFormField(
+                          controller: _nicknameController,
+                          focusNode: _nicknameFocusNode,
+                          decoration: const InputDecoration(labelText: '昵称'),
+                          validator: (value) =>
+                              value == null || value.trim().isEmpty
+                                  ? '请输入昵称'
+                                  : null,
+                        ),
+                        const SizedBox(height: 12),
+                        GenderSelector(
+                          value: _gender,
+                          focusNode: _genderFocusNode,
+                          onChanged: (value) {
+                            setState(() {
+                              _gender = value;
+                              _dirty = true;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _ProfileNumberField(
+                                controller: _birthYearController,
+                                focusNode: _birthYearFocusNode,
+                                label: '出生年份',
+                                keyboardType: TextInputType.number,
+                                onTap: _pickBirthYear,
+                                validator: (value) {
+                                  final year =
+                                      int.tryParse(value?.trim() ?? '');
+                                  final currentYear = DateTime.now().year;
+                                  if (year == null ||
+                                      currentYear - year <
+                                          HealthRanges.minAge ||
+                                      currentYear - year >
+                                          HealthRanges.maxAge) {
+                                    return '仅支持 18–100 岁成年人';
+                                  }
+                                  return null;
+                                },
                               ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _ProfileNumberField(
+                                controller: _heightController,
+                                focusNode: _heightFocusNode,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                label: '身高（cm）',
+                                onTap: _pickHeight,
+                                validator: (value) {
+                                  final height =
+                                      double.tryParse(value?.trim() ?? '');
+                                  if (height == null ||
+                                      height < HealthRanges.minHeightCm ||
+                                      height > HealthRanges.maxHeightCm) {
+                                    return '请输入 100–230 cm';
+                                  }
+                                  return null;
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        _ProfileNumberField(
+                          controller: _weightController,
+                          focusNode: _weightFocusNode,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          label: '体重（kg）',
+                          onTap: _pickWeight,
+                          validator: (value) {
+                            final weight = double.tryParse(value?.trim() ?? '');
+                            if (weight == null ||
+                                weight < HealthRanges.minWeightKg ||
+                                weight > HealthRanges.maxWeightKg) {
+                              return '请输入 20–300 kg';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          controller: _medicalHistoryController,
+                          maxLines: 3,
+                          decoration: const InputDecoration(labelText: '既往病史'),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _medicationsController,
+                          maxLines: 3,
+                          decoration: const InputDecoration(labelText: '用药记录'),
+                        ),
+                        const SizedBox(height: 16),
+                        DropdownButtonFormField<String>(
+                          // ignore: deprecated_member_use
+                          value: _goal,
+                          decoration: const InputDecoration(labelText: '健康目标'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'maintain', child: Text('保持健康')),
+                            DropdownMenuItem(
+                                value: 'fat_loss', child: Text('减脂')),
+                            DropdownMenuItem(
+                                value: 'glucose_control', child: Text('控糖')),
+                            DropdownMenuItem(
+                                value: 'bp_control', child: Text('控压')),
+                          ],
+                          onChanged: (value) => setState(() {
+                            _goal = value ?? 'maintain';
+                            _dirty = true;
+                          }),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          // ignore: deprecated_member_use
+                          value: _exerciseBase,
+                          decoration: const InputDecoration(labelText: '运动基础'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'none', child: Text('无（久坐为主）')),
+                            DropdownMenuItem(
+                                value: 'light', child: Text('轻度（每周 1-2 次）')),
+                            DropdownMenuItem(
+                                value: 'moderate', child: Text('中等（每周 3-5 次）')),
+                          ],
+                          onChanged: (value) => setState(() {
+                            _exerciseBase = value ?? 'none';
+                            _dirty = true;
+                          }),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          // ignore: deprecated_member_use
+                          value: _dietPreference,
+                          decoration: const InputDecoration(labelText: '饮食偏好'),
+                          items: const [
+                            DropdownMenuItem(
+                                value: 'normal', child: Text('普通（荤素搭配）')),
+                            DropdownMenuItem(
+                                value: 'light', child: Text('清淡（少盐少油）')),
+                            DropdownMenuItem(
+                                value: 'vegetarian', child: Text('素食')),
+                            DropdownMenuItem(
+                                value: 'custom', child: Text('自定义（参考病史）')),
+                          ],
+                          onChanged: (value) => setState(() {
+                            _dietPreference = value ?? 'normal';
+                            _dirty = true;
+                          }),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _saving ? null : _saveProfile,
+                          icon: _saving
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.save_outlined),
+                          label: const Text('保存档案'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  final quickActions = _Panel(
+                    title: '快速记录',
+                    subtitle: '本地录入最近指标',
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        _QuickActionChip(
+                          icon: Icons.favorite_outline,
+                          label: '血压',
+                          onTap: () => _addIndicatorDialog('bp'),
+                        ),
+                        _QuickActionChip(
+                          icon: Icons.scale_outlined,
+                          label: '体重',
+                          onTap: () => _addIndicatorDialog('weight'),
+                        ),
+                        _QuickActionChip(
+                          icon: Icons.monitor_heart_outlined,
+                          label: '血糖',
+                          onTap: () => _addIndicatorDialog('glucose'),
+                        ),
+                        _QuickActionChip(
+                          icon: Icons.science_outlined,
+                          label: '血脂',
+                          onTap: () => _addIndicatorDialog('lipid'),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  final recent = _Panel(
+                    title: '最近指标',
+                    subtitle: '最新 6 项，点全部查看完整记录',
+                    trailing: TextButton(
+                      onPressed: () => context.push('/indicators'),
+                      child: const Text('全部'),
+                    ),
+                    child: _IndicatorList(indicators: _indicators),
+                  );
+
+                  if (wide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                            child: _Panel(
+                                title: '基础档案',
+                                subtitle: '完善后可用于本地计划计算',
+                                child: form)),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            children: [
+                              quickActions,
+                              const SizedBox(height: 16),
+                              recent,
                             ],
                           ),
                         ),
-                        const SizedBox(height: 14),
                       ],
-                      TextFormField(
-                        controller: _nicknameController,
-                        focusNode: _nicknameFocusNode,
-                        decoration: const InputDecoration(labelText: '昵称'),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                                ? '请输入昵称'
-                                : null,
-                      ),
-                      const SizedBox(height: 12),
-                      GenderSelector(
-                        value: _gender,
-                        focusNode: _genderFocusNode,
-                        onChanged: (value) {
-                          setState(() {
-                            _gender = value;
-                            _dirty = true;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _ProfileNumberField(
-                              controller: _birthYearController,
-                              focusNode: _birthYearFocusNode,
-                              label: '出生年份',
-                              keyboardType: TextInputType.number,
-                              onTap: wide ? null : _pickBirthYear,
-                              validator: (value) {
-                                final year = int.tryParse(value?.trim() ?? '');
-                                final currentYear = DateTime.now().year;
-                                if (year == null ||
-                                    currentYear - year < HealthRanges.minAge ||
-                                    currentYear - year > HealthRanges.maxAge) {
-                                  return '仅支持 18–100 岁成年人';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _ProfileNumberField(
-                              controller: _heightController,
-                              focusNode: _heightFocusNode,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                      decimal: true),
-                              label: '身高（cm）',
-                              onTap: wide ? null : _pickHeight,
-                              validator: (value) {
-                                final height =
-                                    double.tryParse(value?.trim() ?? '');
-                                if (height == null ||
-                                    height < HealthRanges.minHeightCm ||
-                                    height > HealthRanges.maxHeightCm) {
-                                  return '请输入 100–230 cm';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      _ProfileNumberField(
-                        controller: _weightController,
-                        focusNode: _weightFocusNode,
-                        keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
-                        label: '体重（kg）',
-                        onTap: wide ? null : _pickWeight,
-                        validator: (value) {
-                          final weight = double.tryParse(value?.trim() ?? '');
-                          if (weight == null ||
-                              weight < HealthRanges.minWeightKg ||
-                              weight > HealthRanges.maxWeightKg) {
-                            return '请输入 20–300 kg';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _medicalHistoryController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(labelText: '既往病史'),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _medicationsController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(labelText: '用药记录'),
-                      ),
-                      const SizedBox(height: 16),
-                      DropdownButtonFormField<String>(
-                        // ignore: deprecated_member_use
-                        value: _goal,
-                        decoration: const InputDecoration(labelText: '健康目标'),
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'maintain', child: Text('保持健康')),
-                          DropdownMenuItem(
-                              value: 'fat_loss', child: Text('减脂')),
-                          DropdownMenuItem(
-                              value: 'glucose_control', child: Text('控糖')),
-                          DropdownMenuItem(
-                              value: 'bp_control', child: Text('控压')),
-                        ],
-                        onChanged: (value) => setState(() {
-                          _goal = value ?? 'maintain';
-                          _dirty = true;
-                        }),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        // ignore: deprecated_member_use
-                        value: _exerciseBase,
-                        decoration: const InputDecoration(labelText: '运动基础'),
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'none', child: Text('无（久坐为主）')),
-                          DropdownMenuItem(
-                              value: 'light', child: Text('轻度（每周 1-2 次）')),
-                          DropdownMenuItem(
-                              value: 'moderate', child: Text('中等（每周 3-5 次）')),
-                        ],
-                        onChanged: (value) => setState(() {
-                          _exerciseBase = value ?? 'none';
-                          _dirty = true;
-                        }),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        // ignore: deprecated_member_use
-                        value: _dietPreference,
-                        decoration: const InputDecoration(labelText: '饮食偏好'),
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'normal', child: Text('普通（荤素搭配）')),
-                          DropdownMenuItem(
-                              value: 'light', child: Text('清淡（少盐少油）')),
-                          DropdownMenuItem(
-                              value: 'vegetarian', child: Text('素食')),
-                          DropdownMenuItem(
-                              value: 'custom', child: Text('自定义（参考病史）')),
-                        ],
-                        onChanged: (value) => setState(() {
-                          _dietPreference = value ?? 'normal';
-                          _dirty = true;
-                        }),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: _saving ? null : _saveProfile,
-                        icon: _saving
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.save_outlined),
-                        label: const Text('保存档案'),
-                      ),
-                    ],
-                  ),
-                );
+                    );
+                  }
 
-                final quickActions = _Panel(
-                  title: '快速记录',
-                  subtitle: '本地录入最近指标',
-                  child: Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
+                  return Column(
                     children: [
-                      _QuickActionChip(
-                        icon: Icons.favorite_outline,
-                        label: '血压',
-                        onTap: () => _addIndicatorDialog('bp'),
-                      ),
-                      _QuickActionChip(
-                        icon: Icons.scale_outlined,
-                        label: '体重',
-                        onTap: () => _addIndicatorDialog('weight'),
-                      ),
-                      _QuickActionChip(
-                        icon: Icons.monitor_heart_outlined,
-                        label: '血糖',
-                        onTap: () => _addIndicatorDialog('glucose'),
-                      ),
-                      _QuickActionChip(
-                        icon: Icons.science_outlined,
-                        label: '血脂',
-                        onTap: () => _addIndicatorDialog('lipid'),
-                      ),
-                    ],
-                  ),
-                );
-
-                final recent = _Panel(
-                  title: '最近指标',
-                  subtitle: '最新 6 项，点全部查看完整记录',
-                  trailing: TextButton(
-                    onPressed: () => context.push('/indicators'),
-                    child: const Text('全部'),
-                  ),
-                  child: _IndicatorList(indicators: _indicators),
-                );
-
-                if (wide) {
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                          child: _Panel(
-                              title: '基础档案',
-                              subtitle: '完善后可用于本地计划计算',
-                              child: form)),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            quickActions,
-                            const SizedBox(height: 16),
-                            recent,
-                          ],
-                        ),
-                      ),
+                      _Panel(
+                          title: '基础档案', subtitle: '完善后可用于计划计算', child: form),
+                      const SizedBox(height: 16),
+                      quickActions,
+                      const SizedBox(height: 16),
+                      recent,
                     ],
                   );
-                }
-
-                return Column(
+                },
+              ),
+              const SizedBox(height: 20),
+              _Panel(
+                title: '显示与数据',
+                subtitle: '简洁显示、健康摘要和模板导入',
+                child: Column(
                   children: [
-                    _Panel(title: '基础档案', subtitle: '完善后可用于计划计算', child: form),
-                    const SizedBox(height: 16),
-                    quickActions,
-                    const SizedBox(height: 16),
-                    recent,
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.accessibility_new_outlined),
+                      title: const Text('长辈模式'),
+                      subtitle: const Text('放大文字和按钮，首页只保留常用内容'),
+                      value: appSettingsController.seniorMode,
+                      onChanged: _setSeniorMode,
+                    ),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.record_voice_over_outlined),
+                      title: const Text('长辈模式打卡语音'),
+                      subtitle: const Text('打卡成功后播报结果，默认关闭'),
+                      value: appSettingsController.seniorClockVoice,
+                      onChanged: _setSeniorClockVoice,
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        _notificationsEnabled == true
+                            ? Icons.notifications_active_outlined
+                            : Icons.notifications_off_outlined,
+                      ),
+                      title: const Text('普通通知权限'),
+                      subtitle: Text(
+                        _notificationsEnabled == true ? '已开启' : '未开启，提醒可能无法显示',
+                      ),
+                      trailing: _notificationsEnabled == true
+                          ? const Icon(Icons.check_circle, color: Colors.green)
+                          : TextButton(
+                              onPressed: _requestNotificationPermission,
+                              child: const Text('去开启'),
+                            ),
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.alarm_on_outlined),
+                      title: const Text('用药准点提醒权限'),
+                      subtitle: Text(
+                        _exactAlarmEnabled == true
+                            ? '已允许精确闹钟'
+                            : '未允许，保存用药提醒时可以申请',
+                      ),
+                      trailing: _exactAlarmEnabled == true
+                          ? const Icon(Icons.check_circle, color: Colors.green)
+                          : TextButton(
+                              onPressed: _requestExactAlarmPermission,
+                              child: const Text('去开启'),
+                            ),
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.picture_as_pdf_outlined),
+                      title: const Text('生成健康摘要 PDF'),
+                      subtitle: const Text('可选择最近 7、30 或 90 天并保存或分享'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _shareHealthPdf,
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.download_outlined),
+                      title: const Text('保存数据导入模板'),
+                      subtitle: const Text('仅支持使用本 APP 模板填写'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _saveImportTemplate,
+                    ),
+                    const Divider(height: 1),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.upload_file_outlined),
+                      title: const Text('导入健康数据'),
+                      subtitle: const Text('导入前预览；同类型同测量时间自动跳过'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _importHealthData,
+                    ),
                   ],
-                );
-              },
-            ),
-            const SizedBox(height: 20),
-            _Panel(
-              title: '显示与数据',
-              subtitle: '简洁显示、健康摘要和模板导入',
-              child: Column(
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    secondary: const Icon(Icons.accessibility_new_outlined),
-                    title: const Text('长辈模式'),
-                    subtitle: const Text('放大文字和按钮，首页只保留常用内容'),
-                    value: appSettingsController.seniorMode,
-                    onChanged: _setSeniorMode,
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      _notificationsEnabled == true
-                          ? Icons.notifications_active_outlined
-                          : Icons.notifications_off_outlined,
-                    ),
-                    title: const Text('普通通知权限'),
-                    subtitle: Text(
-                      _notificationsEnabled == true ? '已开启' : '未开启，提醒可能无法显示',
-                    ),
-                    trailing: _notificationsEnabled == true
-                        ? const Icon(Icons.check_circle, color: Colors.green)
-                        : TextButton(
-                            onPressed: _requestNotificationPermission,
-                            child: const Text('去开启'),
-                          ),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.alarm_on_outlined),
-                    title: const Text('用药准点提醒权限'),
-                    subtitle: Text(
-                      _exactAlarmEnabled == true
-                          ? '已允许精确闹钟'
-                          : '未允许，保存用药提醒时可以申请',
-                    ),
-                    trailing: _exactAlarmEnabled == true
-                        ? const Icon(Icons.check_circle, color: Colors.green)
-                        : TextButton(
-                            onPressed: _requestExactAlarmPermission,
-                            child: const Text('去开启'),
-                          ),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.picture_as_pdf_outlined),
-                    title: const Text('生成健康摘要 PDF'),
-                    subtitle: const Text('可选择最近 7、30 或 90 天并保存或分享'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: _shareHealthPdf,
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.download_outlined),
-                    title: const Text('保存数据导入模板'),
-                    subtitle: const Text('仅支持使用本 APP 模板填写'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: _saveImportTemplate,
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.upload_file_outlined),
-                    title: const Text('导入健康数据'),
-                    subtitle: const Text('导入前预览；同类型同测量时间自动跳过'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: _importHealthData,
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            _SyncStatusPanel(status: dataSyncStatusController),
-            const SizedBox(height: 20),
-            _AccountSecurityPanel(
-              accountInfo: _accountInfo,
-              onLogin: () => context
-                  .push('/login', extra: true)
-                  .then((_) => setState(() {})),
-              onSetPassword: () => context.push(
-                '/set-password?returnTo=%2Fprofile&required=1',
+              const SizedBox(height: 20),
+              _SyncStatusPanel(status: dataSyncStatusController),
+              const SizedBox(height: 20),
+              _AccountSecurityPanel(
+                accountInfo: _accountInfo,
+                onLogin: () => context
+                    .push('/login', extra: true)
+                    .then((_) => setState(() {})),
+                onSetPassword: () => context.push(
+                  '/set-password?returnTo=%2Fprofile&required=1',
+                ),
+                onSignOut: _signOut,
+                onCancelAccount: _cancelAccount,
               ),
-              onSignOut: _signOut,
-              onCancelAccount: _cancelAccount,
-            ),
-            const SizedBox(height: 20),
-          ],
+              const SizedBox(height: 20),
+            ],
+          ),
         ),
       ),
     );
@@ -1488,18 +1581,40 @@ class _ProfileNumberField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextFormField(
-      controller: controller,
-      focusNode: focusNode,
-      keyboardType: keyboardType,
-      readOnly: onTap != null,
-      showCursor: onTap == null,
-      onTap: onTap,
-      decoration: InputDecoration(
-        labelText: label,
-        suffixIcon: onTap == null ? null : const Icon(Icons.unfold_more),
+    return FormField<String>(
+      initialValue: controller.text,
+      validator: (_) => validator(controller.text),
+      builder: (field) => ValueListenableBuilder<TextEditingValue>(
+        valueListenable: controller,
+        builder: (context, value, _) => Focus(
+          focusNode: focusNode,
+          child: Semantics(
+            button: true,
+            label: label,
+            value: value.text.isEmpty ? '未选择' : value.text,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(16),
+              child: InputDecorator(
+                isEmpty: false,
+                decoration: InputDecoration(
+                  labelText: label,
+                  errorText: field.errorText,
+                  suffixIcon: const Icon(Icons.unfold_more_rounded),
+                ),
+                child: Text(
+                  value.text.isEmpty ? '请选择' : value.text,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: value.text.isEmpty
+                            ? FontWeight.w400
+                            : FontWeight.w600,
+                      ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
-      validator: validator,
     );
   }
 }
@@ -1547,17 +1662,15 @@ class _EditableAvatar extends StatelessWidget {
             CircleAvatar(
               radius: radius,
               backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-              backgroundImage: image,
-              child: image == null
-                  ? Text(
-                      fallback,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                        fontSize: radius * 0.76,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    )
-                  : null,
+              foregroundImage: image,
+              child: Text(
+                fallback,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  fontSize: radius * 0.76,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
             ),
             if (uploading)
               Positioned.fill(
@@ -1751,26 +1864,9 @@ class _SeniorProfileView extends StatelessWidget {
                 : null,
           ),
           const SizedBox(height: 16),
-          Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerLow,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-            ),
-            child: SwitchListTile(
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-              secondary: const Icon(Icons.accessibility_new_outlined),
-              title: const Text('长辈模式',
-                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-              subtitle: const Text('大字、简洁、易操作'),
-              value: seniorMode,
-              onChanged: onToggleSeniorMode,
-            ),
-          ),
-          const SizedBox(height: 16),
+          const Text('常用操作',
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: onReminderSettings,
             icon: const Icon(Icons.alarm_outlined),
@@ -1779,8 +1875,14 @@ class _SeniorProfileView extends StatelessWidget {
           const SizedBox(height: 10),
           OutlinedButton.icon(
             onPressed: onMoreSettings,
-            icon: const Icon(Icons.settings_outlined),
-            label: const Text('更多设置'),
+            icon: const Icon(Icons.apps_outlined),
+            label: const Text('更多功能与设置'),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: () => onToggleSeniorMode(false),
+            icon: const Icon(Icons.swap_horiz),
+            label: const Text('切换到普通模式'),
           ),
           if (loggedIn) ...[
             const SizedBox(height: 24),
@@ -2857,10 +2959,13 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextFormField(
+                      child: NumericPickerField(
                         controller: _systolic,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: '收缩压'),
+                        label: '收缩压',
+                        unit: 'mmHg',
+                        min: HealthRanges.minSystolic,
+                        max: HealthRanges.maxSystolic,
+                        step: 1,
                         validator: (value) => _validateRange(
                           value,
                           HealthRanges.minSystolic,
@@ -2870,10 +2975,13 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: TextFormField(
+                      child: NumericPickerField(
                         controller: _diastolic,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: '舒张压'),
+                        label: '舒张压',
+                        unit: 'mmHg',
+                        min: HealthRanges.minDiastolic,
+                        max: HealthRanges.maxDiastolic,
+                        step: 1,
                         validator: (value) {
                           final rangeError = _validateRange(
                             value,
@@ -2895,11 +3003,14 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   ],
                 ),
               ] else if (widget.type == 'weight') ...[
-                TextFormField(
+                NumericPickerField(
                   controller: _weight,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: '体重（kg）'),
+                  label: '体重',
+                  unit: 'kg',
+                  min: HealthRanges.minWeightKg,
+                  max: HealthRanges.maxWeightKg,
+                  step: 0.1,
+                  decimals: 1,
                   validator: (value) => _validateRange(
                     value,
                     HealthRanges.minWeightKg,
@@ -2907,11 +3018,14 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   ),
                 ),
               ] else if (widget.type == 'glucose') ...[
-                TextFormField(
+                NumericPickerField(
                   controller: _glucose,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: '血糖（mmol/L）'),
+                  label: '血糖',
+                  unit: 'mmol/L',
+                  min: HealthRanges.minGlucoseMmol,
+                  max: HealthRanges.maxGlucoseMmol,
+                  step: 0.1,
+                  decimals: 1,
                   validator: (value) => _validateRange(
                     value,
                     HealthRanges.minGlucoseMmol,
@@ -2919,11 +3033,14 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   ),
                 ),
               ] else if (widget.type == 'lipid') ...[
-                TextFormField(
+                NumericPickerField(
                   controller: _tc,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: '总胆固醇（mmol/L）'),
+                  label: '总胆固醇',
+                  unit: 'mmol/L',
+                  min: HealthRanges.minTcMmol,
+                  max: HealthRanges.maxTcMmol,
+                  step: 0.1,
+                  decimals: 1,
                   validator: (value) => _validateRange(
                     value,
                     HealthRanges.minTcMmol,
@@ -2931,11 +3048,14 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
+                NumericPickerField(
                   controller: _ldl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'LDL-C（mmol/L）'),
+                  label: 'LDL-C',
+                  unit: 'mmol/L',
+                  min: HealthRanges.minLdlMmol,
+                  max: HealthRanges.maxLdlMmol,
+                  step: 0.1,
+                  decimals: 1,
                   validator: (value) => _validateRange(
                     value,
                     HealthRanges.minLdlMmol,

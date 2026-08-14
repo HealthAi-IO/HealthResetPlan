@@ -19,11 +19,17 @@ import 'core/content/content_models.dart';
 import 'core/content/site_message_service.dart';
 import 'core/notification/reminder_scheduler.dart';
 import 'core/network/telemetry_api.dart';
+import 'core/network/auth_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
 import 'core/update/app_update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ErrorWidget.builder = (details) {
+    debugPrint('Page rendering failed: ${details.exceptionAsString()}');
+    debugPrintStack(stackTrace: details.stack);
+    return const _PageRenderFailure();
+  };
   SystemChrome.setSystemUIOverlayStyle(
     SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -40,6 +46,28 @@ Future<void> main() async {
       child: _AppLoader(),
     ),
   );
+}
+
+class _PageRenderFailure extends StatelessWidget {
+  const _PageRenderFailure();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ColoredBox(
+      color: colors.surface,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            '页面显示失败，请返回后重试',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: colors.onSurface),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AppLoader extends StatefulWidget {
@@ -69,7 +97,7 @@ class _AppLoaderState extends State<_AppLoader> {
       // 兼容：若无昵称但 profile 有，补一下；不阻塞首屏，后台执行
       if (mounted) setState(() => _ready = true);
 
-      _hydrateUserNameInBackground();
+      _hydrateAccountDisplayInBackground();
       _initNotificationsInBackground();
       sl<TelemetryApi>().record('app_open');
     } catch (e, stackTrace) {
@@ -80,15 +108,24 @@ class _AppLoaderState extends State<_AppLoader> {
   }
 
   /// 用户昵称补全（非首屏关键路径）
-  void _hydrateUserNameInBackground() {
-    if (UserSession.instance.hasName) return;
-    sl<HealthRepository>().loadProfile().then((profile) {
-      if (profile != null && profile.nickname.isNotEmpty) {
-        UserSession.instance.setName(profile.nickname);
-      }
-    }).catchError((_) {
-      /* 忽略 */
-    });
+  void _hydrateAccountDisplayInBackground() {
+    if (UserSession.instance.isAccountLogin) {
+      sl<AuthApi>().fetchAccountInfo().then((account) {
+        if (account != null) {
+          UserSession.instance.setAccountDisplay(
+            nickname: account.nickname,
+            avatarUrl: account.avatarUrl,
+          );
+        }
+      }).catchError((_) {});
+    }
+    if (!UserSession.instance.hasName) {
+      sl<HealthRepository>().loadProfile().then((profile) {
+        if (profile != null && profile.nickname.isNotEmpty) {
+          UserSession.instance.setName(profile.nickname);
+        }
+      }).catchError((_) {});
+    }
   }
 
   void _initNotificationsInBackground() {
@@ -348,6 +385,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   void _showSiteMessage(SiteMessage message) {
     showAppSnackBar(
       SnackBar(
+        persist: false,
         content: Text(message.title),
         duration: const Duration(seconds: 6),
         action: SnackBarAction(
@@ -377,6 +415,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
       final usedLocalFallback = _aiPlanController.usedLocalFallback;
       showAppSnackBar(
         SnackBar(
+          persist: false,
           duration: appActionSnackBarDuration,
           content: Text(
             usedLocalFallback ? 'AI 暂时不可用，本地详细方案已准备，请确认后应用' : 'AI 健康计划已生成',
@@ -390,6 +429,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     } else if (_aiPlanController.status == AiPlanGenerationStatus.failed) {
       showAppSnackBar(
         SnackBar(
+          persist: false,
           duration: appActionSnackBarDuration,
           content: const Text('AI 健康计划生成失败'),
           action: SnackBarAction(
@@ -406,6 +446,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     final body = note.isNotEmpty ? note : reminder.label;
     showAppSnackBar(
       SnackBar(
+        persist: false,
         content: Text(body),
         duration: const Duration(seconds: 6),
         action: SnackBarAction(
@@ -550,41 +591,15 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
       builder: (context, _) {
         final seniorMode = appSettingsController.seniorMode;
         final seed = themeController.colorTheme.seed;
-        final baseTheme = AppTheme.lightFor(seed);
         return MaterialApp.router(
           scaffoldMessengerKey: appMessengerKey,
           title: '健康重启计划',
           theme: seniorMode
-              ? baseTheme.copyWith(
-                  filledButtonTheme: FilledButtonThemeData(
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(72, 56),
-                    ),
-                  ),
-                  outlinedButtonTheme: OutlinedButtonThemeData(
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(72, 56),
-                    ),
-                  ),
-                  textButtonTheme: TextButtonThemeData(
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(64, 52),
-                    ),
-                  ),
-                  iconButtonTheme: IconButtonThemeData(
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(52, 52),
-                    ),
-                  ),
-                  inputDecorationTheme: baseTheme.inputDecorationTheme.copyWith(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 18,
-                    ),
-                  ),
-                )
-              : baseTheme,
-          darkTheme: AppTheme.darkFor(seed),
+              ? AppTheme.seniorLightFor(seed)
+              : AppTheme.lightFor(seed),
+          darkTheme: seniorMode
+              ? AppTheme.seniorDarkFor(seed)
+              : AppTheme.darkFor(seed),
           themeMode: themeController.themeMode,
           routerConfig: AppRouter.router,
           debugShowCheckedModeBanner: false,
@@ -596,16 +611,6 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
           ],
           builder: (context, child) {
             Widget content = child ?? const SizedBox.shrink();
-            if (seniorMode) {
-              final media = MediaQuery.of(context);
-              final systemTextScale = media.textScaler.scale(16) / 16;
-              content = MediaQuery(
-                data: media.copyWith(
-                  textScaler: TextScaler.linear(systemTextScale * 1.12),
-                ),
-                child: content,
-              );
-            }
             final dark = Theme.of(context).brightness == Brightness.dark;
             final colors = Theme.of(context).colorScheme;
             return AnnotatedRegion<SystemUiOverlayStyle>(

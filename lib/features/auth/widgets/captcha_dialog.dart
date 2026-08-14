@@ -240,15 +240,21 @@ class _CaptchaDialogState extends State<CaptchaDialog> {
                       return Container(
                         height: thumbSize,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF1F3F5),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Stack(
                           children: [
-                            const Center(
+                            Center(
                               child: Text(
                                 '向右滑动',
-                                style: TextStyle(color: Colors.black45),
+                                style: TextStyle(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
                               ),
                             ),
                             Positioned(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/app_settings_controller.dart';
 import '../clock/clock_page.dart';
 import '../stats/stats_page.dart';
 import 'data_calendar_page.dart';
@@ -58,6 +59,12 @@ class _RecordHubPageState extends State<RecordHubPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (appSettingsController.seniorMode) {
+      return ClockPage(
+        initialReminderId: widget.initialReminderId,
+        openReminderSettings: widget.openReminderSettings,
+      );
+    }
     return Column(
       children: [
         const HealthPageHeader(

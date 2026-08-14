@@ -130,43 +130,55 @@ class AppTheme {
           .textTheme
           .apply(
             fontFamily: 'NotoSansSC',
-            bodyColor: ink,
-            displayColor: ink,
+            bodyColor: colorScheme.onSurface,
+            displayColor: colorScheme.onSurface,
           )
           .copyWith(
             headlineLarge: TextStyle(
               fontSize: 30,
               height: 1.25,
               fontWeight: FontWeight.w800,
-              color: ink,
+              color: colorScheme.onSurface,
             ),
             headlineMedium: TextStyle(
               fontSize: 26,
               height: 1.3,
               fontWeight: FontWeight.w800,
-              color: ink,
+              color: colorScheme.onSurface,
             ),
             headlineSmall: TextStyle(
               fontSize: 22,
               height: 1.35,
               fontWeight: FontWeight.w800,
-              color: ink,
+              color: colorScheme.onSurface,
             ),
             titleLarge: TextStyle(
               fontSize: 20,
               height: 1.4,
               fontWeight: FontWeight.w700,
-              color: ink,
+              color: colorScheme.onSurface,
             ),
             titleMedium: TextStyle(
               fontSize: 16,
               height: 1.45,
               fontWeight: FontWeight.w700,
-              color: ink,
+              color: colorScheme.onSurface,
             ),
-            bodyLarge: TextStyle(fontSize: 16, height: 1.55, color: ink),
-            bodyMedium: TextStyle(fontSize: 14, height: 1.55, color: ink),
-            bodySmall: TextStyle(fontSize: 12, height: 1.5, color: muted),
+            bodyLarge: TextStyle(
+              fontSize: 16,
+              height: 1.55,
+              color: colorScheme.onSurface,
+            ),
+            bodyMedium: TextStyle(
+              fontSize: 14,
+              height: 1.55,
+              color: colorScheme.onSurface,
+            ),
+            bodySmall: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: colorScheme.onSurfaceVariant,
+            ),
           ),
       visualDensity: VisualDensity.standard,
       splashFactory: InkSparkle.splashFactory,
@@ -327,7 +339,7 @@ class AppTheme {
                 : FontWeight.w500,
             color: states.contains(WidgetState.selected)
                 ? colorScheme.primary
-                : muted,
+                : colorScheme.onSurfaceVariant,
           ),
         ),
       ),
@@ -577,6 +589,77 @@ class AppTheme {
         backgroundColor: scheme.inverseSurface,
         contentTextStyle: TextStyle(color: scheme.onInverseSurface),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
+  static ThemeData seniorLightFor(Color seed) => _seniorize(lightFor(seed));
+
+  static ThemeData seniorDarkFor(Color seed) => _seniorize(darkFor(seed));
+
+  static ThemeData _seniorize(ThemeData base) {
+    final textTheme = base.textTheme.copyWith(
+      headlineLarge: base.textTheme.headlineLarge?.copyWith(fontSize: 30),
+      headlineMedium: base.textTheme.headlineMedium?.copyWith(fontSize: 27),
+      headlineSmall: base.textTheme.headlineSmall?.copyWith(fontSize: 24),
+      titleLarge: base.textTheme.titleLarge?.copyWith(fontSize: 22),
+      titleMedium: base.textTheme.titleMedium?.copyWith(fontSize: 20),
+      bodyLarge: base.textTheme.bodyLarge?.copyWith(fontSize: 19, height: 1.45),
+      bodyMedium:
+          base.textTheme.bodyMedium?.copyWith(fontSize: 18, height: 1.45),
+      bodySmall: base.textTheme.bodySmall?.copyWith(fontSize: 17, height: 1.4),
+      labelLarge: base.textTheme.labelLarge?.copyWith(fontSize: 19),
+      labelMedium: base.textTheme.labelMedium?.copyWith(fontSize: 17),
+    );
+    return base.copyWith(
+      textTheme: textTheme,
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(72, 58),
+          textStyle:
+              textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(72, 58),
+          textStyle:
+              textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          minimumSize: const Size(64, 54),
+          textStyle:
+              textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(minimumSize: const Size(54, 54)),
+      ),
+      inputDecorationTheme: base.inputDecorationTheme.copyWith(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+      ),
+      listTileTheme: base.listTileTheme.copyWith(
+        minVerticalPadding: 16,
+        titleTextStyle: textTheme.titleMedium,
+        subtitleTextStyle: textTheme.bodyMedium?.copyWith(
+          color: base.colorScheme.onSurfaceVariant,
+        ),
+      ),
+      navigationBarTheme: base.navigationBarTheme.copyWith(
+        height: 82,
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => textTheme.labelMedium?.copyWith(
+            color: states.contains(WidgetState.selected)
+                ? base.colorScheme.onSurface
+                : base.colorScheme.onSurfaceVariant,
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w700
+                : FontWeight.w600,
+          ),
+        ),
       ),
     );
   }

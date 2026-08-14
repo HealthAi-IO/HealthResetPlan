@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_theme.dart';
+import '../../app/theme_controller.dart';
 import '../../features/privacy/privacy_policy_page.dart';
 
 const privacyPolicyUrl = 'https://jkcqplan.com/privacy';
@@ -52,23 +53,21 @@ class _PrivacyConsentGateState extends State<PrivacyConsentGate> {
   @override
   Widget build(BuildContext context) {
     if (_accepted == true) return widget.child;
-    if (_accepted == null) {
-      return MaterialApp(
+    return AnimatedBuilder(
+      animation: themeController,
+      builder: (context, _) => MaterialApp(
         debugShowCheckedModeBanner: false,
         title: '健康重启计划',
-        theme: AppTheme.light,
-        home: Scaffold(
-          backgroundColor: AppTheme.pageBg,
-          body: widget.loading ??
-              const Center(child: CircularProgressIndicator()),
-        ),
-      );
-    }
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: '健康重启计划',
-      theme: AppTheme.light,
-      home: _PrivacyConsentPage(onAccepted: _accept),
+        theme: AppTheme.lightFor(themeController.colorTheme.seed),
+        darkTheme: AppTheme.darkFor(themeController.colorTheme.seed),
+        themeMode: themeController.themeMode,
+        home: _accepted == null
+            ? Scaffold(
+                body: widget.loading ??
+                    const Center(child: CircularProgressIndicator()),
+              )
+            : _PrivacyConsentPage(onAccepted: _accept),
+      ),
     );
   }
 }
@@ -99,8 +98,9 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: AppTheme.pageBg,
+      backgroundColor: colors.surface,
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -111,17 +111,18 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                   Icon(Icons.privacy_tip_outlined,
-                      size: 48, color: AppTheme.deepBlue),
+                  Icon(Icons.privacy_tip_outlined,
+                      size: 48, color: colors.primary),
                   const SizedBox(height: 18),
                   const Text('隐私保护提示',
                       textAlign: TextAlign.center,
                       style:
                           TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
-                   Text(
+                  Text(
                     '健康重启计划将在你同意并登录后处理必要信息，提供在线健康记录、多端同步和提醒服务。敏感健康数据由服务器加密后存储。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
-                    style: TextStyle(height: 1.55, color: AppTheme.muted),
+                    style:
+                        TextStyle(height: 1.55, color: colors.onSurfaceVariant),
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -133,39 +134,18 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                             setState(() => _agreed = value ?? false),
                       ),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        child: Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             const Text('我已阅读并同意'),
-                            const SizedBox(height: 2),
-                            Wrap(
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 2,
-                              children: [
-                                TextButton(
-                                  onPressed: _openPrivacyPolicy,
-                                  style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 2),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  child: const Text('《隐私政策》'),
-                                ),
-                                const Text('及'),
-                                TextButton(
-                                  onPressed: () => _openUrl(termsOfServiceUrl),
-                                  style: TextButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 2),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  child: const Text('《用户协议》'),
-                                ),
-                              ],
+                            _ConsentLink(
+                              label: '《隐私政策》',
+                              onTap: _openPrivacyPolicy,
+                            ),
+                            const Text('及'),
+                            _ConsentLink(
+                              label: '《用户协议》',
+                              onTap: () => _openUrl(termsOfServiceUrl),
                             ),
                           ],
                         ),
@@ -182,6 +162,37 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                     child: const Text('不同意并退出'),
                   ),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ConsentLink extends StatelessWidget {
+  const _ConsentLink({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      link: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),

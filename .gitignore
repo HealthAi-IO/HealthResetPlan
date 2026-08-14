@@ -48,6 +48,7 @@ unlinked_spec.ds
 /.deploy/
 /outputs/
 /assets/generated/
+/tmp/
 
 # Android related
 **/android/**/gradle-wrapper.jar

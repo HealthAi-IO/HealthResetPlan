@@ -6,6 +6,8 @@ import '../../core/data/health_repository.dart';
 import '../../core/data/health_models.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
+import '../../core/widgets/health_ui.dart';
+import '../../core/widgets/numeric_picker_field.dart';
 import 'quit_smoking_models.dart';
 import 'quit_smoking_repository.dart';
 
@@ -91,64 +93,67 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-          children: [
-            _SummaryPanel(
-              progress: progress,
-              todayCount: progress.todayCount,
-              target: profile.mode == QuitSmokingMode.gradual
-                  ? profile.stageGoal
-                  : 0,
-              checkedInToday: checkedInToday,
-              onCheckIn: _checkIn,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: () => _recordSmoked(),
-                    icon: const Icon(Icons.smoke_free),
-                    label: const Text('记录一次吸烟'),
+      body: HealthResponsiveContent(
+        maxWidth: 960,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: [
+              _SummaryPanel(
+                progress: progress,
+                todayCount: progress.todayCount,
+                target: profile.mode == QuitSmokingMode.gradual
+                    ? profile.stageGoal
+                    : 0,
+                checkedInToday: checkedInToday,
+                onCheckIn: _checkIn,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => _recordSmoked(),
+                      icon: const Icon(Icons.smoke_free),
+                      label: const Text('记录一次吸烟'),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _recordCraving(),
-                    icon: const Icon(Icons.self_improvement_outlined),
-                    label: const Text('我想抽烟'),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _recordCraving(),
+                      icon: const Icon(Icons.self_improvement_outlined),
+                      label: const Text('我想抽烟'),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _AdvicePanel(),
-            const SizedBox(height: 12),
-            _SevenDayTrack(
-              profile: profile,
-              events: _events,
-              now: _now,
-            ),
-            const SizedBox(height: 12),
-            _HealthMilestonesPanel(
-              elapsed: _now.isBefore(progress.smokeFreeStartedAt)
-                  ? Duration.zero
-                  : _now.difference(progress.smokeFreeStartedAt),
-            ),
-            const SizedBox(height: 12),
-            _StatsPanel(
-              events: _events,
-              baseline: profile.dailyBaseline,
-              cravingSuccessRate:
-                  cravings.isEmpty ? 0 : successCravings / cravings.length,
-            ),
-            const SizedBox(height: 12),
-            _RecentEvents(events: _events.take(12).toList()),
-          ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              _AdvicePanel(),
+              const SizedBox(height: 12),
+              _SevenDayTrack(
+                profile: profile,
+                events: _events,
+                now: _now,
+              ),
+              const SizedBox(height: 12),
+              _HealthMilestonesPanel(
+                elapsed: _now.isBefore(progress.smokeFreeStartedAt)
+                    ? Duration.zero
+                    : _now.difference(progress.smokeFreeStartedAt),
+              ),
+              const SizedBox(height: 12),
+              _StatsPanel(
+                events: _events,
+                baseline: profile.dailyBaseline,
+                cravingSuccessRate:
+                    cravings.isEmpty ? 0 : successCravings / cravings.length,
+              ),
+              const SizedBox(height: 12),
+              _RecentEvents(events: _events.take(12).toList()),
+            ],
+          ),
         ),
       ),
     );
@@ -294,12 +299,13 @@ class _SetupViewState extends State<_SetupView> {
             onSelectionChanged: (value) => setState(() => _mode = value.first),
           ),
           const SizedBox(height: 16),
-          _numberField(_baseline, '平均每天吸烟（支）', required: true),
-          _numberField(_packCigarettes, '每包支数', required: true),
-          _numberField(_packPrice, '每包价格（元）', required: true),
-          _numberField(_smokingYears, '吸烟年限（年，可选）'),
+          _numberField(_baseline, '平均每天吸烟', unit: '支', max: 200),
+          _numberField(_packCigarettes, '每包支数', unit: '支', max: 100),
+          _numberField(_packPrice, '每包价格', unit: '元', max: 1000),
+          _numberField(_smokingYears, '吸烟年限（可选）',
+              unit: '年', min: 0, max: 100, optional: true),
           if (_mode == QuitSmokingMode.gradual)
-            _numberField(_stageGoal, '当前阶段每日目标（支）', required: true),
+            _numberField(_stageGoal, '当前阶段每日目标', unit: '支', max: 200),
           TextField(
             controller: _motivation,
             maxLines: 3,
@@ -335,15 +341,24 @@ class _SetupViewState extends State<_SetupView> {
     );
   }
 
-  Widget _numberField(TextEditingController controller, String label,
-      {bool required = false}) {
+  Widget _numberField(
+    TextEditingController controller,
+    String label, {
+    required String unit,
+    double min = 1,
+    required double max,
+    bool optional = false,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: TextField(
+      child: NumericPickerField(
         controller: controller,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(
-            labelText: label, suffixText: required ? '*' : null),
+        label: label,
+        unit: unit,
+        min: min,
+        max: max,
+        step: 1,
+        optional: optional,
       ),
     );
   }
@@ -831,11 +846,13 @@ class _SmokedDialogState extends State<_SmokedDialog> {
             key: _formKey,
             child: SingleChildScrollView(
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                TextFormField(
+                NumericPickerField(
                     controller: cigarettes,
-                    keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: '支数', suffixText: '支'),
+                    label: '支数',
+                    unit: '支',
+                    min: 1,
+                    max: 100,
+                    step: 1,
                     validator: (value) {
                       final count = int.tryParse(value?.trim() ?? '');
                       if (count == null || count < 1 || count > 100) {

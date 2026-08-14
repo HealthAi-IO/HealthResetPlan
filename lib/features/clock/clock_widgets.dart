@@ -73,6 +73,8 @@ class _SeniorReminderTypeTile extends StatelessWidget {
 class _SeniorClockView extends StatelessWidget {
   const _SeniorClockView({
     required this.tasks,
+    required this.records,
+    required this.waterGoalMl,
     required this.onComplete,
     required this.onChange,
     required this.onSupplement,
@@ -81,6 +83,8 @@ class _SeniorClockView extends StatelessWidget {
   });
 
   final List<_SeniorClockTask> tasks;
+  final List<ClockRecordData> records;
+  final int? waterGoalMl;
   final Future<void> Function(_SeniorClockTask) onComplete;
   final Future<void> Function(_SeniorClockTask) onChange;
   final Future<void> Function() onSupplement;
@@ -161,7 +165,7 @@ class _SeniorClockView extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
         children: [
           const Text(
-            '今天完成情况',
+            '提醒',
             style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 4),
@@ -169,6 +173,7 @@ class _SeniorClockView extends StatelessWidget {
             DateFormat('yyyy年M月d日 EEEE', 'zh_CN').format(now),
             style: TextStyle(fontSize: 17, color: AppTheme.muted),
           ),
+          _SeniorTodayTotals(records: records, waterGoalMl: waterGoalMl),
           const SizedBox(height: 18),
           if (current == null)
             Container(
@@ -679,10 +684,12 @@ class _ReminderChip extends StatelessWidget {
 class _RecordList extends StatelessWidget {
   const _RecordList({
     required this.records,
+    required this.onEdit,
     required this.onDelete,
     required this.onCorrectMedicine,
   });
   final List<ClockRecordData> records;
+  final ValueChanged<ClockRecordData> onEdit;
   final ValueChanged<ClockRecordData> onDelete;
   final VoidCallback onCorrectMedicine;
 
@@ -762,8 +769,8 @@ class _RecordList extends StatelessWidget {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          r.note.isNotEmpty
-                              ? r.note
+                          r.displayDetail.isNotEmpty
+                              ? r.displayDetail
                               : DateFormat('MM月dd日 HH:mm').format(r.clockTime),
                           style: TextStyle(
                             color: AppTheme.muted,
@@ -780,15 +787,28 @@ class _RecordList extends StatelessWidget {
                     onSelected: (value) {
                       if (value == 'correct') {
                         onCorrectMedicine();
+                      } else if (value == 'edit') {
+                        onEdit(r);
                       } else {
                         onDelete(r);
                       }
                     },
                     itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: r.type == 'medicine' ? 'correct' : 'delete',
-                        child: Text(r.type == 'medicine' ? '更正用药' : '删除记录'),
-                      ),
+                      if (r.type == 'medicine')
+                        const PopupMenuItem(
+                          value: 'correct',
+                          child: Text('更正用药'),
+                        )
+                      else ...[
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('更正记录'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('删除记录'),
+                        ),
+                      ],
                     ],
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(10, 8, 0, 8),
@@ -813,12 +833,14 @@ class _RecordList extends StatelessWidget {
 class _TodayRecordSummary extends StatelessWidget {
   const _TodayRecordSummary({
     required this.records,
+    required this.waterGoalMl,
     required this.medicineScheduledCount,
     required this.medicineTakenCount,
     required this.onViewAll,
   });
 
   final List<ClockRecordData> records;
+  final int? waterGoalMl;
   final int medicineScheduledCount;
   final int medicineTakenCount;
   final VoidCallback onViewAll;
@@ -847,6 +869,7 @@ class _TodayRecordSummary extends StatelessWidget {
           _TodayRecordSummaryRow(
             type: type,
             records: groups[type]!,
+            waterGoalMl: waterGoalMl,
             medicineScheduledCount: medicineScheduledCount,
             medicineTakenCount: medicineTakenCount,
           ),
@@ -867,22 +890,46 @@ class _TodayRecordSummaryRow extends StatelessWidget {
   const _TodayRecordSummaryRow({
     required this.type,
     required this.records,
+    required this.waterGoalMl,
     required this.medicineScheduledCount,
     required this.medicineTakenCount,
   });
 
   final String type;
   final List<ClockRecordData> records;
+  final int? waterGoalMl;
   final int medicineScheduledCount;
   final int medicineTakenCount;
 
   @override
   Widget build(BuildContext context) {
     final latest = records.first;
+    final completed =
+        records.where((record) => record.status == 'done').toList();
+    final waterTotal = _waterTotalFor(completed);
+    final exerciseTotal = _exerciseTotalFor(completed);
+    final mealNames = completed
+        .map((record) => record.mealName)
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .join('、');
+    final mealCalories = completed.fold<int>(
+      0,
+      (total, record) => total + (record.mealCalories ?? 0),
+    );
     final summary = switch (type) {
       'medicine' when medicineScheduledCount > 0 =>
         '已服 $medicineTakenCount/$medicineScheduledCount 次',
       'weight' when latest.note.isNotEmpty => latest.note,
+      'meal' when mealNames.isNotEmpty && mealCalories > 0 =>
+        '$mealNames · 共 $mealCalories kcal',
+      'meal' when mealNames.isNotEmpty => '今天已记录 $mealNames',
+      'water' when waterTotal > 0 && waterGoalMl != null =>
+        '今日 ${completed.length} 次 · $waterTotal/$waterGoalMl ml · ${(waterTotal / waterGoalMl! * 100).clamp(0, 999).round()}%',
+      'water' when waterTotal > 0 =>
+        '今日 ${completed.length} 次 · 共 $waterTotal ml',
+      'exercise' when exerciseTotal > 0 =>
+        '${latest.displayDetail} · 今日共 $exerciseTotal 分钟',
       _ => '今天 ${records.length} 次',
     };
     return ListTile(
@@ -909,6 +956,143 @@ class _TodayRecordSummaryRow extends StatelessWidget {
     );
   }
 }
+
+class _TodayRecordTotals extends StatelessWidget {
+  const _TodayRecordTotals({
+    required this.records,
+    required this.waterGoalMl,
+  });
+
+  final List<ClockRecordData> records;
+  final int? waterGoalMl;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed =
+        records.where((record) => record.status == 'done').toList();
+    final waterTotal = _waterTotalFor(completed);
+    final exerciseTotal = _exerciseTotalFor(completed);
+    if (waterTotal == 0 && exerciseTotal == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (waterTotal > 0)
+            _RecordTotalChip(
+              icon: Icons.water_drop_outlined,
+              text: waterGoalMl == null
+                  ? '今日饮水 $waterTotal ml'
+                  : '今日饮水 $waterTotal / $waterGoalMl ml',
+              color: AppTheme.water(context),
+            ),
+          if (exerciseTotal > 0)
+            _RecordTotalChip(
+              icon: Icons.directions_run_outlined,
+              text: '今日运动 $exerciseTotal 分钟',
+              color: AppTheme.exercise(context),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecordTotalChip extends StatelessWidget {
+  const _RecordTotalChip({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 19),
+            const SizedBox(width: 7),
+            Text(text, style: const TextStyle(fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+}
+
+class _SeniorTodayTotals extends StatelessWidget {
+  const _SeniorTodayTotals({required this.records, required this.waterGoalMl});
+
+  final List<ClockRecordData> records;
+  final int? waterGoalMl;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed =
+        records.where((record) => record.status == 'done').toList();
+    final waterTotal = _waterTotalFor(completed);
+    final exerciseTotal = _exerciseTotalFor(completed);
+    if (waterTotal == 0 && exerciseTotal == 0) return const SizedBox.shrink();
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          children: [
+            if (waterTotal > 0)
+              ListTile(
+                minTileHeight: 72,
+                leading: const Icon(Icons.water_drop_outlined, size: 32),
+                title: const Text('今天喝水', style: TextStyle(fontSize: 18)),
+                subtitle: Text(
+                  waterGoalMl == null
+                      ? '$waterTotal 毫升'
+                      : '$waterTotal / $waterGoalMl 毫升',
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w900),
+                ),
+              ),
+            if (waterTotal > 0 && exerciseTotal > 0) const Divider(height: 1),
+            if (exerciseTotal > 0)
+              ListTile(
+                minTileHeight: 72,
+                leading: const Icon(Icons.directions_walk_outlined, size: 32),
+                title: const Text('今天运动', style: TextStyle(fontSize: 18)),
+                subtitle: Text(
+                  '$exerciseTotal 分钟',
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w900),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+int _waterTotalFor(Iterable<ClockRecordData> records) => records.fold(
+      0,
+      (total, record) => total + (record.waterMilliliters ?? 0),
+    );
+
+int _exerciseTotalFor(Iterable<ClockRecordData> records) => records.fold(
+      0,
+      (total, record) => total + (record.exerciseMinutes ?? 0),
+    );
 
 // ── 提醒规则列表 ──────────────────────────────────────────────
 class _ReminderList extends StatefulWidget {
@@ -1576,22 +1760,24 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                TextField(
+                NumericPickerField(
                   controller: _inventoryCtrl,
+                  label: '剩余服用次数（选填）',
+                  min: 0,
+                  max: 10000,
+                  step: 1,
+                  optional: true,
                   onChanged: (_) => setState(() {}),
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '剩余服用次数（选填）',
-                  ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                NumericPickerField(
                   controller: _refillThresholdCtrl,
+                  label: '补药提醒阈值（选填）',
+                  min: 0,
+                  max: 10000,
+                  step: 1,
+                  optional: true,
                   onChanged: (_) => setState(() {}),
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '补药提醒阈值（选填）',
-                  ),
                 ),
                 const SizedBox(height: 14),
                 Align(
@@ -2279,17 +2465,68 @@ Color _typeColor(BuildContext context, String type) => switch (type) {
       _ => Theme.of(context).colorScheme.primary,
     };
 
-String _clockTitle(String type) => switch (type) {
-      'meal' => '饮食打卡',
-      'exercise' => '运动打卡',
-      'water' => '饮水打卡',
-      'quit_smoking' => '戒烟提醒',
-      _ => '打卡',
-    };
+class _QuickClockSheet extends StatelessWidget {
+  const _QuickClockSheet({
+    required this.title,
+    required this.description,
+    required this.children,
+  });
 
-String _clockHint(String type) => switch (type) {
-      'meal' => '例如"低盐便当"、"清蒸鱼 + 杂粮饭"',
-      'exercise' => '例如"快走 30 分钟"、"瑜伽 20 分钟"',
-      'water' => '例如"200ml 温水"，或直接空白保存',
-      _ => '可填写备注',
-    };
+  final String title;
+  final String description;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        description,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: children,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

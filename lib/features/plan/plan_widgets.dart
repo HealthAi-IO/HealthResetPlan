@@ -863,10 +863,14 @@ class _PlanEditDialogState extends State<_PlanEditDialog> {
                   controller: _fields['exerciseType'],
                   decoration: const InputDecoration(labelText: '运动类型'),
                 ),
-                TextField(
-                  controller: _fields['duration'],
-                  decoration: const InputDecoration(labelText: '时长（分钟）'),
-                  keyboardType: TextInputType.number,
+                NumericPickerField(
+                  controller: _fields['duration']!,
+                  label: '时长',
+                  unit: '分钟',
+                  min: 5,
+                  max: 300,
+                  step: 5,
+                  optional: true,
                 ),
                 TextField(
                   controller: _fields['intensity'],
@@ -1230,7 +1234,7 @@ class _PlanGoalSheetState extends State<_PlanGoalSheet> {
               child: FilledButton.icon(
                 onPressed: _submit,
                 icon: const Icon(Icons.arrow_forward),
-                label: const Text('下一步：选择AI模型'),
+                label: const Text('由健康管家生成计划'),
               ),
             ),
           ],
@@ -1381,10 +1385,10 @@ class _PlanHero extends StatelessWidget {
                           ),
                     label: Text(
                       aiGenerating
-                          ? 'AI 生成中…'
+                          ? '健康管家生成中…'
                           : aiResultReady
                               ? '查看 AI 方案'
-                              : 'AI 智能生成',
+                              : '由健康管家生成',
                     ),
                     style: FilledButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.primary,
@@ -1453,6 +1457,7 @@ class _RiskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     final risks = _stringList(plan.payload['risks']);
     final isCritical = _isCriticalRiskPlan(plan);
     final summary = isCritical
@@ -1465,20 +1470,22 @@ class _RiskCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0xFFF0FFF4),
+          color: colors.secondaryContainer,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF86EFAC)),
+          border: Border.all(color: colors.secondary.withValues(alpha: 0.35)),
         ),
         child: Row(
           children: [
-            const Icon(Icons.check_circle_outline,
-                size: 16, color: Color(0xFF16A34A)),
+            Icon(Icons.check_circle_outline,
+                size: 16, color: colors.onSecondaryContainer),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 summary.isNotEmpty ? summary : '各项已录入指标均在正常范围。',
-                style: const TextStyle(
-                    fontSize: 12, color: Color(0xFF15803D), height: 1.4),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: colors.onSecondaryContainer,
+                    height: 1.4),
               ),
             ),
           ],
@@ -1490,11 +1497,11 @@ class _RiskCard extends StatelessWidget {
     final hasSevere = risks.any(
         (r) => r.contains('危象') || r.contains('糖尿病标准') || r.contains('危险偏低'));
     final cardColor =
-        hasSevere ? const Color(0xFFFEE2E2) : const Color(0xFFFFFBEB);
+        hasSevere ? colors.errorContainer : colors.tertiaryContainer;
     final borderColor =
-        hasSevere ? const Color(0xFFFCA5A5) : const Color(0xFFFCD34D);
+        (hasSevere ? colors.error : colors.tertiary).withValues(alpha: 0.35);
     final iconColor =
-        hasSevere ? const Color(0xFFB91C1C) : const Color(0xFF92400E);
+        hasSevere ? colors.onErrorContainer : colors.onTertiaryContainer;
     final icon = hasSevere ? Icons.error_outline : Icons.warning_amber_outlined;
 
     return Container(
@@ -1528,7 +1535,7 @@ class _RiskCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.75),
+                        color: colors.surface.withValues(alpha: 0.75),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(r,

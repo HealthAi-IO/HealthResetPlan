@@ -19,6 +19,7 @@ import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
 import '../../core/widgets/health_ui.dart';
+import '../../core/widgets/numeric_picker_field.dart';
 
 part 'plan_widgets.dart';
 
@@ -29,7 +30,7 @@ bool _isAiPlanProvider(String provider) =>
 
 String _planProviderLabel(String provider) => switch (provider) {
       'doubao' => '豆包',
-      'qwen' => '通义千问',
+      'qwen' => 'AI',
       'glm' => '智谱 GLM',
       'deepseek' => 'DeepSeek',
       _ => 'AI',
@@ -51,7 +52,7 @@ class _PlanPageState extends State<PlanPage> {
 
   bool _loading = true;
   bool _presentingAiResult = false;
-  String _selectedProvider = 'qwen';
+  static const String _selectedProvider = 'qwen';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
   List<ClockRecordData> _clockRecords = const [];
@@ -156,6 +157,7 @@ class _PlanPageState extends State<PlanPage> {
         _profile!.gender == 'unknown') {
       messenger.showSnackBar(
         SnackBar(
+          persist: false,
           duration: const Duration(seconds: 5),
           content: const Text('请先完善性别、出生年份、身高和体重，再生成运动计划'),
           action: SnackBarAction(
@@ -243,6 +245,7 @@ class _PlanPageState extends State<PlanPage> {
         _profile!.gender == 'unknown') {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          persist: false,
           duration: const Duration(seconds: 5),
           content: const Text('请先完善性别、出生年份、身高和体重，再生成个性化 AI 运动计划'),
           action: SnackBarAction(
@@ -271,19 +274,15 @@ class _PlanPageState extends State<PlanPage> {
     if (!mounted) return;
     if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
-    // 2. 弹出模型选择对话框
-    final provider = await _showProviderPicker();
-    if (provider == null || !mounted) return;
-    setState(() => _selectedProvider = provider);
     _aiPlanController.start(
       profile: _profile!,
-      provider: provider,
+      provider: _selectedProvider,
       goal: goalDraft.code,
       goalDetail: goalDraft.detail,
       targetDate: goalDraft.targetDate,
     );
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('AI 已开始生成运动计划，你可以继续使用其他功能')),
+      const SnackBar(content: Text('健康管家已开始生成运动计划，你可以继续使用其他功能')),
     );
   }
 
@@ -326,53 +325,6 @@ class _PlanPageState extends State<PlanPage> {
     await _presentAiResult();
   }
 
-  Future<String?> _showProviderPicker() {
-    return showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) => FractionallySizedBox(
-        heightFactor: 0.72,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-          children: [
-            const Text('选择 AI 模型',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text('方案质量因模型而异，可切换尝试',
-                style: TextStyle(color: AppTheme.muted, fontSize: 12)),
-            const SizedBox(height: 16),
-            for (final p in [
-              ('doubao', '🫘', '豆包 Seed 2.1 Pro', '响应更快，适合生成 7 天运动计划'),
-              ('qwen', '🌟', '通义千问 3.7 Plus', '默认模型，支持运动计划生成'),
-              ('glm', 'GLM', '智谱 GLM-5.2', '适合生成结构化动作安排'),
-              ('deepseek', '🤖', 'DeepSeek V4 Pro', '推理能力强，便于细化动作和替代方案'),
-            ])
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Text(p.$2, style: const TextStyle(fontSize: 24)),
-                title: Text(p.$3,
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-                subtitle: Text(p.$4,
-                    style: TextStyle(color: AppTheme.muted, fontSize: 12)),
-                trailing: _selectedProvider == p.$1
-                    ? Icon(
-                        Icons.check_circle,
-                        color: Theme.of(context).colorScheme.primary,
-                        size: 20,
-                      )
-                    : null,
-                onTap: () => Navigator.pop(sheetContext, p.$1),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _showAiPlanSheet(AiPlanResult result) async {
     final parsed = _parseAiPlanJson(result.rawJson);
 
@@ -405,7 +357,7 @@ class _PlanPageState extends State<PlanPage> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
+                  color: Theme.of(context).colorScheme.outlineVariant,
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
@@ -560,16 +512,19 @@ class _PlanPageState extends State<PlanPage> {
                                   await _load(silent: true);
                                   messenger.showSnackBar(
                                     SnackBar(
+                                      persist: false,
                                       duration: const Duration(seconds: 5),
                                       content: Text(
                                         createReminders
-                                            ? '专属计划和提醒已应用'
-                                            : '专属计划已应用，未开启提醒',
+                                            ? '计划已应用，可到“提醒”查看今日任务'
+                                            : '计划已应用，可在“今日”查看安排',
                                       ),
                                       action: SnackBarAction(
-                                        label: '去打卡',
-                                        onPressed: () =>
-                                            AppRouter.router.go('/clock'),
+                                        label:
+                                            createReminders ? '查看提醒' : '查看今日',
+                                        onPressed: () => AppRouter.router.go(
+                                          createReminders ? '/clock' : '/home',
+                                        ),
                                       ),
                                     ),
                                   );
@@ -646,9 +601,9 @@ class _PlanPageState extends State<PlanPage> {
   String _invalidAiPlanMessage(String raw) {
     final text = _cleanAiText(raw);
     if (text.contains('"days"') && !text.trimRight().endsWith('}')) {
-      return 'AI 返回内容被截断，未形成完整 7 天方案。请重新生成，或手动切换其他模型。';
+      return 'AI 返回内容被截断，未形成完整 7 天方案，请稍后重新生成。';
     }
-    return 'AI 返回格式不完整，未能转换为可执行的 7 天打卡任务。请重新生成，或切换模型。';
+    return 'AI 返回格式不完整，未能转换为可执行的 7 天打卡任务，请稍后重新生成。';
   }
 
   String _cleanAiText(String raw) {
@@ -683,10 +638,10 @@ class _PlanPageState extends State<PlanPage> {
         if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试。';
         if (code == 40101) return 'AI 服务密钥失效，请联系管理员检查后台配置。';
         if (code == 50302) {
-          return '当前模型返回的计划格式异常，自动修复后仍未通过，请稍后重试或切换模型。';
+          return '健康管家返回的计划格式异常，自动修复后仍未通过，请稍后重试。';
         }
         if (code == 50301) {
-          return '当前 AI 模型暂时不可用，已为你保留本地规则计划，请稍后重试。';
+          return '健康管家暂时不可用，已为你保留本地规则计划，请稍后重试。';
         }
         if (message != null && message.isNotEmpty) return message;
       }
@@ -702,10 +657,10 @@ class _PlanPageState extends State<PlanPage> {
     final s = e.toString();
     if (s.contains('40301')) return '请先登录账号后再试';
     if (s.contains('50302')) {
-      return '当前模型返回的计划格式异常，自动修复后仍未通过，请稍后重试或切换模型。';
+      return '健康管家返回的计划格式异常，自动修复后仍未通过，请稍后重试。';
     }
     if (s.contains('50301')) {
-      return '当前 AI 模型暂时不可用，已为你保留本地规则计划，请稍后重试。';
+      return '健康管家暂时不可用，已为你保留本地规则计划，请稍后重试。';
     }
     if (s.contains('Connection') || s.contains('Socket')) {
       return '网络连接失败，请检查后端服务和 WiFi。';
@@ -743,8 +698,8 @@ class _PlanPageState extends State<PlanPage> {
                       },
                 icon: const Icon(Icons.psychology_outlined),
                 label: Text(_aiPlanController.isGenerating
-                    ? 'AI 正在生成'
-                    : 'AI 智能生成 7 天运动计划'),
+                    ? '健康管家正在生成'
+                    : '由健康管家生成 7 天运动计划'),
               ),
               if (_aiRemaining != null)
                 Padding(
@@ -868,11 +823,11 @@ class _PlanPageState extends State<PlanPage> {
                       Expanded(
                         child: Text(
                           _aiPlanController.isGenerating
-                              ? 'AI 生成中…'
+                              ? '健康管家生成中…'
                               : _aiPlanController.status ==
                                       AiPlanGenerationStatus.completed
                                   ? '查看 AI 方案'
-                                  : 'AI 智能生成',
+                                  : '由健康管家生成',
                         ),
                       ),
                       if (_aiRemaining != null &&

@@ -40,7 +40,7 @@ void main() {
     await AiApi(client: client).generatePlan(
       profile: profile,
       recentIndicators: const [],
-      provider: 'qwen',
+      provider: 'doubao',
       goal: 'improve_fitness',
       goalDetail: '希望爬三层楼不明显气喘',
       targetDate: DateTime(2026, 10, 1),
@@ -48,8 +48,10 @@ void main() {
 
     final body = adapter.lastOptions!.data as Map<String, dynamic>;
     expect(body['goal'], 'improve_fitness');
+    expect(body['provider'], 'qwen');
     expect(body['goalDetail'], '希望爬三层楼不明显气喘');
     expect(body['targetDate'], '2026-10-01');
+    expect(adapter.lastOptions!.receiveTimeout, const Duration(minutes: 6));
   });
 }
 

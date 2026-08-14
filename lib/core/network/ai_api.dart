@@ -26,7 +26,7 @@ class AiApi {
   static final Options _aiRequestOptions = Options(
     connectTimeout: const Duration(seconds: 15),
     sendTimeout: const Duration(seconds: 45),
-    receiveTimeout: const Duration(minutes: 3),
+    receiveTimeout: const Duration(minutes: 6),
   );
 
   Future<AiPlanResult> generatePlan({
@@ -55,7 +55,7 @@ class AiApi {
     final data = _unwrapData(resp.data);
     final rawJson = data['rawJson'] as String? ?? '';
     if (rawJson.trim().isEmpty || rawJson.trim() == '{}') {
-      throw const FormatException('AI 未返回可用的运动计划，请切换模型后重试');
+      throw const FormatException('AI 未返回可用的运动计划，请稍后重试');
     }
 
     return AiPlanResult(
@@ -135,24 +135,31 @@ class AiApi {
     required String type,
   }) async {
     final bytes = await image.readAsBytes();
-    final resp = await _client.dio.post(
-      '/ai/vision/analyze',
-      data: FormData.fromMap({
-        'type': type,
-        'file': MultipartFile.fromBytes(
-          bytes,
-          filename: image.name,
-          contentType: DioMediaType.parse(_mimeType(image.name)),
-        ),
-      }),
-      options: Options(
-        contentType: 'multipart/form-data',
-        connectTimeout: const Duration(seconds: 15),
-        sendTimeout: const Duration(seconds: 45),
-        receiveTimeout: const Duration(minutes: 2),
-      ),
-    );
-    return AiVisionResult.fromJson(_unwrapData(resp.data));
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final resp = await _client.dio.post(
+          '/ai/vision/analyze',
+          data: FormData.fromMap({
+            'type': type,
+            'file': MultipartFile.fromBytes(
+              bytes,
+              filename: image.name,
+              contentType: DioMediaType.parse(_mimeType(image.name)),
+            ),
+          }),
+          options: Options(
+            contentType: 'multipart/form-data',
+            connectTimeout: const Duration(seconds: 15),
+            sendTimeout: const Duration(seconds: 45),
+            receiveTimeout: const Duration(minutes: 2),
+          ),
+        );
+        return AiVisionResult.fromJson(_unwrapData(resp.data));
+      } on DioException catch (error) {
+        if (attempt == 1 || !_isTransientAiError(error)) rethrow;
+      }
+    }
+    throw StateError('AI 图片识别失败');
   }
 
   Future<void> streamChat({
@@ -315,15 +322,13 @@ class AiApi {
   String _friendlyCode(int code, String msg) {
     if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置';
     if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试';
-    if (code == 40101) return '当前 AI 模型暂不可用，请稍后重试或切换模型';
+    if (code == 40101) return 'AI 服务认证异常，请稍后重试';
     if (code == 40301) return '请先登录手机号账号';
     return msg;
   }
 
   String? _normalizeProvider(String? provider) {
-    final value = provider?.trim();
-    if (value == null || value.isEmpty || value == 'auto') return null;
-    return value;
+    return 'qwen';
   }
 
   String _displayProvider(String? responseProvider, String? requestedProvider) {
@@ -345,9 +350,23 @@ class AiApi {
     }
     final status = e.response?.statusCode;
     if (status == 429) return '请求过于频繁，请稍后重试';
-    if (status == 401) return 'AI 服务未授权，请检查配置';
+    if (status == 401) return 'AI 服务认证异常，请稍后重试';
+    if (status == 502 || status == 503 || status == 504) {
+      return 'AI 服务暂时不可用，请稍后重试';
+    }
     if (e.type == DioExceptionType.receiveTimeout) return 'AI 响应超时，请重试';
     return '网络错误：${e.message ?? e.type.name}';
+  }
+
+  bool _isTransientAiError(DioException error) {
+    if (error.type == DioExceptionType.connectionTimeout ||
+        error.type == DioExceptionType.sendTimeout ||
+        error.type == DioExceptionType.receiveTimeout ||
+        error.type == DioExceptionType.connectionError) {
+      return true;
+    }
+    final status = error.response?.statusCode;
+    return status == 502 || status == 503 || status == 504;
   }
 
   Map<String, dynamic> _unwrapData(dynamic body) {

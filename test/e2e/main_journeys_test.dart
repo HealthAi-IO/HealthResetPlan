@@ -44,6 +44,54 @@ void main() {
     expect(entries.first.payload['weightKg'], 68.5);
   });
 
+  test('体重快捷打卡同时保留数值和今日完成状态', () async {
+    await repository.addWeightClockRecord(67.8);
+
+    final entries = await repository.loadIndicators(type: 'weight');
+    final clocks = await repository.loadClockRecords();
+    expect(entries.first.payload['weightKg'], 67.8);
+    expect(
+      clocks.any((record) =>
+          record.type == 'weight' &&
+          record.status == 'done' &&
+          record.note.contains('67.8')),
+      isTrue,
+    );
+  });
+
+  test('跳过今日任务会留痕但不会计入完成率', () async {
+    final completionBefore = (await repository.loadDashboard()).todayCompletion;
+    await repository.addClockRecord(type: 'water', status: 'skip');
+
+    final dashboard = await repository.loadDashboard();
+    expect(
+      dashboard.clockRecords.any(
+        (record) => record.type == 'water' && record.status == 'skip',
+      ),
+      isTrue,
+    );
+    expect(dashboard.todayCompletion, completionBefore);
+  });
+
+  test('完全相同的提醒不会重复创建', () async {
+    final date = DateTime.now().add(const Duration(days: 20));
+    Future<ReminderData> add() => repository.addReminder(
+          type: 'water',
+          time: const TimeOfDayValue(hour: 16, minute: 26),
+          date: date,
+          scheduleMode: 'once',
+          weekdays: const [],
+          note: 'E2E duplicate guard',
+        );
+
+    await add();
+    await add();
+    final matches = (await repository.loadReminders()).where(
+      (item) => item.payload['note'] == 'E2E duplicate guard',
+    );
+    expect(matches, hasLength(1));
+  });
+
   test('主链路 3：记录餐食并自动形成饮食打卡', () async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await repository.saveMealRecord(MealRecordData(
@@ -87,6 +135,32 @@ void main() {
     expect(
       (await repository.loadClockRecords())
           .any((record) => record.note == 'E2E 快走完成'),
+      isTrue,
+    );
+  });
+
+  test('首页仪表盘按当天查询计划，不受历史计划数量影响', () async {
+    final today = DateTime.now();
+    for (var i = 0; i < 20; i++) {
+      await repository.addPlan(
+        date: today.subtract(Duration(days: 40 - i)),
+        type: 'meal',
+        payload: {'summary': '历史计划 $i'},
+      );
+    }
+    await repository.addPlan(
+      date: today,
+      type: 'measurement',
+      payload: const {'summary': '今日测量'},
+    );
+
+    final plans = (await repository.loadDashboard()).plans;
+    expect(plans.any((plan) => plan.summary == '今日测量'), isTrue);
+    expect(
+      plans.every((plan) =>
+          plan.date.year == today.year &&
+          plan.date.month == today.month &&
+          plan.date.day == today.day),
       isTrue,
     );
   });

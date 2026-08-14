@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -14,14 +13,25 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/feedback/clock_feedback_service.dart';
 import '../../core/notification/reminder_consent.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import '../../core/network/file_api.dart';
 import '../../core/network/telemetry_api.dart';
 import '../../core/storage/report_image_storage.dart';
+import '../../core/widgets/numeric_picker_field.dart';
 import '../meals/meal_input_args.dart';
 
 part 'clock_widgets.dart';
+
+String weightChangeDescription(double current, double? previous) {
+  if (previous == null) return '今天的体重记录已经保存';
+  final difference = current - previous;
+  if (difference.abs() < 0.05) return '与上次持平';
+  return difference < 0
+      ? '较上次下降 ${difference.abs().toStringAsFixed(1)} kg'
+      : '较上次上升 ${difference.toStringAsFixed(1)} kg';
+}
 
 class ClockPage extends StatefulWidget {
   const ClockPage({
@@ -182,17 +192,257 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     });
   }
 
-  // 饮食 / 运动 / 饮水打卡：带备注弹窗
-  Future<void> _clockWithNote(String type) async {
-    final note = await _showNoteDialog(
-      title: _clockTitle(type),
-      hint: _clockHint(type),
+  Future<void> _clockWater() async {
+    var amount = 200;
+    final result = await _showQuickClockSheet<int>(
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => _QuickClockSheet(
+          title: '饮水打卡',
+          description: '选择本次饮水量',
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final value in const [100, 200, 300, 500, 750])
+                  ChoiceChip(
+                    label: Text('$value ml'),
+                    selected: amount == value,
+                    onSelected: (_) => setSheetState(() => amount = value),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('每日饮水目标'),
+              subtitle: Text(
+                appSettingsController.waterGoalMl == null
+                    ? '未设置，只统计实际饮水量'
+                    : '${appSettingsController.waterGoalMl} ml',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                await _showWaterGoalPicker();
+                if (sheetContext.mounted) setSheetState(() {});
+              },
+            ),
+            if (appSettingsController.seniorMode)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.record_voice_over_outlined),
+                title: const Text('记录后语音播报'),
+                subtitle: const Text('默认关闭，可随时关闭'),
+                value: appSettingsController.seniorClockVoice,
+                onChanged: (value) async {
+                  await appSettingsController.setSeniorClockVoice(value);
+                  if (sheetContext.mounted) setSheetState(() {});
+                },
+              ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(sheetContext, amount),
+              icon: const Icon(Icons.water_drop_outlined),
+              label: Text('记录 $amount ml'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
-    if (note == null) return;
-    await _repo.addClockRecord(type: type, status: 'done', note: note);
+    if (result == null) return;
+    final previousRecords = _todayRecords('water');
+    final previousTotal = _waterTotal(previousRecords);
+    final recordId = await _repo.addClockRecord(
+      type: 'water',
+      status: 'done',
+      note: '饮水 $result ml',
+      value: result,
+      unit: 'ml',
+    );
     sl<TelemetryApi>().record('clock_recorded');
     if (!mounted) return;
-    _showSnack('${_clockTitle(type)}已保存 ✓');
+    final total = previousTotal + result;
+    final count = previousRecords.length + 1;
+    final goal = appSettingsController.waterGoalMl;
+    final detail = goal == null
+        ? count == 1
+            ? '今天的第一杯水，已经记下了'
+            : '今天累计 $total ml · 共 $count 次'
+        : '今天已喝 $total / $goal ml · 完成 ${(total / goal * 100).clamp(0, 999).round()}%';
+    final reachedGoal = goal != null && previousTotal < goal && total >= goal;
+    _showClockResult(
+      title: reachedGoal ? '已记录 $result ml · 今日目标完成' : '已记录 $result ml',
+      detail: detail,
+      icon: Icons.water_drop_outlined,
+      onUndo: () => _repo.deleteClockRecord(recordId),
+    );
+    unawaited(
+      ClockFeedbackService.acknowledge(
+        message: reachedGoal
+            ? '已记录饮水$result毫升，今天的饮水目标完成了'
+            : '已记录饮水$result毫升，今天累计$total毫升',
+        speak: appSettingsController.seniorMode &&
+            appSettingsController.seniorClockVoice,
+      ),
+    );
+  }
+
+  Future<void> _clockExercise() async {
+    var exercise = '快走';
+    var duration = 30;
+    final result = await _showQuickClockSheet<({String name, int minutes})>(
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => _QuickClockSheet(
+          title: '运动打卡',
+          description: '选择运动类型和时长',
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final value in const ['快走', '慢跑', '骑行', '瑜伽', '健身操'])
+                  ChoiceChip(
+                    label: Text(value),
+                    selected: exercise == value,
+                    onSelected: (_) => setSheetState(() => exercise = value),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Text(
+              '运动时长',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final value in const [10, 20, 30, 45, 60])
+                  ChoiceChip(
+                    label: Text('$value 分钟'),
+                    selected: duration == value,
+                    onSelected: (_) => setSheetState(() => duration = value),
+                  ),
+              ],
+            ),
+            if (appSettingsController.seniorMode) ...[
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const Icon(Icons.record_voice_over_outlined),
+                title: const Text('记录后语音播报'),
+                subtitle: const Text('默认关闭，可随时关闭'),
+                value: appSettingsController.seniorClockVoice,
+                onChanged: (value) async {
+                  await appSettingsController.setSeniorClockVoice(value);
+                  if (sheetContext.mounted) setSheetState(() {});
+                },
+              ),
+            ],
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(
+                sheetContext,
+                (name: exercise, minutes: duration),
+              ),
+              icon: const Icon(Icons.directions_run_outlined),
+              label: Text('记录 $exercise $duration 分钟'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    final previousRecords = _todayRecords('exercise');
+    final previousMinutes = _exerciseTotal(previousRecords);
+    final recordId = await _repo.addClockRecord(
+      type: 'exercise',
+      status: 'done',
+      note: '${result.name} ${result.minutes} 分钟',
+      value: result.minutes,
+      unit: 'minute',
+      detail: result.name,
+    );
+    sl<TelemetryApi>().record('clock_recorded');
+    if (!mounted) return;
+    final total = previousMinutes + result.minutes;
+    final count = previousRecords.length + 1;
+    _showClockResult(
+      title: '${result.name} ${result.minutes} 分钟，已经记下了',
+      detail: '今天累计 $total 分钟 · 共 $count 次',
+      icon: Icons.directions_run_outlined,
+      onUndo: () => _repo.deleteClockRecord(recordId),
+    );
+    unawaited(
+      ClockFeedbackService.acknowledge(
+        message: '已记录${result.name}${result.minutes}分钟，今天累计$total分钟',
+        speak: appSettingsController.seniorMode &&
+            appSettingsController.seniorClockVoice,
+      ),
+    );
+  }
+
+  List<ClockRecordData> _todayRecords(String type) {
+    final now = DateTime.now();
+    return _records.where((record) {
+      final time = record.clockTime;
+      return record.type == type &&
+          record.status == 'done' &&
+          time.year == now.year &&
+          time.month == now.month &&
+          time.day == now.day;
+    }).toList();
+  }
+
+  int _waterTotal(Iterable<ClockRecordData> records) => records.fold(
+        0,
+        (total, record) => total + (record.waterMilliliters ?? 0),
+      );
+
+  int _exerciseTotal(Iterable<ClockRecordData> records) => records.fold(
+        0,
+        (total, record) => total + (record.exerciseMinutes ?? 0),
+      );
+
+  Future<void> _showWaterGoalPicker() async {
+    final current = appSettingsController.waterGoalMl ?? 0;
+    final selected = await _showQuickClockSheet<int>(
+      builder: (sheetContext) => _QuickClockSheet(
+        title: '每日饮水目标',
+        description: '根据个人情况选择，也可以不设置',
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final value in const [0, 1200, 1500, 1800, 2000, 2500])
+                ChoiceChip(
+                  label: Text(value == 0 ? '不设置' : '$value ml'),
+                  selected: current == value,
+                  onSelected: (_) => Navigator.pop(sheetContext, value),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            '如医生对饮水量有专门要求，请以医嘱为准。',
+            style: TextStyle(
+                color: Theme.of(sheetContext).colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+    if (selected == null) return;
+    await appSettingsController.setWaterGoalMl(selected == 0 ? null : selected);
+    if (mounted) setState(() {});
   }
 
   Future<void> _recordMeal() async {
@@ -204,9 +454,37 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
             : now.hour < 21
                 ? 'dinner'
                 : 'late_night';
-    await context.push(
+    final before = await _repo.loadMealsBetween(
+      DateTime(now.year, now.month, now.day),
+      DateTime(now.year, now.month, now.day + 1),
+    );
+    if (!mounted) return;
+    final saved = await context.push<bool>(
       '/meals/input',
       extra: MealInputArgs(mealType: mealType, eatenDate: now),
+    );
+    if (saved != true || !mounted) return;
+    final after = await _repo.loadMealsBetween(
+      DateTime(now.year, now.month, now.day),
+      DateTime(now.year, now.month, now.day + 1),
+    );
+    final previousIds = before.map((meal) => meal.id).toSet();
+    final meal =
+        after.where((item) => !previousIds.contains(item.id)).firstOrNull;
+    if (meal == null || !mounted) return;
+    _showClockResult(
+      title: '${meal.mealLabel}已经记下了',
+      detail:
+          '${meal.name} · ${meal.totalCalories.round()} kcal · 今天共 ${after.length} 餐',
+      icon: Icons.restaurant_outlined,
+      onUndo: () => _repo.deleteMealRecord(meal),
+    );
+    unawaited(
+      ClockFeedbackService.acknowledge(
+        message: '${meal.mealLabel}已经记下了',
+        speak: appSettingsController.seniorMode &&
+            appSettingsController.seniorClockVoice,
+      ),
     );
   }
 
@@ -233,58 +511,71 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       ),
     );
     if (result == null) return;
-    final note = result == 'skip' ? '本次跳过用药' : '';
-    await _repo.addClockRecord(type: 'medicine', status: result, note: note);
+    final note = result == 'skip' ? '本次跳过用药' : '本次已服药';
+    final recordId = await _repo.addClockRecord(
+      type: 'medicine',
+      status: result,
+      note: note,
+      detail: result == 'done' ? '已服药' : '已跳过',
+    );
     if (!mounted) return;
-    _showSnack(result == 'done' ? '用药打卡已保存 ✓' : '已记录跳过');
+    final doneCount = _todayRecords('medicine')
+            .where((record) => record.status == 'done')
+            .length +
+        (result == 'done' ? 1 : 0);
+    _showClockResult(
+      title: result == 'done' ? '本次用药已确认' : '本次用药已记录为跳过',
+      detail: result == 'done' ? '今天已服 $doneCount 次' : '记录可在今天全部记录中更正',
+      icon: Icons.medication_outlined,
+      onUndo: () => _repo.deleteClockRecord(recordId),
+    );
   }
 
   // 称重打卡：直接录入体重值，联动写入 health_indicator
   Future<void> _clockWeight() async {
-    final ctrl = TextEditingController();
-    final result = await _showSmoothDialog<double>(
-      builder: (ctx) => AlertDialog(
-        title: const Text('称重打卡'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
-          ],
-          decoration: const InputDecoration(
-            labelText: '当前体重',
-            hintText: '例如 70.5',
-            suffixText: 'kg',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = double.tryParse(ctrl.text);
-              if (v != null && v >= 20 && v <= 300) Navigator.pop(ctx, v);
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+    final picked = await showNumericPicker(
+      context: context,
+      title: '称重打卡（kg）',
+      min: HealthRanges.minWeightKg,
+      max: HealthRanges.maxWeightKg,
+      step: 0.1,
+      decimals: 1,
+      initialValue: 65,
     );
-    await Future<void>.delayed(kThemeAnimationDuration);
-    ctrl.dispose();
+    final result = picked?.value;
     if (result == null) return;
-    // 写入打卡记录
-    await _repo.addClockRecord(
+    final previousWeight = (await _repo.loadIndicators(
+      type: 'weight',
+      limit: 1,
+    ))
+        .firstOrNull
+        ?.numericTrendValue;
+    final measuredAt = DateTime.now();
+    final previousProfile = await _repo.loadProfile();
+    final recordId = await _repo.addClockRecord(
       type: 'weight',
       status: 'done',
-      note: '体重 $result kg',
+      note: '体重 ${result.toStringAsFixed(1)} kg',
+      value: result,
+      unit: 'kg',
+      clockAt: measuredAt,
     );
-    // 联动写入健康指标
-    await _repo.addIndicator(type: 'weight', payload: {'weightKg': result});
+    await _repo.addIndicator(
+      type: 'weight',
+      payload: {'weightKg': result},
+      measuredAt: measuredAt,
+    );
     if (!mounted) return;
-    _showSnack('称重 $result kg 已记录 ✓');
+    _showClockResult(
+      title: '已记录 ${result.toStringAsFixed(1)} kg',
+      detail: weightChangeDescription(result, previousWeight),
+      icon: Icons.scale_outlined,
+      onUndo: () async {
+        await _repo.deleteClockRecord(recordId);
+        await _repo.deleteWeightMeasurementAt(measuredAt);
+        if (previousProfile != null) await _repo.saveProfile(previousProfile);
+      },
+    );
   }
 
   Future<void> _completeSeniorTask(_SeniorClockTask task) async {
@@ -408,7 +699,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
               OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _clockWithNote('water');
+                  _clockWater();
                 },
                 icon: const Icon(Icons.water_drop_outlined),
                 label: const Text('记录饮水'),
@@ -417,7 +708,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
               OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _clockWithNote('exercise');
+                  _clockExercise();
                 },
                 icon: const Icon(Icons.directions_walk_outlined),
                 label: const Text('记录临时运动'),
@@ -470,11 +761,19 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                   style: TextStyle(color: AppTheme.muted),
                 ),
                 const SizedBox(height: 12),
+                _TodayRecordTotals(
+                  records: records,
+                  waterGoalMl: appSettingsController.waterGoalMl,
+                ),
                 Expanded(
                   child: ListView(
                     children: [
                       _RecordList(
                         records: records,
+                        onEdit: (record) {
+                          Navigator.pop(sheetContext);
+                          _editClockRecord(record);
+                        },
                         onDelete: (record) {
                           Navigator.pop(sheetContext);
                           _confirmDeleteRecord(record);
@@ -516,6 +815,141 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     if (confirmed == true && record.id != null) {
       await _repo.deleteClockRecord(record.id!);
       if (mounted) _showSnack('记录已删除');
+    }
+  }
+
+  Future<void> _editClockRecord(ClockRecordData record) async {
+    if (record.type == 'meal') {
+      final time = record.clockTime;
+      final meals = await _repo.loadMealsBetween(
+        DateTime(time.year, time.month, time.day),
+        DateTime(time.year, time.month, time.day + 1),
+      );
+      final meal =
+          meals.where((item) => item.eatenAt == record.clockAt).firstOrNull;
+      if (meal == null || !mounted) {
+        if (mounted) _showSnack('未找到对应餐食，请删除后重新记录');
+        return;
+      }
+      await context.push('/meals/input', extra: meal);
+      return;
+    }
+    if (record.type == 'water') {
+      var amount = record.waterMilliliters ?? 200;
+      final result = await _showQuickClockSheet<int>(
+        builder: (sheetContext) => StatefulBuilder(
+          builder: (context, setSheetState) => _QuickClockSheet(
+            title: '更正饮水记录',
+            description: '选择这次实际饮水量',
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final value in const [100, 200, 300, 500, 750])
+                    ChoiceChip(
+                      label: Text('$value ml'),
+                      selected: amount == value,
+                      onSelected: (_) => setSheetState(() => amount = value),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: () => Navigator.pop(sheetContext, amount),
+                child: Text('保存为 $amount ml'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (result == null) return;
+      await _repo.updateClockRecord(
+        record,
+        note: '饮水 $result ml',
+        value: result,
+        unit: 'ml',
+      );
+      if (mounted) _showSnack('饮水记录已更正');
+      return;
+    }
+    if (record.type == 'exercise') {
+      var name = record.exerciseName.isEmpty ? '快走' : record.exerciseName;
+      var minutes = record.exerciseMinutes ?? 30;
+      final result = await _showQuickClockSheet<({String name, int minutes})>(
+        builder: (sheetContext) => StatefulBuilder(
+          builder: (context, setSheetState) => _QuickClockSheet(
+            title: '更正运动记录',
+            description: '选择实际运动类型和时长',
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final value in const ['快走', '慢跑', '骑行', '瑜伽', '健身操'])
+                    ChoiceChip(
+                      label: Text(value),
+                      selected: name == value,
+                      onSelected: (_) => setSheetState(() => name = value),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final value in const [10, 20, 30, 45, 60])
+                    ChoiceChip(
+                      label: Text('$value 分钟'),
+                      selected: minutes == value,
+                      onSelected: (_) => setSheetState(() => minutes = value),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  sheetContext,
+                  (name: name, minutes: minutes),
+                ),
+                child: Text('保存 $name $minutes 分钟'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (result == null) return;
+      await _repo.updateClockRecord(
+        record,
+        note: '${result.name} ${result.minutes} 分钟',
+        value: result.minutes,
+        unit: 'minute',
+        detail: result.name,
+      );
+      if (mounted) _showSnack('运动记录已更正');
+      return;
+    }
+    if (record.type == 'weight') {
+      final result = await showNumericPicker(
+        context: context,
+        title: '更正体重（kg）',
+        min: HealthRanges.minWeightKg,
+        max: HealthRanges.maxWeightKg,
+        step: 0.1,
+        decimals: 1,
+        initialValue: record.weightKilograms ?? 65,
+      );
+      final value = result?.value;
+      if (value == null) return;
+      await _repo.updateClockRecord(
+        record,
+        note: '体重 ${value.toStringAsFixed(1)} kg',
+        value: value,
+        unit: 'kg',
+      );
+      await _repo.updateWeightMeasurementAt(record.clockTime, value);
+      if (mounted) _showSnack('体重记录已更正');
     }
   }
 
@@ -1020,34 +1454,29 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     if (type != null && mounted) await _addReminder(type);
   }
 
-  Future<String?> _showNoteDialog({
-    required String title,
-    required String hint,
-  }) async {
-    final ctrl = TextEditingController();
-    final result = await _showSmoothDialog<String>(
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 3,
-          decoration: InputDecoration(hintText: hint),
+  Future<T?> _showQuickClockSheet<T>({required WidgetBuilder builder}) {
+    return showModalBottomSheet<T>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      showDragHandle: false,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Align(
+        alignment: Alignment.bottomCenter,
+        child: Material(
+          color: Theme.of(sheetContext).colorScheme.surfaceContainerLow,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: SafeArea(
+              top: false,
+              child: builder(sheetContext),
+            ),
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('保存'),
-          ),
-        ],
       ),
     );
-    await Future<void>.delayed(kThemeAnimationDuration);
-    ctrl.dispose();
-    return result;
   }
 
   Future<T?> _showSmoothDialog<T>({required WidgetBuilder builder}) {
@@ -1076,7 +1505,64 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
   }
 
   void _showSnack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+    );
+  }
+
+  void _showClockResult({
+    required String title,
+    required String detail,
+    required IconData icon,
+    required Future<void> Function() onUndo,
+  }) {
+    final senior = appSettingsController.seniorMode;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: senior ? 8 : 6),
+        margin: EdgeInsets.fromLTRB(16, 0, 16, senior ? 20 : 12),
+        padding: EdgeInsets.symmetric(
+          horizontal: senior ? 18 : 16,
+          vertical: senior ? 16 : 12,
+        ),
+        content: Semantics(
+          liveRegion: true,
+          child: Row(
+            children: [
+              Icon(icon, color: Theme.of(context).colorScheme.inversePrimary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: senior ? 20 : 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(detail, style: TextStyle(fontSize: senior ? 17 : 14)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        action: SnackBarAction(
+          label: '撤销',
+          onPressed: () async {
+            await onUndo();
+            if (mounted) _showSnack('刚才的记录已撤销');
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _checkNotificationPermission() async {
@@ -1106,8 +1592,9 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
   void _showNotificationPermissionNotice(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        persist: false,
         content: Text(message),
-        duration: const Duration(seconds: 8),
+        duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: '去设置',
           onPressed: _openNotificationSettings,
@@ -1278,6 +1765,8 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     if (appSettingsController.seniorMode) {
       return _SeniorClockView(
         tasks: _buildSeniorClockTasks(now, todayRecords),
+        records: todayRecords,
+        waterGoalMl: appSettingsController.waterGoalMl,
         onComplete: _completeSeniorTask,
         onChange: _changeSeniorTask,
         onSupplement: _showSeniorSupplement,
@@ -1326,7 +1815,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                   physics: const NeverScrollableScrollPhysics(),
                   mainAxisSpacing: 10,
                   crossAxisSpacing: 10,
-                  childAspectRatio: 0.95,
+                  childAspectRatio: constraints.maxWidth >= 600 ? 1.6 : 0.95,
                   children: [
                     _ClockTile(
                       icon: Icons.restaurant_outlined,
@@ -1338,7 +1827,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                       icon: Icons.directions_run_outlined,
                       label: '运动',
                       color: AppTheme.exercise(context),
-                      onTap: () => _clockWithNote('exercise'),
+                      onTap: _clockExercise,
                     ),
                     _ClockTile(
                       icon: Icons.medication_outlined,
@@ -1356,7 +1845,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                       icon: Icons.water_drop_outlined,
                       label: '饮水',
                       color: AppTheme.water(context),
-                      onTap: () => _clockWithNote('water'),
+                      onTap: _clockWater,
                     ),
                   ],
                 );
@@ -1413,6 +1902,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
                     '${DateFormat('MM月dd日').format(now)} · 共 ${todayRecords.length} 条',
                 child: _TodayRecordSummary(
                   records: todayRecords,
+                  waterGoalMl: appSettingsController.waterGoalMl,
                   medicineScheduledCount: medicineScheduledCount,
                   medicineTakenCount: medicineTakenCount,
                   onViewAll: () => _showTodayRecords(todayRecords),

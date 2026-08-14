@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../core/auth/user_session.dart';
 import '../core/data/health_models.dart';
 import '../core/telemetry/telemetry_observer.dart';
+import 'app_settings_controller.dart';
 import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/auth/set_password_page.dart';
@@ -24,6 +25,7 @@ import '../features/meals/meal_input_args.dart';
 import '../features/plan/plan_page.dart' deferred as plan;
 import '../features/profile/profile_page.dart' deferred as profile;
 import '../features/records/record_hub_page.dart' deferred as records;
+import '../features/records/senior_record_page.dart' deferred as senior_records;
 import '../features/quit_smoking/quit_smoking_page.dart'
     deferred as quit_smoking;
 import '../features/privacy/privacy_policy_page.dart';
@@ -69,13 +71,17 @@ class AppRouter {
   }
 
   static Page<void> _shellPage(GoRouterState state, Widget child) {
-    return NoTransitionPage<void>(key: state.pageKey, child: child);
+    return NoTransitionPage<void>(
+      key: ValueKey((state.pageKey, appSettingsController.seniorMode)),
+      child: child,
+    );
   }
 
   static final GoRouter router = GoRouter(
     navigatorKey: navigatorKey,
     initialLocation: '/home',
-    refreshListenable: UserSession.instance,
+    refreshListenable:
+        Listenable.merge([UserSession.instance, appSettingsController]),
     observers: [TelemetryObserver()],
     redirect: (context, state) {
       final path = state.uri.path;
@@ -98,10 +104,14 @@ class AppRouter {
     },
     routes: [
       StatefulShellRoute.indexedStack(
-        builder: (context, state, navigationShell) => AppShell(
-          location: state.uri.path,
-          navigationShell: navigationShell,
-          child: navigationShell,
+        pageBuilder: (context, state, navigationShell) =>
+            NoTransitionPage<void>(
+          key: ValueKey(('app-shell', appSettingsController.seniorMode)),
+          child: AppShell(
+            location: state.uri.path,
+            navigationShell: navigationShell,
+            child: navigationShell,
+          ),
         ),
         branches: [
           StatefulShellBranch(
@@ -127,8 +137,12 @@ class AppRouter {
                 pageBuilder: (_, state) => _shellPage(
                   state,
                   _DeferredPage(
-                    load: plan.loadLibrary,
-                    builder: () => plan.PlanPage(),
+                    load: appSettingsController.seniorMode
+                        ? senior_records.loadLibrary
+                        : plan.loadLibrary,
+                    builder: () => appSettingsController.seniorMode
+                        ? senior_records.SeniorRecordPage()
+                        : plan.PlanPage(),
                   ),
                 ),
               ),
@@ -142,8 +156,12 @@ class AppRouter {
                 pageBuilder: (_, state) => _shellPage(
                   state,
                   _DeferredPage(
-                    load: food_hub.loadLibrary,
-                    builder: () => food_hub.FoodHubPage(),
+                    load: appSettingsController.seniorMode
+                        ? records.loadLibrary
+                        : food_hub.loadLibrary,
+                    builder: () => appSettingsController.seniorMode
+                        ? records.RecordHubPage(initialView: 'clock')
+                        : food_hub.FoodHubPage(),
                   ),
                 ),
               ),
@@ -157,15 +175,20 @@ class AppRouter {
                 pageBuilder: (_, state) => _shellPage(
                   state,
                   _DeferredPage(
-                    load: records.loadLibrary,
-                    builder: () => records.RecordHubPage(
-                      initialView: state.uri.queryParameters['view'] ?? 'clock',
-                      initialReminderId: int.tryParse(
-                        state.uri.queryParameters['reminderId'] ?? '',
-                      ),
-                      openReminderSettings:
-                          state.uri.queryParameters['manage'] == 'rules',
-                    ),
+                    load: appSettingsController.seniorMode
+                        ? profile.loadLibrary
+                        : records.loadLibrary,
+                    builder: () => appSettingsController.seniorMode
+                        ? profile.ProfilePage()
+                        : records.RecordHubPage(
+                            initialView:
+                                state.uri.queryParameters['view'] ?? 'clock',
+                            initialReminderId: int.tryParse(
+                              state.uri.queryParameters['reminderId'] ?? '',
+                            ),
+                            openReminderSettings:
+                                state.uri.queryParameters['manage'] == 'rules',
+                          ),
                   ),
                 ),
               ),
@@ -202,14 +225,49 @@ class AppRouter {
         path: '/clock',
         name: '/clock',
         redirect: (_, state) => Uri(
-          path: '/records',
+          path: appSettingsController.seniorMode ? '/meals' : '/records',
           queryParameters: {
             'view': 'clock',
             ...state.uri.queryParameters,
           },
         ).toString(),
       ),
-      GoRoute(path: '/stats', redirect: (_, __) => '/records?view=stats'),
+      GoRoute(
+        path: '/stats',
+        redirect: (_, __) => appSettingsController.seniorMode
+            ? '/record-history/stats'
+            : '/records?view=stats',
+      ),
+      GoRoute(
+        path: '/record-history/calendar',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: senior_records.loadLibrary,
+            builder: () => senior_records.SeniorCalendarPage(),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/record-history/stats',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: senior_records.loadLibrary,
+            builder: () => senior_records.SeniorStatsPage(),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/record-history/weekly',
+        pageBuilder: (_, state) => _page(
+          state,
+          _DeferredPage(
+            load: senior_records.loadLibrary,
+            builder: () => senior_records.SeniorWeeklyReportPage(),
+          ),
+        ),
+      ),
       GoRoute(
         path: '/quit-smoking',
         pageBuilder: (_, state) => _page(

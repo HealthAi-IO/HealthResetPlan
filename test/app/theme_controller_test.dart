@@ -74,4 +74,31 @@ void main() {
     await themeController.setThemeMode(AppThemeMode.dark);
     expect(AppTheme.surface, isNot(lightSurface));
   });
+
+  test('浅色主题文字颜色不受当前深色模式污染', () async {
+    SharedPreferences.setMockInitialValues({});
+    await themeController.setThemeMode(AppThemeMode.dark);
+
+    final lightTheme = AppTheme.lightFor(AppColorTheme.standard.seed);
+
+    expect(
+      lightTheme.textTheme.bodyLarge?.color,
+      lightTheme.colorScheme.onSurface,
+    );
+    expect(
+      lightTheme.textTheme.bodySmall?.color,
+      lightTheme.colorScheme.onSurfaceVariant,
+    );
+  });
+
+  test('长辈主题使用独立语义字号并保留深浅色模式', () {
+    final light = AppTheme.seniorLightFor(AppColorTheme.standard.seed);
+    final dark = AppTheme.seniorDarkFor(AppColorTheme.standard.seed);
+
+    expect(light.textTheme.bodyMedium?.fontSize, 18);
+    expect(light.navigationBarTheme.height, 82);
+    expect(light.brightness, Brightness.light);
+    expect(dark.brightness, Brightness.dark);
+    expect(dark.colorScheme.onSurface, isNot(light.colorScheme.onSurface));
+  });
 }

@@ -939,6 +939,9 @@ class ClockRecordData {
     required this.clockAt,
     required this.note,
     required this.photoPath,
+    this.value,
+    this.unit = '',
+    this.detail = '',
     required this.createdAt,
     required this.updatedAt,
     this.version = 0,
@@ -952,12 +955,82 @@ class ClockRecordData {
   final int clockAt;
   final String note;
   final String photoPath;
+  final num? value;
+  final String unit;
+  final String detail;
   final int createdAt;
   final int updatedAt;
   final int version;
   final int isDirty;
 
   DateTime get clockTime => DateTime.fromMillisecondsSinceEpoch(clockAt);
+
+  int? get waterMilliliters {
+    if (type != 'water') return null;
+    if (value != null && unit.toLowerCase() == 'ml') return value!.round();
+    final match = RegExp(r'(\d+)\s*ml', caseSensitive: false).firstMatch(note);
+    return int.tryParse(match?.group(1) ?? '');
+  }
+
+  int? get exerciseMinutes {
+    if (type != 'exercise') return null;
+    if (value != null && unit == 'minute') return value!.round();
+    final match = RegExp(r'(\d+)\s*分钟').firstMatch(note);
+    return int.tryParse(match?.group(1) ?? '');
+  }
+
+  double? get weightKilograms {
+    if (type != 'weight') return null;
+    if (value != null && unit == 'kg') return value!.toDouble();
+    final match =
+        RegExp(r'(\d+(?:\.\d+)?)\s*kg', caseSensitive: false).firstMatch(note);
+    return double.tryParse(match?.group(1) ?? '');
+  }
+
+  int? get mealCalories {
+    if (type != 'meal') return null;
+    if (value != null && unit == 'kcal') return value!.round();
+    final match =
+        RegExp(r'(\d+)\s*kcal', caseSensitive: false).firstMatch(note);
+    return int.tryParse(match?.group(1) ?? '');
+  }
+
+  String get mealName {
+    if (type != 'meal') return '';
+    if (detail.trim().isNotEmpty) return detail.trim();
+    return switch (true) {
+      _ when note.startsWith('早餐') => '早餐',
+      _ when note.startsWith('午餐') => '午餐',
+      _ when note.startsWith('晚餐') => '晚餐',
+      _ when note.startsWith('加餐') => '加餐',
+      _ when note.startsWith('夜宵') => '夜宵',
+      _ => '',
+    };
+  }
+
+  String get exerciseName {
+    if (type != 'exercise') return '';
+    if (detail.trim().isNotEmpty) return detail.trim();
+    return note.replaceFirst(RegExp(r'\s*\d+\s*分钟.*$'), '').trim();
+  }
+
+  String get displayDetail {
+    final water = waterMilliliters;
+    if (water != null) return '$water ml';
+    final minutes = exerciseMinutes;
+    if (minutes != null) {
+      final name = exerciseName;
+      return name.isEmpty ? '$minutes 分钟' : '$name $minutes 分钟';
+    }
+    final weight = weightKilograms;
+    if (weight != null) return '${weight.toStringAsFixed(1)} kg';
+    final calories = mealCalories;
+    if (calories != null) {
+      final name = mealName;
+      return name.isEmpty ? '$calories kcal' : '$name · $calories kcal';
+    }
+    return note;
+  }
 
   String get label {
     return switch (type) {
@@ -980,6 +1053,9 @@ class ClockRecordData {
       clockAt: _asInt(row['clock_at']) ?? 0,
       note: row['note'] as String? ?? '',
       photoPath: row['photo_path'] as String? ?? '',
+      value: row['value'] as num?,
+      unit: row['unit'] as String? ?? '',
+      detail: row['detail'] as String? ?? '',
       createdAt: _asInt(row['created_at']) ?? 0,
       updatedAt: _asInt(row['updated_at']) ?? 0,
       version: _asInt(row['version']) ?? 0,
@@ -995,6 +1071,9 @@ class ClockRecordData {
       'clock_at': clockAt,
       'note': note,
       'photo_path': photoPath,
+      if (value != null) 'value': value,
+      if (unit.isNotEmpty) 'unit': unit,
+      if (detail.isNotEmpty) 'detail': detail,
       'created_at': createdAt,
       'updated_at': updatedAt,
       'version': version,
@@ -1273,6 +1352,8 @@ class HealthDashboardData {
 
   double get todayCompletion {
     final now = DateTime.now();
+    final taskTypes = todayTaskTypes(now);
+    if (taskTypes.isEmpty) return 1;
     final completedTypes = clockRecords
         .where((item) {
           final time = item.clockTime;
@@ -1282,16 +1363,38 @@ class HealthDashboardData {
               time.day == now.day;
         })
         .map((item) => item.type)
-        .where({
-          'meal',
-          'exercise',
-          'medicine',
-          'weight',
-          'water',
-          'quit_smoking'
-        }.contains)
+        .where(taskTypes.contains)
         .toSet();
-    return (completedTypes.length / 4).clamp(0, 1).toDouble();
+    return (completedTypes.length / taskTypes.length).clamp(0, 1).toDouble();
+  }
+
+  Set<String> todayTaskTypes([DateTime? value]) {
+    final date = value ?? DateTime.now();
+    final types = <String>{'meal', 'weight'};
+    for (final plan in plans) {
+      final planDate = plan.date;
+      if (planDate.year != date.year ||
+          planDate.month != date.month ||
+          planDate.day != date.day) {
+        continue;
+      }
+      switch (plan.type) {
+        case 'exercise':
+          types.add('exercise');
+        case 'medicine':
+          types.add('medicine');
+        case 'measurement':
+          types.add('weight');
+        case 'meal':
+          types.add('meal');
+      }
+    }
+    for (final reminder in reminders) {
+      if (reminder.isEnabled && reminder.occursOn(date)) {
+        types.add(reminder.type);
+      }
+    }
+    return types.where(_dailyTaskTypes.contains).toSet();
   }
 
   List<double> weightTrend({int limit = 8}) {
@@ -1305,6 +1408,15 @@ class HealthDashboardData {
         .toList();
   }
 }
+
+const _dailyTaskTypes = {
+  'meal',
+  'exercise',
+  'medicine',
+  'weight',
+  'water',
+  'quit_smoking',
+};
 
 class ClockStats {
   const ClockStats({

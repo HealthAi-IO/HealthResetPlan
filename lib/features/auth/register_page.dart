@@ -128,20 +128,26 @@ class _RegisterPageState extends State<RegisterPage> {
             style: Theme.of(context).textTheme.headlineLarge,
           ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             '完成注册，开启你的健康之旅',
-            style: TextStyle(color: Color(0xFF65788B), fontSize: 15),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 15,
+            ),
           ),
           const SizedBox(height: 28),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
             decoration: BoxDecoration(
-              color: const Color(0xFFEAF7FE),
+              color: Theme.of(context).colorScheme.primaryContainer,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Row(
               children: [
-                const Icon(Icons.verified_rounded, color: Color(0xFF36B85A)),
+                Icon(
+                  Icons.verified_rounded,
+                  color: Theme.of(context).colorScheme.tertiary,
+                ),
                 const SizedBox(width: 12),
                 Expanded(child: Text(maskedPhone)),
                 TextButton(
@@ -175,26 +181,32 @@ class _RegisterPageState extends State<RegisterPage> {
             onSubmitted: (_) => _submit(),
           ),
           const SizedBox(height: 6),
-          CheckboxListTile(
-            value: _agreed,
-            controlAffinity: ListTileControlAffinity.leading,
-            contentPadding: EdgeInsets.zero,
-            onChanged: (value) => setState(() => _agreed = value ?? false),
-            title: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                const Text('我已阅读并同意'),
-                TextButton(
-                  onPressed: () => launchUrl(Uri.parse(termsOfServiceUrl)),
-                  child: const Text('《用户协议》'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Checkbox(
+                value: _agreed,
+                onChanged: (value) => setState(() => _agreed = value ?? false),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text('我已阅读并同意'),
+                    _AgreementLink(
+                      label: '《用户协议》',
+                      onTap: () => launchUrl(Uri.parse(termsOfServiceUrl)),
+                    ),
+                    const Text('和'),
+                    _AgreementLink(
+                      label: '《隐私政策》',
+                      onTap: () => context.push('/privacy-policy'),
+                    ),
+                  ],
                 ),
-                const Text('和'),
-                TextButton(
-                  onPressed: () => context.push('/privacy-policy'),
-                  child: const Text('《隐私政策》'),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
           if (_error != null)
             Padding(
@@ -217,6 +229,37 @@ class _RegisterPageState extends State<RegisterPage> {
           const SizedBox(height: 20),
           const SeniorModeEntry(),
         ],
+      ),
+    );
+  }
+}
+
+class _AgreementLink extends StatelessWidget {
+  const _AgreementLink({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      link: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

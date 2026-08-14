@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../app/app_theme.dart';
-
 const aiContentLabel = 'AI生成内容';
 
 class AiContentNotice extends StatelessWidget {
@@ -31,28 +29,29 @@ class AiContentNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: AppTheme.aiPurple.withValues(alpha: 0.08),
-        border: Border.all(color: AppTheme.aiPurple.withValues(alpha: 0.24)),
+        color: colors.tertiaryContainer.withValues(alpha: 0.6),
+        border: Border.all(color: colors.tertiary.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(children: [
-         Icon(Icons.auto_awesome, size: 14, color: AppTheme.aiPurple),
+        Icon(Icons.auto_awesome, size: 14, color: colors.tertiary),
         const SizedBox(width: 5),
         Expanded(
           child: Text(aiContentLabel,
-              style:  TextStyle(
-                  color: AppTheme.aiPurple,
+              style: TextStyle(
+                  color: colors.onTertiaryContainer,
                   fontSize: 11,
                   fontWeight: FontWeight.w700)),
         ),
         TextButton(
           onPressed: () => _reportIssue(context),
           style: TextButton.styleFrom(
-            foregroundColor: AppTheme.aiPurple,
+            foregroundColor: colors.onTertiaryContainer,
             minimumSize: Size.zero,
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,

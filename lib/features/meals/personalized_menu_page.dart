@@ -9,6 +9,7 @@ import '../../core/di/service_locator.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import '../../core/widgets/numeric_picker_field.dart';
 
 class PersonalizedMenuPage extends StatefulWidget {
   const PersonalizedMenuPage({
@@ -169,18 +170,26 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
             Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: NumericPickerField(
                     controller: _budget,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '每日预算（元）'),
+                    label: '每日预算',
+                    unit: '元',
+                    min: 1,
+                    max: 1000,
+                    step: 1,
+                    optional: true,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: TextField(
+                  child: NumericPickerField(
                     controller: _cookingMinutes,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '做饭时长（分钟）'),
+                    label: '做饭时长',
+                    unit: '分钟',
+                    min: 5,
+                    max: 240,
+                    step: 5,
+                    optional: true,
                   ),
                 ),
               ],
@@ -206,7 +215,7 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
             const SizedBox(height: 4),
             Text(
               '${menu['keyFocus'] ?? '按实际份量记录，热量为估算值'}',
-              style:  TextStyle(color: AppTheme.muted),
+              style: TextStyle(color: AppTheme.muted),
             ),
             const SizedBox(height: 14),
             for (final day in (menu['days'] as List).whereType<Map>())
@@ -245,7 +254,7 @@ class _MenuIntro extends StatelessWidget {
         decoration: BoxDecoration(
           gradient: AppTheme.accentGradient(context),
           borderRadius: BorderRadius.circular(20),
-          boxShadow:  [
+          boxShadow: [
             BoxShadow(
               color: AppTheme.softShadow,
               blurRadius: 18,
@@ -342,7 +351,7 @@ class _MenuMealRow extends StatelessWidget {
           children: [
             SizedBox(
               width: 44,
-              child: Text(label, style:  TextStyle(color: AppTheme.muted)),
+              child: Text(label, style: TextStyle(color: AppTheme.muted)),
             ),
             Expanded(
               child: Column(
@@ -354,7 +363,7 @@ class _MenuMealRow extends StatelessWidget {
                   ),
                   Text(
                     '${(meal['calories'] as num?)?.round() ?? 0} kcal',
-                    style:  TextStyle(color: AppTheme.muted, fontSize: 12),
+                    style: TextStyle(color: AppTheme.muted, fontSize: 12),
                   ),
                 ],
               ),
@@ -377,7 +386,7 @@ String _friendlyAiError(Object error) {
     if (status == 429 || message.contains('额度')) return '今天的 AI 生成次数已用完。';
     if (error.type == DioExceptionType.connectionTimeout ||
         error.type == DioExceptionType.receiveTimeout) {
-      return 'AI 响应超时，请稍后重试或切换模型。';
+      return 'AI 响应超时，请稍后重试。';
     }
     if (message.isNotEmpty) return message;
     if (error.message?.isNotEmpty == true) return error.message!;

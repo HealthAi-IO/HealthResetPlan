@@ -5,8 +5,10 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/app_theme.dart';
+import '../../core/auth/user_session.dart';
 import '../../core/content/content_models.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/network/api_client.dart';
 import '../../core/network/content_api.dart';
 import '../../core/network/api_response.dart';
 
@@ -200,7 +202,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-               Icon(Icons.info_outline, size: 46, color: AppTheme.muted),
+              Icon(Icons.info_outline, size: 46, color: AppTheme.muted),
               const SizedBox(height: 12),
               Text(_error!, textAlign: TextAlign.center),
               const SizedBox(height: 16),
@@ -249,13 +251,17 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 5),
                           decoration: BoxDecoration(
-                            color: const Color(0xffecfeff),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .secondaryContainer,
                             borderRadius: BorderRadius.circular(99),
                           ),
-                          child: const Text(
+                          child: Text(
                             'AI生成健康科普 · 仅供生活健康参考',
                             style: TextStyle(
-                              color: Color(0xff0e7490),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSecondaryContainer,
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -264,7 +270,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                       if (detail.sourceType == 'ai') const SizedBox(height: 16),
                       Text(
                         detail.title,
-                        style:  TextStyle(
+                        style: TextStyle(
                           color: AppTheme.ink,
                           fontSize: 28,
                           height: 1.35,
@@ -277,14 +283,13 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                             ? ''
                             : DateFormat('yyyy年MM月dd日 HH:mm')
                                 .format(detail.publishedAt!),
-                        style:  TextStyle(
-                            color: AppTheme.muted, fontSize: 13),
+                        style: TextStyle(color: AppTheme.muted, fontSize: 13),
                       ),
                       if (detail.summary.isNotEmpty) ...[
                         const SizedBox(height: 18),
                         Text(
                           detail.summary,
-                          style:  TextStyle(
+                          style: TextStyle(
                             color: AppTheme.muted,
                             fontSize: 16,
                             height: 1.7,
@@ -298,7 +303,7 @@ class _ContentDetailPageState extends State<ContentDetailPage> {
                         HtmlWidget(
                           detail.bodyHtml,
                           baseUrl: _api.apiBaseUri,
-                          textStyle:  TextStyle(
+                          textStyle: TextStyle(
                             color: AppTheme.ink,
                             fontSize: 16,
                             height: 1.75,
@@ -355,10 +360,9 @@ class _ContentInteractionSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (error != null && interaction == null) {
       return Row(children: [
-         Icon(Icons.info_outline, color: AppTheme.muted),
+        Icon(Icons.info_outline, color: AppTheme.muted),
         const SizedBox(width: 8),
-        Expanded(
-            child: Text(error!, style:  TextStyle(color: AppTheme.muted))),
+        Expanded(child: Text(error!, style: TextStyle(color: AppTheme.muted))),
         TextButton(onPressed: onRetry, child: const Text('重试')),
       ]);
     }
@@ -413,7 +417,7 @@ class _ContentInteractionSection extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         if (data.comments.isEmpty)
-           Padding(
+          Padding(
             padding: EdgeInsets.symmetric(vertical: 20),
             child: Center(
                 child: Text('还没有评论', style: TextStyle(color: AppTheme.muted))),
@@ -431,37 +435,59 @@ class _CommentRow extends StatelessWidget {
   final ContentComment comment;
   final ValueChanged<ContentComment> onDelete;
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          CircleAvatar(
-              radius: 18, child: Text(comment.authorName.characters.first)),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Row(children: [
-                  Expanded(
-                      child: Text(comment.authorName,
-                          style: const TextStyle(fontWeight: FontWeight.w700))),
-                  if (comment.isMine)
-                    IconButton(
-                      tooltip: '删除评论',
-                      onPressed: () => onDelete(comment),
-                      icon: const Icon(Icons.delete_outline, size: 20),
-                    ),
-                ]),
-                Text(comment.content, style: const TextStyle(height: 1.5)),
-                if (comment.createdAt != null) ...[
-                  const SizedBox(height: 4),
-                  Text(DateFormat('MM-dd HH:mm').format(comment.createdAt!),
-                      style:
-                           TextStyle(color: AppTheme.muted, fontSize: 12)),
-                ],
-              ])),
-        ]),
-      );
+  Widget build(BuildContext context) {
+    final avatar = _commentAvatarProvider(comment.avatarUrl);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        CircleAvatar(
+          radius: 18,
+          foregroundImage: avatar,
+          onForegroundImageError: avatar == null ? null : (_, __) {},
+          child: Text(_commentInitial(comment.authorName)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(
+                child: Text(comment.authorName,
+                    style: const TextStyle(fontWeight: FontWeight.w700))),
+            if (comment.isMine)
+              IconButton(
+                tooltip: '删除评论',
+                onPressed: () => onDelete(comment),
+                icon: const Icon(Icons.delete_outline, size: 20),
+              ),
+          ]),
+          Text(comment.content, style: const TextStyle(height: 1.5)),
+          if (comment.createdAt != null) ...[
+            const SizedBox(height: 4),
+            Text(DateFormat('MM-dd HH:mm').format(comment.createdAt!),
+                style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+          ],
+        ])),
+      ]),
+    );
+  }
+}
+
+ImageProvider<Object>? _commentAvatarProvider(String avatarUrl) {
+  final objectKey = Uri.tryParse(avatarUrl)?.queryParameters['objectKey'];
+  final token = UserSession.instance.accessToken;
+  if (objectKey == null || objectKey.isEmpty || token == null) return null;
+  final baseUrl =
+      sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
+  return NetworkImage(
+    '$baseUrl/files/avatar?objectKey=${Uri.encodeQueryComponent(objectKey)}',
+    headers: {'Authorization': 'Bearer $token'},
+  );
+}
+
+String _commentInitial(String name) {
+  final value = name.trim();
+  return value.isEmpty ? '健' : value.characters.first;
 }
 
 class _CardContent extends StatelessWidget {

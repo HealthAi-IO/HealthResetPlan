@@ -20,6 +20,7 @@ import '../../core/network/file_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import '../../core/widgets/health_ui.dart';
 
 const _aiDoctorDisclaimer = 'AI 不能代替医生诊断，只提供健康管理建议；如有异常结果、不适症状或用药调整需求，请及时咨询医生。';
 
@@ -48,6 +49,23 @@ class _OcrIndicator {
   final String unit;
   final String referenceRange;
   final String status;
+
+  _OcrIndicator copyWith({
+    String? category,
+    String? name,
+    String? value,
+    String? unit,
+    String? referenceRange,
+    String? status,
+  }) =>
+      _OcrIndicator(
+        category: category ?? this.category,
+        name: name ?? this.name,
+        value: value ?? this.value,
+        unit: unit ?? this.unit,
+        referenceRange: referenceRange ?? this.referenceRange,
+        status: status ?? this.status,
+      );
 
   factory _OcrIndicator.fromJson(Map<String, dynamic> json) => _OcrIndicator(
         category: json['category'] as String? ?? '其他',
@@ -92,6 +110,19 @@ class _OcrResult {
   final String riskMessage;
   final bool complete;
   final String warning;
+
+  _OcrResult copyWith({List<_OcrIndicator>? indicators}) => _OcrResult(
+        reportDate: reportDate,
+        indicators: indicators ?? this.indicators,
+        summary: summary,
+        analysisAdvice: analysisAdvice,
+        rawText: rawText,
+        provider: provider,
+        highRisk: highRisk,
+        riskMessage: riskMessage,
+        complete: complete,
+        warning: warning,
+      );
 
   factory _OcrResult.fromJson(Map<String, dynamic> json) {
     final normalized = _normalizeOcrJson(json);
@@ -326,7 +357,7 @@ class _ReportPageState extends State<ReportPage> {
     }
     setState(() {
       _analyzing = true;
-      _analyzeStage = 'Preparing image...';
+      _analyzeStage = '正在准备报告图片...';
     });
 
     try {
@@ -341,10 +372,10 @@ class _ReportPageState extends State<ReportPage> {
         throw const FormatException('仅支持 JPEG、PNG、WebP 或 GIF 图片');
       }
       if (!mounted) return;
-      setState(() => _analyzeStage = 'Uploading report for AI recognition...');
+      setState(() => _analyzeStage = '正在上传报告并识别...');
       final response = await _uploadReport(bytes, file.name, mimeType);
       if (!mounted) return;
-      setState(() => _analyzeStage = 'Extracting health indicators...');
+      setState(() => _analyzeStage = '正在整理健康指标...');
       final result = _OcrResult.fromJson(requireApiMap(response.data));
 
       if (!mounted) return;
@@ -420,9 +451,10 @@ class _ReportPageState extends State<ReportPage> {
       backgroundColor: Colors.transparent,
       builder: (_) => _OcrReviewSheet(
         result: result,
-        onConfirm: () {
+        onConfirm: (editedResult) {
           Navigator.pop(context);
-          _saveResult(result);
+          setState(() => _ocrResult = editedResult);
+          _saveResult(editedResult);
         },
         onDiscard: () => Navigator.pop(context),
       ),
@@ -771,42 +803,45 @@ class _ReportPageState extends State<ReportPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('报告识别')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            if (_aiRemaining != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text('今日报告识别剩余 $_aiRemaining / 5 次',
-                    style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+      body: HealthResponsiveContent(
+        maxWidth: 960,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              if (_aiRemaining != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text('今日报告识别剩余 $_aiRemaining / 5 次',
+                      style: TextStyle(color: AppTheme.muted, fontSize: 13)),
+                ),
+              _PickCard(
+                pickedImage: _pickedImage,
+                analyzing: _analyzing,
+                saving: _saving,
+                analyzeStage: _analyzeStage,
+                onPickGallery: () => _pickImage(ImageSource.gallery),
+                onPickCamera:
+                    _canUseCamera ? () => _pickImage(ImageSource.camera) : null,
+                onPickFile: _pickFile,
               ),
-            _PickCard(
-              pickedImage: _pickedImage,
-              analyzing: _analyzing,
-              saving: _saving,
-              analyzeStage: _analyzeStage,
-              onPickGallery: () => _pickImage(ImageSource.gallery),
-              onPickCamera:
-                  _canUseCamera ? () => _pickImage(ImageSource.camera) : null,
-              onPickFile: _pickFile,
-            ),
-            if (_ocrResult != null) ...[
+              if (_ocrResult != null) ...[
+                const SizedBox(height: 16),
+                _OcrSummaryCard(result: _ocrResult!),
+              ],
+              if (_saving) ...[
+                const SizedBox(height: 16),
+                const _ProgressCard(),
+              ],
               const SizedBox(height: 16),
-              _OcrSummaryCard(result: _ocrResult!),
+              _ReportHistoryPanel(
+                records: _reports,
+                onOpen: _showReportDetail,
+                onDelete: _deleteReport,
+              ),
             ],
-            if (_saving) ...[
-              const SizedBox(height: 16),
-              const _ProgressCard(),
-            ],
-            const SizedBox(height: 16),
-            _ReportHistoryPanel(
-              records: _reports,
-              onOpen: _showReportDetail,
-              onDelete: _deleteReport,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -998,24 +1033,24 @@ class _OcrSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final success = AppTheme.success(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.green.shade50,
+        color: colors.surfaceContainerLow,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.green.shade200),
+        border: Border.all(color: success.withValues(alpha: 0.45)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const AiContentNotice(feature: '体检报告识别'),
         const SizedBox(height: 10),
         Row(children: [
-          Icon(Icons.check_circle_outline,
-              size: 16, color: Colors.green.shade700),
+          Icon(Icons.check_circle_outline, size: 16, color: success),
           const SizedBox(width: 6),
           Text(
             '识别完成（${result.indicators.length} 项指标）',
-            style: TextStyle(
-                fontWeight: FontWeight.w700, color: Colors.green.shade700),
+            style: TextStyle(fontWeight: FontWeight.w700, color: success),
           ),
         ]),
         if (result.highRisk) ...[
@@ -1030,7 +1065,7 @@ class _OcrSummaryCard extends StatelessWidget {
         if (result.summary.isNotEmpty) ...[
           const SizedBox(height: 6),
           Text(result.summary,
-              style: TextStyle(fontSize: 13, color: AppTheme.muted)),
+              style: TextStyle(fontSize: 13, color: colors.onSurfaceVariant)),
         ],
         const SizedBox(height: 10),
         _AiAdviceCard(text: _withAiDoctorDisclaimer(result.analysisAdvice)),
@@ -1046,18 +1081,17 @@ class _AiAdviceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0277BD).withValues(alpha: 0.06),
+        color: colors.primaryContainer.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: const Color(0xFF0277BD).withValues(alpha: 0.18)),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.3)),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.psychology_outlined,
-            size: 16, color: Color(0xFF0277BD)),
+        Icon(Icons.psychology_outlined, size: 16, color: colors.primary),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -1065,7 +1099,7 @@ class _AiAdviceCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               height: 1.45,
-              color: AppTheme.muted,
+              color: colors.onPrimaryContainer,
             ),
           ),
         ),
@@ -1081,6 +1115,7 @@ class _ReportContentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -1090,7 +1125,7 @@ class _ReportContentCard extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(color: AppTheme.muted, height: 1.45),
+        style: TextStyle(color: colors.onSurfaceVariant, height: 1.45),
       ),
     );
   }
@@ -1101,23 +1136,23 @@ class _ProgressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF0277BD).withValues(alpha: 0.06),
+        color: colors.primaryContainer.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: const Color(0xFF0277BD).withValues(alpha: 0.2)),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.3)),
       ),
-      child: const Row(children: [
-        Icon(Icons.info_outline, size: 18, color: Color(0xFF0277BD)),
-        SizedBox(width: 12),
+      child: Row(children: [
+        Icon(Icons.info_outline, size: 18, color: colors.primary),
+        const SizedBox(width: 12),
         Expanded(
           child: Text(
             '确认保存后会写入本地报告库和健康指标库',
             style: TextStyle(
                 fontSize: 12,
-                color: Color(0xFF0277BD),
+                color: colors.onPrimaryContainer,
                 fontWeight: FontWeight.w600),
           ),
         ),
@@ -1126,7 +1161,7 @@ class _ProgressCard extends StatelessWidget {
   }
 }
 
-class _OcrReviewSheet extends StatelessWidget {
+class _OcrReviewSheet extends StatefulWidget {
   const _OcrReviewSheet({
     required this.result,
     required this.onConfirm,
@@ -1134,14 +1169,21 @@ class _OcrReviewSheet extends StatelessWidget {
   });
 
   final _OcrResult result;
-  final VoidCallback onConfirm;
+  final ValueChanged<_OcrResult> onConfirm;
   final VoidCallback onDiscard;
 
-  Color _statusColor(String status) => switch (status) {
-        'high' => Colors.red.shade600,
-        'low' => Colors.orange.shade700,
-        'normal' => Colors.green.shade700,
-        _ => AppTheme.muted,
+  @override
+  State<_OcrReviewSheet> createState() => _OcrReviewSheetState();
+}
+
+class _OcrReviewSheetState extends State<_OcrReviewSheet> {
+  late final List<_OcrIndicator> _indicators = [...widget.result.indicators];
+
+  Color _statusColor(BuildContext context, String status) => switch (status) {
+        'high' => Theme.of(context).colorScheme.error,
+        'low' => AppTheme.warning(context),
+        'normal' => AppTheme.success(context),
+        _ => Theme.of(context).colorScheme.onSurfaceVariant,
       };
 
   String _statusLabel(String status) => switch (status) {
@@ -1151,14 +1193,151 @@ class _OcrReviewSheet extends StatelessWidget {
         _ => '待核对',
       };
 
+  Future<void> _editIndicator(int index) async {
+    final indicator = _indicators[index];
+    final name = TextEditingController(text: indicator.name);
+    final value = TextEditingController(text: indicator.value);
+    final unit = TextEditingController(text: indicator.unit);
+    final reference = TextEditingController(text: indicator.referenceRange);
+    var status = indicator.status;
+    final edited = await showDialog<_OcrIndicator>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('修改识别指标'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(
+                controller: name,
+                decoration: const InputDecoration(labelText: '指标名称'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: value,
+                decoration: const InputDecoration(labelText: '检测结果'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: unit,
+                decoration: const InputDecoration(labelText: '单位'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reference,
+                decoration: const InputDecoration(labelText: '参考范围'),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue:
+                    const ['normal', 'high', 'low', 'unknown'].contains(status)
+                        ? status
+                        : 'unknown',
+                decoration: const InputDecoration(labelText: '状态'),
+                items: const [
+                  DropdownMenuItem(value: 'normal', child: Text('正常')),
+                  DropdownMenuItem(value: 'high', child: Text('偏高')),
+                  DropdownMenuItem(value: 'low', child: Text('偏低')),
+                  DropdownMenuItem(value: 'unknown', child: Text('待核对')),
+                ],
+                onChanged: (next) {
+                  if (next != null) setDialogState(() => status = next);
+                },
+              ),
+            ]),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (name.text.trim().isEmpty) return;
+                Navigator.pop(
+                  context,
+                  indicator.copyWith(
+                    name: name.text.trim(),
+                    value: value.text.trim(),
+                    unit: unit.text.trim(),
+                    referenceRange: reference.text.trim(),
+                    status: status,
+                  ),
+                );
+              },
+              child: const Text('保存修改'),
+            ),
+          ],
+        ),
+      ),
+    );
+    name.dispose();
+    value.dispose();
+    unit.dispose();
+    reference.dispose();
+    if (edited != null && mounted) {
+      setState(() => _indicators[index] = edited);
+    }
+  }
+
+  Future<void> _deleteIndicator(int index) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除这项指标？'),
+        content: Text('“${_indicators[index].name}”将不会保存到报告中。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _indicators.removeAt(index));
+    }
+  }
+
+  Future<void> _confirm() async {
+    final pending =
+        _indicators.where((item) => item.status == 'unknown').length;
+    if (pending > 0) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('仍有待核对指标'),
+          content: Text('还有 $pending 项指标未确认状态，仍然保存吗？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('继续核对'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('仍然保存'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    widget.onConfirm(widget.result.copyWith(indicators: [..._indicators]));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final byCategory = <String, List<_OcrIndicator>>{};
+    final result = widget.result;
+    final byCategory = <String, List<int>>{};
     final rawText = result.rawText.trim();
-    for (final indicator in result.indicators) {
+    for (var index = 0; index < _indicators.length; index++) {
+      final indicator = _indicators[index];
       (byCategory[indicator.category.isEmpty ? '其他' : indicator.category] ??=
               [])
-          .add(indicator);
+          .add(index);
     }
 
     return Container(
@@ -1173,7 +1352,7 @@ class _OcrReviewSheet extends StatelessWidget {
           width: 40,
           height: 4,
           decoration: BoxDecoration(
-            color: Colors.grey.shade300,
+            color: Theme.of(context).colorScheme.outlineVariant,
             borderRadius: BorderRadius.circular(999),
           ),
         ),
@@ -1227,7 +1406,7 @@ class _OcrReviewSheet extends StatelessWidget {
               _AiAdviceCard(
                   text: _withAiDoctorDisclaimer(result.analysisAdvice)),
               const SizedBox(height: 14),
-              if (result.indicators.isEmpty) ...[
+              if (_indicators.isEmpty) ...[
                 const Text(
                   '报告内容',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
@@ -1249,36 +1428,63 @@ class _OcrReviewSheet extends StatelessWidget {
                       ),
                     ),
                   ),
-                  for (final indicator in entry.value)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(children: [
-                        Expanded(
-                            child: Text(indicator.name,
-                                style: const TextStyle(fontSize: 13))),
-                        Text(
-                          '${indicator.value} ${indicator.unit}'.trim(),
-                          style: const TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: _statusColor(indicator.status)
-                                .withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            _statusLabel(indicator.status),
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: _statusColor(indicator.status),
-                              fontWeight: FontWeight.w700,
+                  for (final index in entry.value)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(children: [
+                        Row(children: [
+                          Expanded(
+                            child: Text(
+                              _indicators[index].name,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
-                        ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: _statusColor(
+                                      context, _indicators[index].status)
+                                  .withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              _statusLabel(_indicators[index].status),
+                              style: TextStyle(
+                                color: _statusColor(
+                                    context, _indicators[index].status),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ]),
+                        Row(children: [
+                          Expanded(
+                            child: Text(
+                              '${_indicators[index].value} ${_indicators[index].unit}'
+                                  .trim(),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '修改指标',
+                            onPressed: () => _editIndicator(index),
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                          IconButton(
+                            tooltip: '删除指标',
+                            onPressed: () => _deleteIndicator(index),
+                            icon: Icon(Icons.delete_outline,
+                                color: Theme.of(context).colorScheme.error),
+                          ),
+                        ]),
                       ]),
                     ),
                 ],
@@ -1290,14 +1496,14 @@ class _OcrReviewSheet extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
           child: Row(children: [
             Expanded(
-              child:
-                  OutlinedButton(onPressed: onDiscard, child: const Text('放弃')),
+              child: OutlinedButton(
+                  onPressed: widget.onDiscard, child: const Text('放弃')),
             ),
             const SizedBox(width: 12),
             Expanded(
               flex: 2,
               child: FilledButton.icon(
-                onPressed: onConfirm,
+                onPressed: _confirm,
                 icon: const Icon(Icons.save_outlined, size: 16),
                 label: const Text('保存结果'),
                 style: FilledButton.styleFrom(
@@ -1366,7 +1572,7 @@ class _ReportDetailSheet extends StatelessWidget {
           width: 40,
           height: 4,
           decoration: BoxDecoration(
-            color: Colors.grey.shade300,
+            color: Theme.of(context).colorScheme.outlineVariant,
             borderRadius: BorderRadius.circular(999),
           ),
         ),

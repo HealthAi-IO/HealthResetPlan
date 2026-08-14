@@ -62,16 +62,14 @@ class AiPlanGenerationController extends ChangeNotifier {
   }) async {
     try {
       final indicators = await _repository.loadIndicators(limit: 20);
-      result = await _aiApi
-          .generatePlan(
-            profile: profile,
-            recentIndicators: indicators,
-            provider: provider,
-            goal: goal,
-            goalDetail: goalDetail,
-            targetDate: targetDate,
-          )
-          .timeout(const Duration(seconds: 130));
+      result = await _aiApi.generatePlan(
+        profile: profile,
+        recentIndicators: indicators,
+        provider: provider,
+        goal: goal,
+        goalDetail: goalDetail,
+        targetDate: targetDate,
+      );
       status = AiPlanGenerationStatus.completed;
     } catch (caughtError) {
       error = caughtError;

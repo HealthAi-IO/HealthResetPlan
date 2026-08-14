@@ -179,6 +179,7 @@ class ContentApi {
       'authorName': UserSession.instance.name.trim().isEmpty
           ? '健康用户'
           : UserSession.instance.name.trim(),
+      'avatarUrl': UserSession.instance.avatarUrl,
       'content': content,
       'createdAt': DateTime.now().toIso8601String(),
       'isMine': true,

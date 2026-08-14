@@ -7,6 +7,7 @@ import '../../core/content/content_models.dart';
 import '../../core/content/site_message_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/content_api.dart';
+import '../../core/widgets/health_ui.dart';
 
 class MessageCenterPage extends StatefulWidget {
   const MessageCenterPage({super.key});
@@ -111,82 +112,85 @@ class _MessageCenterPageState extends State<MessageCenterPage> {
       ),
       body: _loading && _items.isEmpty
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _refresh,
-              child: _items.isEmpty
-                  ? ListView(
-                      children:  [
-                        SizedBox(height: 190),
-                        Icon(Icons.notifications_none,
-                            size: 52, color: AppTheme.muted),
-                        SizedBox(height: 14),
-                        Center(child: Text('暂无站内消息')),
-                      ],
-                    )
-                  : ListView.separated(
-                      controller: _controller,
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
-                      itemCount: _items.length + (_loadingMore ? 1 : 0),
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        if (index >= _items.length) {
-                          return const Center(
-                            child: Padding(
-                              padding: EdgeInsets.all(18),
-                              child: CircularProgressIndicator(),
+          : HealthResponsiveContent(
+              maxWidth: 900,
+              child: RefreshIndicator(
+                onRefresh: _refresh,
+                child: _items.isEmpty
+                    ? ListView(
+                        children: [
+                          SizedBox(height: 190),
+                          Icon(Icons.notifications_none,
+                              size: 52, color: AppTheme.muted),
+                          SizedBox(height: 14),
+                          Center(child: Text('暂无站内消息')),
+                        ],
+                      )
+                    : ListView.separated(
+                        controller: _controller,
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
+                        itemCount: _items.length + (_loadingMore ? 1 : 0),
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          if (index >= _items.length) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(18),
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          }
+                          final message = _items[index];
+                          return ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 850),
+                            child: Card(
+                              margin: EdgeInsets.zero,
+                              child: ListTile(
+                                onTap: () => _open(message),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 18, vertical: 10),
+                                leading: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    const CircleAvatar(
+                                      backgroundColor: Color(0xffecfeff),
+                                      child: Icon(Icons.auto_stories_outlined,
+                                          color: Color(0xff0e7490)),
+                                    ),
+                                    if (!message.read)
+                                      const Positioned(
+                                        right: -2,
+                                        top: -2,
+                                        child: CircleAvatar(
+                                          radius: 5,
+                                          backgroundColor: Color(0xffef4444),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                title: Text(
+                                  message.title,
+                                  style: TextStyle(
+                                    fontWeight: message.read
+                                        ? FontWeight.w600
+                                        : FontWeight.w800,
+                                  ),
+                                ),
+                                subtitle: Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    '${message.body}\n${message.createdAt == null ? '' : DateFormat('MM月dd日 HH:mm').format(message.createdAt!)}',
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                trailing: const Icon(Icons.chevron_right),
+                              ),
                             ),
                           );
-                        }
-                        final message = _items[index];
-                        return ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 850),
-                          child: Card(
-                            margin: EdgeInsets.zero,
-                            child: ListTile(
-                              onTap: () => _open(message),
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 18, vertical: 10),
-                              leading: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  const CircleAvatar(
-                                    backgroundColor: Color(0xffecfeff),
-                                    child: Icon(Icons.auto_stories_outlined,
-                                        color: Color(0xff0e7490)),
-                                  ),
-                                  if (!message.read)
-                                    const Positioned(
-                                      right: -2,
-                                      top: -2,
-                                      child: CircleAvatar(
-                                        radius: 5,
-                                        backgroundColor: Color(0xffef4444),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                              title: Text(
-                                message.title,
-                                style: TextStyle(
-                                  fontWeight: message.read
-                                      ? FontWeight.w600
-                                      : FontWeight.w800,
-                                ),
-                              ),
-                              subtitle: Padding(
-                                padding: const EdgeInsets.only(top: 6),
-                                child: Text(
-                                  '${message.body}\n${message.createdAt == null ? '' : DateFormat('MM月dd日 HH:mm').format(message.createdAt!)}',
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              trailing: const Icon(Icons.chevron_right),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                        },
+                      ),
+              ),
             ),
     );
   }

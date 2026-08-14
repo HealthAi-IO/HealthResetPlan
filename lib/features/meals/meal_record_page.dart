@@ -12,6 +12,8 @@ import '../../core/network/ai_api.dart';
 import '../../core/network/file_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
+import '../../core/widgets/health_ui.dart';
+import '../../core/widgets/numeric_picker_field.dart';
 import 'macro_ring.dart';
 
 const _proteinColor = Color(0xFF19B43B);
@@ -267,16 +269,24 @@ class _MealRecordPageState extends State<MealRecordPage> {
               controller: nameCtrl,
               decoration: const InputDecoration(labelText: '食材')),
           const SizedBox(height: 10),
-          TextField(
+          NumericPickerField(
             controller: weightCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: '重量（克）'),
+            label: '重量',
+            unit: '克',
+            min: 0,
+            max: 5000,
+            step: 5,
+            optional: true,
           ),
           const SizedBox(height: 10),
-          TextField(
+          NumericPickerField(
             controller: caloriesCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: '热量（kcal）'),
+            label: '热量',
+            unit: 'kcal',
+            min: 0,
+            max: 5000,
+            step: 10,
+            optional: true,
           ),
         ]),
         actions: [
@@ -323,16 +333,24 @@ class _MealRecordPageState extends State<MealRecordPage> {
               controller: nameCtrl,
               decoration: const InputDecoration(labelText: '食材')),
           const SizedBox(height: 10),
-          TextField(
+          NumericPickerField(
             controller: weightCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: '重量（克）'),
+            label: '重量',
+            unit: '克',
+            min: 0,
+            max: 5000,
+            step: 5,
+            optional: true,
           ),
           const SizedBox(height: 10),
-          TextField(
+          NumericPickerField(
             controller: caloriesCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: '热量（kcal）'),
+            label: '热量',
+            unit: 'kcal',
+            min: 0,
+            max: 5000,
+            step: 10,
+            optional: true,
           ),
         ]),
         actions: [
@@ -450,65 +468,75 @@ class _MealRecordPageState extends State<MealRecordPage> {
         defaultTargetPlatform == TargetPlatform.iOS;
     return Scaffold(
       appBar: AppBar(title: const Text('记录餐食')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
-        children: [
-          _UploadMealCard(
-            image: _image,
-            imageName: _image?.name ?? widget.record?.imagePath,
-            loading: _loading,
-            canUseCamera: canUseCamera,
-            onCamera: () => _pick(ImageSource.camera),
-            onGallery: () => _pick(ImageSource.gallery),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            _MealErrorCard(message: _error!),
+      body: HealthResponsiveContent(
+        maxWidth: 860,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+          children: [
+            _UploadMealCard(
+              image: _image,
+              imageName: _image?.name ?? widget.record?.imagePath,
+              loading: _loading,
+              canUseCamera: canUseCamera,
+              onCamera: () => _pick(ImageSource.camera),
+              onGallery: () => _pick(ImageSource.gallery),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              _MealErrorCard(message: _error!),
+            ],
+            const SizedBox(height: 14),
+            _MealSummaryCard(
+              nameCtrl: _nameCtrl,
+              mealType: _mealType,
+              onMealTypeChanged: (value) => setState(() => _mealType = value),
+              totalCalories: _totalCalories,
+              proteinG: _proteinG,
+              carbsG: _carbsG,
+              fatG: _fatG,
+              healthScore: _healthScore,
+              isAiRecognized: _provider.isNotEmpty,
+            ),
+            const SizedBox(height: 14),
+            _FoodListCard(
+              foods: _foods,
+              onEdit: _editFood,
+              onAdd: _addFood,
+            ),
+            const SizedBox(height: 14),
+            _MealMetaCard(
+              portion: _portion,
+              onPortionChanged: _setPortion,
+              eatenAt: _eatenAt,
+              onTimeTap: _pickMealTime,
+              diningType: _diningType,
+              onDiningTypeChanged: (value) =>
+                  setState(() => _diningType = value),
+              costCtrl: _costCtrl,
+              merchantCtrl: _merchantCtrl,
+              noteCtrl: _noteCtrl,
+            ),
+            if (_provider.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text('识别服务：$_provider',
+                  style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+            ],
           ],
-          const SizedBox(height: 14),
-          _MealSummaryCard(
-            nameCtrl: _nameCtrl,
-            mealType: _mealType,
-            onMealTypeChanged: (value) => setState(() => _mealType = value),
-            totalCalories: _totalCalories,
-            proteinG: _proteinG,
-            carbsG: _carbsG,
-            fatG: _fatG,
-            healthScore: _healthScore,
-            isAiRecognized: _provider.isNotEmpty,
-          ),
-          const SizedBox(height: 14),
-          _FoodListCard(
-            foods: _foods,
-            onEdit: _editFood,
-            onAdd: _addFood,
-          ),
-          const SizedBox(height: 14),
-          _MealMetaCard(
-            portion: _portion,
-            onPortionChanged: _setPortion,
-            eatenAt: _eatenAt,
-            onTimeTap: _pickMealTime,
-            diningType: _diningType,
-            onDiningTypeChanged: (value) => setState(() => _diningType = value),
-            costCtrl: _costCtrl,
-            merchantCtrl: _merchantCtrl,
-            noteCtrl: _noteCtrl,
-          ),
-          if (_provider.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text('识别服务：$_provider',
-                style:  TextStyle(color: AppTheme.muted, fontSize: 12)),
-          ],
-        ],
+        ),
       ),
       bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: FilledButton.icon(
-            onPressed: _loading || _foods.isEmpty ? null : _save,
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('保存到本餐'),
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: FilledButton.icon(
+                onPressed: _loading || _foods.isEmpty ? null : _save,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('保存到本餐'),
+              ),
+            ),
           ),
         ),
       ),
@@ -558,22 +586,25 @@ class _MealDetailPageState extends State<MealDetailPage> {
     final totalMacro = record.proteinG + record.carbsG + record.fatG;
     return Scaffold(
       appBar: AppBar(title: Text(record.name)),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        children: [
-          _GlycemicLoadCard(value: record.glycemicLoad),
-          const SizedBox(height: 14),
-          _NutritionRings(
-            proteinG: record.proteinG,
-            carbsG: record.carbsG,
-            fatG: record.fatG,
-            totalMacro: totalMacro <= 0 ? 1 : totalMacro,
-          ),
-          const SizedBox(height: 14),
-          _NutritionTable(nutrition: record.nutrition),
-          const SizedBox(height: 14),
-          _FoodListCard(foods: record.foods, onEdit: null),
-        ],
+      body: HealthResponsiveContent(
+        maxWidth: 860,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          children: [
+            _GlycemicLoadCard(value: record.glycemicLoad),
+            const SizedBox(height: 14),
+            _NutritionRings(
+              proteinG: record.proteinG,
+              carbsG: record.carbsG,
+              fatG: record.fatG,
+              totalMacro: totalMacro <= 0 ? 1 : totalMacro,
+            ),
+            const SizedBox(height: 14),
+            _NutritionTable(nutrition: record.nutrition),
+            const SizedBox(height: 14),
+            _FoodListCard(foods: record.foods, onEdit: null),
+          ],
+        ),
       ),
     );
   }
@@ -603,10 +634,10 @@ class _UploadMealCard extends StatelessWidget {
         const Text('拍照识别食物热量',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
-         Text('上传餐食照片后，AI 会拆分食材、估算重量、热量和营养素。',
+        Text('上传餐食照片后，AI 会拆分食材、估算重量、热量和营养素。',
             style: TextStyle(color: AppTheme.muted, height: 1.4)),
         const SizedBox(height: 6),
-         Text(
+        Text(
           '图片需小于 10MB，建议光线充足、食物完整入镜；系统会自动压缩后上传。',
           style: TextStyle(color: AppTheme.muted, fontSize: 12, height: 1.4),
         ),
@@ -655,7 +686,7 @@ class _UploadMealCard extends StatelessWidget {
           Text(imageName!,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style:  TextStyle(color: AppTheme.muted, fontSize: 12)),
+              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
         ],
         if (loading) ...[
           const SizedBox(height: 14),
@@ -804,7 +835,7 @@ class _MealMetaCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-         Text('吃了多少？', style: TextStyle(color: AppTheme.muted)),
+        Text('吃了多少？', style: TextStyle(color: AppTheme.muted)),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -823,7 +854,7 @@ class _MealMetaCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-         Text('就餐方式', style: TextStyle(color: AppTheme.muted)),
+        Text('就餐方式', style: TextStyle(color: AppTheme.muted)),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -844,13 +875,14 @@ class _MealMetaCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 14),
-        TextField(
+        NumericPickerField(
           controller: costCtrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: '本餐花费（元，选填）',
-            prefixIcon: Icon(Icons.payments_outlined),
-          ),
+          label: '本餐花费（选填）',
+          unit: '元',
+          min: 0,
+          max: 5000,
+          step: 1,
+          optional: true,
         ),
         const SizedBox(height: 12),
         TextField(
@@ -900,7 +932,7 @@ class _FoodListCard extends StatelessWidget {
               label: const Text('添加'),
             )
           else if (onEdit != null)
-             Text('点击条目编辑',
+            Text('点击条目编辑',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12)),
         ]),
         const SizedBox(height: 10),
@@ -912,7 +944,7 @@ class _FoodListCard extends StatelessWidget {
               color: Theme.of(context).scaffoldBackgroundColor,
               borderRadius: BorderRadius.circular(14),
             ),
-            child:  Text(
+            child: Text(
               '还没有识别到食材。请重新拍照/选择图片，或手动添加食材。',
               style: TextStyle(color: AppTheme.muted, height: 1.4),
             ),
@@ -924,7 +956,7 @@ class _FoodListCard extends StatelessWidget {
               onTap: onEdit == null ? null : () => onEdit!(i),
               leading: CircleAvatar(
                 backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.10),
-                child:  Icon(Icons.restaurant_outlined,
+                child: Icon(Icons.restaurant_outlined,
                     color: AppTheme.deepBlue, size: 18),
               ),
               title: Text(foods[i].name,
@@ -1007,7 +1039,7 @@ class _GlycemicLoadCard extends StatelessWidget {
           ]);
         }),
         const SizedBox(height: 12),
-         Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
           Text('≤10\n低',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppTheme.muted)),
@@ -1109,7 +1141,8 @@ class _SmallNutrientRing extends StatelessWidget {
             value: value.clamp(0, 1),
             strokeWidth: 6,
             color: color,
-            backgroundColor: const Color(0xFFE5E7EB),
+            backgroundColor:
+                Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
           Column(mainAxisSize: MainAxisSize.min, children: [
             Text('${grams.toStringAsFixed(1)}克',

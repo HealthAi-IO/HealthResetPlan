@@ -11,6 +11,7 @@ class UserSession extends ChangeNotifier {
 
   // 公开存储（昵称）
   static const _kName = 'user_display_name';
+  static const _kAvatarUrl = 'user_avatar_url';
   static const _kUserId = 'user_account_id';
   static const _kLegacyAccountIdentifier = 'user_account_identifier';
   static const _kAccountLoginRequired = 'account_login_required';
@@ -32,6 +33,7 @@ class UserSession extends ChangeNotifier {
   );
 
   String _name = '';
+  String _avatarUrl = '';
   String? _userId;
   String? _accessToken;
   String? _refreshToken;
@@ -40,6 +42,7 @@ class UserSession extends ChangeNotifier {
   bool _sessionExpired = false;
 
   String get name => _name;
+  String get avatarUrl => _avatarUrl;
   String? get userId => _userId;
   String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
@@ -57,6 +60,7 @@ class UserSession extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _name = prefs.getString(_kName) ?? '';
+    _avatarUrl = prefs.getString(_kAvatarUrl) ?? '';
     _userId = prefs.getString(_kUserId);
     await prefs.remove(_kLegacyAccountIdentifier);
 
@@ -75,6 +79,23 @@ class UserSession extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setAccountDisplay({String? nickname, String? avatarUrl}) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (nickname != null && nickname.trim().isNotEmpty) {
+      _name = nickname.trim();
+      await prefs.setString(_kName, _name);
+    }
+    if (avatarUrl != null) {
+      _avatarUrl = avatarUrl.trim();
+      if (_avatarUrl.isEmpty) {
+        await prefs.remove(_kAvatarUrl);
+      } else {
+        await prefs.setString(_kAvatarUrl, _avatarUrl);
+      }
+    }
+    notifyListeners();
+  }
+
   /// 账号登录成功后调用：保存 userId + Token
   Future<void> setAccountSession({
     required String userId,
@@ -83,6 +104,7 @@ class UserSession extends ChangeNotifier {
     String? nickname,
     bool? passwordPromptRequired,
   }) async {
+    final accountChanged = _userId != null && _userId != userId;
     _userId = userId;
     _accessToken = accessToken;
     _refreshToken = refreshToken;
@@ -94,6 +116,10 @@ class UserSession extends ChangeNotifier {
     if (nickname != null && nickname.isNotEmpty) _name = nickname;
 
     final prefs = await SharedPreferences.getInstance();
+    if (accountChanged) {
+      _avatarUrl = '';
+      await prefs.remove(_kAvatarUrl);
+    }
     await prefs.setString(_kUserId, userId);
     if (nickname != null && nickname.isNotEmpty) {
       await prefs.setString(_kName, _name);
@@ -117,6 +143,7 @@ class UserSession extends ChangeNotifier {
     _userId = null;
     _accessToken = null;
     _refreshToken = null;
+    _avatarUrl = '';
     _passwordPromptRequired = false;
     _accountLoginRequired = true;
     _sessionExpired = sessionExpired;
@@ -124,6 +151,7 @@ class UserSession extends ChangeNotifier {
     await prefs.remove(_kUserId);
     await prefs.remove(_kLegacyAccountIdentifier);
     await prefs.remove(_kPasswordPromptRequired);
+    await prefs.remove(_kAvatarUrl);
     await prefs.setBool(_kAccountLoginRequired, true);
     await prefs.setBool(_kSessionExpired, sessionExpired);
     await _secureStorage.delete(key: _kAccess);

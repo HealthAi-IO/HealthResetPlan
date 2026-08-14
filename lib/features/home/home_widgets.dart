@@ -7,6 +7,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
     required this.meals,
     required this.todayPlans,
     required this.todayClocks,
+    required this.taskTypes,
     required this.doneTypes,
     required this.completion,
     required this.todayLabel,
@@ -27,6 +28,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
   final List<MealRecordData> meals;
   final List<PlanRecordData> todayPlans;
   final List<ClockRecordData> todayClocks;
+  final Set<String> taskTypes;
   final Set<String> doneTypes;
   final double completion;
   final String todayLabel;
@@ -60,15 +62,8 @@ class _DesktopHomeDashboard extends StatelessWidget {
             weightTime.year == now.year &&
             weightTime.month == now.month &&
             weightTime.day == now.day);
-    final completed = [
-      mealTypes.contains('breakfast'),
-      mealTypes.contains('lunch'),
-      mealTypes.contains('dinner'),
-      doneTypes.contains('exercise'),
-      doneTypes.contains('water'),
-      weightDone,
-    ].where((done) => done).length;
-    final taskCompletion = completed / 6;
+    final completed = doneTypes.intersection(taskTypes).length;
+    final taskCompletion = completion;
 
     return RefreshIndicator(
       onRefresh: () => onRefresh(),
@@ -140,49 +135,49 @@ class _DesktopHomeDashboard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           const SizedBox(height: 14),
-                          _DesktopTaskRow(
-                            icon: Icons.breakfast_dining_outlined,
-                            label: '早餐',
-                            detail: _mealPlanDetail(todayPlans, '早餐'),
-                            done: mealTypes.contains('breakfast'),
-                            onTap: () => onMealRecord('breakfast'),
-                          ),
-                          _DesktopTaskRow(
-                            icon: Icons.lunch_dining_outlined,
-                            label: '午餐',
-                            detail: _mealPlanDetail(todayPlans, '午餐'),
-                            done: mealTypes.contains('lunch'),
-                            onTap: () => onMealRecord('lunch'),
-                          ),
-                          _DesktopTaskRow(
-                            icon: Icons.dinner_dining_outlined,
-                            label: '晚餐',
-                            detail: _mealPlanDetail(todayPlans, '晚餐'),
-                            done: mealTypes.contains('dinner'),
-                            onTap: () => onMealRecord('dinner'),
-                          ),
-                          _DesktopTaskRow(
-                            icon: Icons.directions_run_outlined,
-                            label: '运动计划',
-                            detail: _planDetail(todayPlans, 'exercise'),
-                            done: doneTypes.contains('exercise'),
-                            onTap: onOpenClock,
-                          ),
-                          _DesktopTaskRow(
-                            icon: Icons.water_drop_outlined,
-                            label: '饮水目标',
-                            detail: '目标 2000 ml',
-                            done: doneTypes.contains('water'),
-                            onTap: onOpenClock,
-                          ),
-                          _DesktopTaskRow(
-                            icon: Icons.scale_outlined,
-                            label: '记录体重',
-                            detail: weight?.displayValue ?? '今日尚未记录',
-                            done: weightDone,
-                            onTap: onAddIndicator,
-                            showDivider: false,
-                          ),
+                          if (taskTypes.contains('meal'))
+                            _DesktopTaskRow(
+                              icon: Icons.restaurant_outlined,
+                              label: '记录饮食',
+                              detail: mealTypes.isEmpty
+                                  ? '今天尚未记录'
+                                  : '已记录 ${mealTypes.length} 餐',
+                              done: doneTypes.contains('meal'),
+                              onTap: () => onMealRecord('lunch'),
+                            ),
+                          if (taskTypes.contains('exercise'))
+                            _DesktopTaskRow(
+                              icon: Icons.directions_run_outlined,
+                              label: '运动计划',
+                              detail: _planDetail(todayPlans, 'exercise'),
+                              done: doneTypes.contains('exercise'),
+                              onTap: onOpenClock,
+                            ),
+                          if (taskTypes.contains('medicine'))
+                            _DesktopTaskRow(
+                              icon: Icons.medication_outlined,
+                              label: '用药确认',
+                              detail: '按提醒逐项确认',
+                              done: doneTypes.contains('medicine'),
+                              onTap: onOpenClock,
+                            ),
+                          if (taskTypes.contains('water'))
+                            _DesktopTaskRow(
+                              icon: Icons.water_drop_outlined,
+                              label: '饮水目标',
+                              detail: '目标 2000 ml',
+                              done: doneTypes.contains('water'),
+                              onTap: onOpenClock,
+                            ),
+                          if (taskTypes.contains('weight'))
+                            _DesktopTaskRow(
+                              icon: Icons.scale_outlined,
+                              label: '记录体重',
+                              detail: weight?.displayValue ?? '今日尚未记录',
+                              done: weightDone,
+                              onTap: onAddIndicator,
+                              showDivider: false,
+                            ),
                           const SizedBox(height: 10),
                           SizedBox(
                             width: double.infinity,
@@ -365,11 +360,6 @@ class _DesktopHomeDashboard extends StatelessWidget {
     final plan = plans.where((item) => item.type == type).firstOrNull;
     if (plan == null) return '暂无计划';
     return plan.summary.isEmpty ? plan.label : plan.summary;
-  }
-
-  static String _mealPlanDetail(List<PlanRecordData> plans, String meal) {
-    final detail = _planDetail(plans, 'meal');
-    return detail == '暂无计划' ? '点击记录$meal' : detail;
   }
 }
 
@@ -1284,33 +1274,97 @@ class _HomeMessageButton extends StatelessWidget {
 
 class _DashboardHero extends StatelessWidget {
   const _DashboardHero({
+    required this.data,
     required this.completion,
+    required this.taskTypes,
     required this.doneTypes,
+    required this.skippedTypes,
+    required this.snoozedTasks,
+    required this.nextTaskType,
     required this.onNextAction,
+    required this.onLater,
+    required this.onSkip,
   });
 
+  final HealthDashboardData? data;
   final double completion;
+  final Set<String> taskTypes;
   final Set<String> doneTypes;
+  final Set<String> skippedTypes;
+  final Map<String, DateTime> snoozedTasks;
+  final String? nextTaskType;
   final VoidCallback onNextAction;
+  final VoidCallback? onLater;
+  final VoidCallback? onSkip;
 
   static const _clockItems = [
     ('meal', '饮食', Icons.restaurant_outlined),
     ('exercise', '运动', Icons.directions_run_outlined),
     ('medicine', '用药', Icons.medication_outlined),
     ('weight', '称重', Icons.scale_outlined),
+    ('water', '饮水', Icons.water_drop_outlined),
+    ('quit_smoking', '戒烟', Icons.smoke_free_outlined),
   ];
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final primary = colors.primary;
-    final nextAction = !doneTypes.contains('meal')
-        ? '记录今天的饮食'
-        : !doneTypes.contains('weight')
-            ? '记录一次体重'
-            : completion < 1
-                ? '完成下一项打卡'
-                : '查看明天的计划';
+    final pendingTypes = taskTypes.difference({...doneTypes, ...skippedTypes});
+    final snoozedUntil = pendingTypes
+        .map((type) => snoozedTasks[type])
+        .whereType<DateTime>()
+        .where((value) => value.isAfter(DateTime.now()))
+        .toList()
+      ..sort();
+    final nextAction = switch (nextTaskType) {
+      'meal' => '记录今天的饮食',
+      'weight' => '记录一次体重',
+      'exercise' => '完成今天的运动',
+      'water' => '记录今天的饮水',
+      _ when completion < 1 && snoozedUntil.isNotEmpty =>
+        '任务已延后至 ${DateFormat('HH:mm').format(snoozedUntil.first)}',
+      _ => '查看明天的计划',
+    };
+    final weights = (data?.indicators ?? const <HealthIndicatorEntry>[])
+        .where((item) => item.type == 'weight')
+        .toList();
+    final latestWeight = weights.firstOrNull;
+    final previousWeight = weights.skip(1).firstOrNull;
+    final latestWeightValue = latestWeight?.numericTrendValue;
+    final previousWeightValue = previousWeight?.numericTrendValue;
+    final weightDelta = latestWeightValue != null && previousWeightValue != null
+        ? latestWeightValue - previousWeightValue
+        : null;
+    final weightTrend = weightDelta == null
+        ? null
+        : weightDelta.abs() < 0.05
+            ? '与上次持平'
+            : weightDelta < 0
+                ? '较上次下降 ${weightDelta.abs().toStringAsFixed(1)} kg'
+                : '较上次上升 ${weightDelta.toStringAsFixed(1)} kg';
+    final details = <String, ({String primary, String? secondary})>{
+      for (final type in doneTypes) type: (primary: '今日已完成', secondary: null),
+      if (doneTypes.contains('meal'))
+        'meal': (primary: '今日已记录', secondary: null),
+      if (doneTypes.contains('medicine'))
+        'medicine': (primary: '今日已确认', secondary: null),
+      if (doneTypes.contains('weight') && latestWeight != null)
+        'weight': (
+          primary: latestWeight.displayValue,
+          secondary: weightTrend,
+        ),
+      for (final type in skippedTypes)
+        type: (primary: '今日已跳过', secondary: null),
+      for (final entry in snoozedTasks.entries)
+        if (entry.value.isAfter(DateTime.now()))
+          entry.key: (
+            primary: '已延后',
+            secondary: '将在 ${DateFormat('HH:mm').format(entry.value)} 提醒',
+          ),
+    };
+    final visibleItems =
+        _clockItems.where((item) => taskTypes.contains(item.$1)).toList();
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1352,17 +1406,49 @@ class _DashboardHero extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          Row(
+          Column(
             children: [
-              for (var index = 0; index < _clockItems.length; index++) ...[
-                Expanded(
-                  child: _HomeStatusItem(
-                    icon: _clockItems[index].$3,
-                    label: _clockItems[index].$2,
-                    done: doneTypes.contains(_clockItems[index].$1),
+              for (var index = 0; index < visibleItems.length; index += 2) ...[
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: HomeStatusItem(
+                          icon: visibleItems[index].$3,
+                          label: visibleItems[index].$2,
+                          done: doneTypes.contains(visibleItems[index].$1),
+                          skipped:
+                              skippedTypes.contains(visibleItems[index].$1),
+                          primaryText: details[visibleItems[index].$1]?.primary,
+                          secondaryText:
+                              details[visibleItems[index].$1]?.secondary,
+                          emphasizePrimary: visibleItems[index].$1 == 'weight',
+                        ),
+                      ),
+                      if (index + 1 < visibleItems.length) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: HomeStatusItem(
+                            icon: visibleItems[index + 1].$3,
+                            label: visibleItems[index + 1].$2,
+                            done:
+                                doneTypes.contains(visibleItems[index + 1].$1),
+                            skipped: skippedTypes
+                                .contains(visibleItems[index + 1].$1),
+                            primaryText:
+                                details[visibleItems[index + 1].$1]?.primary,
+                            secondaryText:
+                                details[visibleItems[index + 1].$1]?.secondary,
+                            emphasizePrimary:
+                                visibleItems[index + 1].$1 == 'weight',
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                if (index < _clockItems.length - 1) const SizedBox(width: 8),
+                if (index + 2 < visibleItems.length) const SizedBox(height: 8),
               ],
             ],
           ),
@@ -1370,61 +1456,121 @@ class _DashboardHero extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: onNextAction,
+              onPressed:
+                  nextTaskType == null && completion < 1 ? null : onNextAction,
               icon: const Icon(Icons.arrow_forward_rounded),
               label: Text(nextAction),
             ),
           ),
+          if (nextTaskType != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(onPressed: onLater, child: const Text('稍后')),
+                const SizedBox(width: 8),
+                TextButton(onPressed: onSkip, child: const Text('跳过今天')),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _HomeStatusItem extends StatelessWidget {
-  const _HomeStatusItem({
+class HomeStatusItem extends StatelessWidget {
+  const HomeStatusItem({
+    super.key,
     required this.icon,
     required this.label,
     required this.done,
+    required this.skipped,
+    this.primaryText,
+    this.secondaryText,
+    this.emphasizePrimary = false,
   });
 
   final IconData icon;
   final String label;
   final bool done;
+  final bool skipped;
+  final String? primaryText;
+  final String? secondaryText;
+  final bool emphasizePrimary;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-      decoration: BoxDecoration(
-        color: done
-            ? colors.primaryContainer.withValues(alpha: 0.8)
-            : colors.surface.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
+    final stateIcon = done
+        ? Icons.check_rounded
+        : skipped
+            ? Icons.remove_rounded
+            : Icons.schedule_rounded;
+    final stateColor = done ? colors.primary : colors.onSurfaceVariant;
+    final displayPrimary = primaryText ?? '待记录';
+
+    return Semantics(
+      label:
+          [label, displayPrimary, secondaryText].whereType<String>().join('，'),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 104),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
           color: done
-              ? colors.primary.withValues(alpha: 0.38)
-              : colors.outlineVariant,
+              ? colors.primaryContainer.withValues(alpha: 0.62)
+              : skipped
+                  ? colors.surfaceContainerHighest
+                  : colors.surface.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: done
+                ? colors.primary.withValues(alpha: 0.32)
+                : colors.outlineVariant,
+          ),
         ),
-      ),
-      child: Column(
-        children: [
-          Icon(
-            done ? Icons.check_rounded : icon,
-            color: done ? colors.primary : colors.onSurfaceVariant,
-          ),
-          const SizedBox(height: 5),
-          Text(
-            label,
-            maxLines: 1,
-            style: TextStyle(
-              color: done ? colors.primary : colors.onSurfaceVariant,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: stateColor, size: 22),
+                const Spacer(),
+                Icon(stateIcon, color: stateColor, size: 18),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 10),
+            Text(
+              label,
+              style: TextStyle(
+                color: done ? colors.primary : colors.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              displayPrimary,
+              style: TextStyle(
+                color: colors.onSurface,
+                fontSize: emphasizePrimary ? 18 : 13,
+                fontWeight:
+                    emphasizePrimary ? FontWeight.w800 : FontWeight.w600,
+                height: 1.25,
+              ),
+            ),
+            if (secondaryText != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                secondaryText!,
+                style: TextStyle(
+                  color: colors.onSurfaceVariant,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1639,16 +1785,18 @@ class _TodayPlanCard extends StatelessWidget {
   const _TodayPlanCard(
       {required this.exercise,
       required this.measurement,
+      required this.meal,
       required this.onGenerate,
       required this.onViewAll});
   final PlanRecordData? exercise;
   final PlanRecordData? measurement;
+  final PlanRecordData? meal;
   final VoidCallback onGenerate;
   final VoidCallback onViewAll;
 
   @override
   Widget build(BuildContext context) {
-    final hasPlan = exercise != null || measurement != null;
+    final hasPlan = exercise != null || measurement != null || meal != null;
     final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1685,6 +1833,15 @@ class _TodayPlanCard extends StatelessWidget {
             ),
           ),
         ] else ...[
+          if (meal != null)
+            _PlanSummaryRow(
+              type: '饮食',
+              icon: Icons.restaurant_outlined,
+              color: Colors.orange,
+              summary: meal!.summary,
+            ),
+          if (meal != null && (exercise != null || measurement != null))
+            const SizedBox(height: 8),
           if (exercise != null)
             _PlanSummaryRow(
                 type: '运动',
@@ -1870,7 +2027,7 @@ class _FoodDiaryPanel extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFFF7FBFF),
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(18),
           ),
           child: Column(children: [
@@ -2599,6 +2756,7 @@ class _SeniorTodayTasks extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final occurrences = <_SeniorReminderOccurrence>[];
+    final occurrenceKeys = <String>{};
     for (final reminder in reminders) {
       if (!reminder.isEnabled || !reminder.occursOn(now)) continue;
       for (final time in reminder.dailyTimes) {
@@ -2609,6 +2767,9 @@ class _SeniorTodayTasks extends StatelessWidget {
           time.hour,
           time.minute,
         );
+        final occurrenceKey =
+            '${reminder.type}|${reminder.displayLabel}|${occurrence.millisecondsSinceEpoch}';
+        if (!occurrenceKeys.add(occurrenceKey)) continue;
         if (reminder.type == 'medicine') {
           if (reminder.actionAt(occurrence) == null) {
             occurrences.add(_SeniorReminderOccurrence(reminder, occurrence));
