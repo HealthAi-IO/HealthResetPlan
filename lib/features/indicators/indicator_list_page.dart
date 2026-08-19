@@ -7,6 +7,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/widgets/health_ui.dart';
+import '../../core/widgets/motion.dart';
 
 class IndicatorListPage extends StatefulWidget {
   const IndicatorListPage({super.key});
@@ -115,10 +116,13 @@ class _IndicatorListPageState extends State<IndicatorListPage> {
                             itemCount: _items.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 10),
-                            itemBuilder: (_, i) => _IndicatorCard(
-                              item: _items[i],
-                              onDelete: () => _delete(_items[i]),
-                              onEdit: () => _edit(_items[i]),
+                            itemBuilder: (_, i) => MotionFadeSlide(
+                              delay: Duration(milliseconds: i * 35),
+                              child: _IndicatorCard(
+                                item: _items[i],
+                                onDelete: () => _delete(_items[i]),
+                                onEdit: () => _edit(_items[i]),
+                              ),
                             ),
                           ),
                         ),
@@ -179,24 +183,26 @@ class _IndicatorListPageState extends State<IndicatorListPage> {
 
   Widget _buildEmpty() {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.monitor_heart_outlined,
-              size: 48, color: AppTheme.muted.withValues(alpha: 0.5)),
-          const SizedBox(height: 12),
-          Text('暂无${_filter == "all" ? "" : _typeName(_filter)}记录',
-              style: TextStyle(color: AppTheme.muted, fontSize: 15)),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: () async {
-              await context.push('/indicators/input');
-              _load(silent: true);
-            },
-            icon: const Icon(Icons.add),
-            label: const Text('录入指标'),
-          ),
-        ],
+      child: MotionFadeSlide(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.monitor_heart_outlined,
+                size: 48, color: AppTheme.muted.withValues(alpha: 0.5)),
+            const SizedBox(height: 12),
+            Text('暂无${_filter == "all" ? "" : _typeName(_filter)}记录',
+                style: TextStyle(color: AppTheme.muted, fontSize: 15)),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: () async {
+                await context.push('/indicators/input');
+                _load(silent: true);
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('录入指标'),
+            ),
+          ],
+        ),
       ),
     );
   }

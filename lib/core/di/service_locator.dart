@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../ai/ai_plan_generation_controller.dart';
 import '../auth/user_session.dart';
+import '../auth/wechat_login_service.dart';
 import '../content/site_message_service.dart';
 import '../data/chat_repository.dart';
 import '../data/health_repository.dart';
@@ -25,6 +26,8 @@ import '../network/file_api.dart';
 import '../network/online_data_api.dart';
 import '../network/telemetry_api.dart';
 import '../network/web_push_api.dart';
+import '../payment/payment_api.dart';
+import '../payment/payment_service.dart';
 import '../notification/reminder_scheduler.dart';
 import '../notification/web_push_service.dart';
 import '../storage/app_database.dart';
@@ -82,6 +85,11 @@ Future<void> setupServiceLocator() async {
   }
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
+  sl.registerLazySingleton<WechatLoginService>(() => WechatLoginService());
+  sl.registerSingleton<PaymentApi>(PaymentApi(client: apiClient));
+  final paymentService = PaymentService(api: sl<PaymentApi>());
+  await paymentService.initialize();
+  sl.registerSingleton<PaymentService>(paymentService);
   sl.registerSingleton<FileApi>(FileApi(client: apiClient));
   final contentApi = ContentApi(client: apiClient);
   sl.registerSingleton<ContentApi>(contentApi);

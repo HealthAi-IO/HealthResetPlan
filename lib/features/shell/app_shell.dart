@@ -315,6 +315,11 @@ class _AppDrawer extends StatelessWidget {
                       label: 'AI 健康图像分析',
                       onTap: () => _open(context, '/self-check'),
                     ),
+                    _DrawerItem(
+                      icon: Icons.auto_awesome_outlined,
+                      label: 'AI 健康权益',
+                      onTap: () => _open(context, '/ai-benefits'),
+                    ),
                   ],
                 ),
                 _DrawerSection(

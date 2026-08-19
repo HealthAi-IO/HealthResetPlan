@@ -1,5 +1,74 @@
 part of 'home_page.dart';
 
+class _AiBenefitsBanner extends StatelessWidget {
+  const _AiBenefitsBanner({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: '查看 AI 健康权益',
+      child: Material(
+        color: colors.primaryContainer,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: colors.primary,
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Icon(
+                    Icons.auto_awesome_rounded,
+                    color: colors.onPrimary,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'AI 健康权益',
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: colors.onPrimaryContainer,
+                                ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '报告识别、计划建议、餐食分析与健康周报',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: colors.onPrimaryContainer,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: colors.onPrimaryContainer,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DesktopHomeDashboard extends StatelessWidget {
   const _DesktopHomeDashboard({
     required this.data,
@@ -122,14 +191,17 @@ class _DesktopHomeDashboard extends StatelessWidget {
                           ),
                           const SizedBox(height: 14),
                           for (var index = 0; index < tasks.length; index++)
-                            _DesktopTaskRow(
-                              icon: _homeTaskIcon(tasks[index].type),
-                              label: tasks[index].label,
-                              detail:
-                                  '${tasks[index].progressText} · ${tasks[index].description}',
-                              done: tasks[index].completed,
-                              onTap: () => onTaskTap(tasks[index]),
-                              showDivider: index < tasks.length - 1,
+                            MotionFadeSlide(
+                              delay: Duration(milliseconds: index * 45),
+                              child: _DesktopTaskRow(
+                                icon: _homeTaskIcon(tasks[index].type),
+                                label: tasks[index].label,
+                                detail:
+                                    '${tasks[index].progressText} · ${tasks[index].description}',
+                                done: tasks[index].completed,
+                                onTap: () => onTaskTap(tasks[index]),
+                                showDivider: index < tasks.length - 1,
+                              ),
                             ),
                           const SizedBox(height: 10),
                           SizedBox(
@@ -757,12 +829,20 @@ class _DesktopTaskRow extends StatelessWidget {
                     ],
                   ),
                 ),
-                Text(
-                  done ? '已完成' : '去记录',
-                  style: TextStyle(
-                    color: done ? Colors.green.shade600 : primary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 240),
+                  transitionBuilder: (child, animation) => ScaleTransition(
+                    scale: animation,
+                    child: FadeTransition(opacity: animation, child: child),
+                  ),
+                  child: Text(
+                    done ? '已完成' : '去记录',
+                    key: ValueKey(done),
+                    style: TextStyle(
+                      color: done ? Colors.green.shade600 : primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],

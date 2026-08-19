@@ -1,15 +1,24 @@
 allprojects {
     repositories {
-        google()
-        mavenCentral()
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
+        google()
+        mavenCentral()
     }
 }
 
 rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+// alipay_kit_android 6.0.0 predates AGP 8 and has no namespace declaration.
+// Provide a project-local compatibility namespace for the Android build.
+subprojects {
+    afterEvaluate { project ->
+        if (project.name == "alipay_kit_android" && project.hasProperty("android")) {
+            project.android.namespace = "io.github.v7lin.alipay_kit_android"
+        }
+    }
 }
 subprojects {
     project.evaluationDependsOn(":app")

@@ -14,6 +14,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
+import '../../core/widgets/motion.dart';
 import '../meals/meal_input_args.dart';
 import '../meals/macro_ring.dart';
 
@@ -685,6 +686,8 @@ class _HomePageState extends State<HomePage> {
             tasks: todayTasks,
             onTaskTap: _openHomeTask,
           ),
+          const SizedBox(height: 14),
+          _AiBenefitsBanner(onTap: () => context.push('/ai-benefits')),
           const SizedBox(height: 14),
           _Panel(
             title: '常用功能',

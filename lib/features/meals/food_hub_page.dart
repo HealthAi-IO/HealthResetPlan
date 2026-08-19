@@ -381,6 +381,7 @@ class _FoodHubPageState extends State<FoodHubPage> {
           onDateChanged: (value) => setState(() => _selectedDate = value),
           onAdd: _openMeal,
           onEdit: _editMeal,
+          onDelete: _deleteMeal,
         ),
     };
     return Column(
@@ -559,6 +560,7 @@ class _TodayFoodView extends StatelessWidget {
     required this.onDateChanged,
     required this.onAdd,
     required this.onEdit,
+    required this.onDelete,
   });
 
   final DateTime selectedDate;
@@ -568,6 +570,7 @@ class _TodayFoodView extends StatelessWidget {
   final ValueChanged<DateTime> onDateChanged;
   final ValueChanged<String> onAdd;
   final ValueChanged<MealRecordData> onEdit;
+  final ValueChanged<MealRecordData> onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -593,9 +596,19 @@ class _TodayFoodView extends StatelessWidget {
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
             ),
           ),
+          FilledButton.icon(
+            onPressed: () => onAdd(_defaultMealType()),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('添加餐'),
+          ),
         ]),
         const SizedBox(height: 10),
-        MealSlots(meals: meals, onAdd: onAdd, onEdit: onEdit),
+        MealSlots(
+          meals: meals,
+          onAdd: onAdd,
+          onEdit: onEdit,
+          onDelete: onDelete,
+        ),
         const SizedBox(height: 18),
         FilledButton.icon(
             onPressed: () => onAdd(_defaultMealType()),

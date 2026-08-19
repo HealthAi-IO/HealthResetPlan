@@ -52,6 +52,27 @@ class AuthApi {
     return AuthResult.fromJson(_unwrapData(resp.data));
   }
 
+  Future<SocialLoginResult> startWechat(String code) async {
+    final resp = await _client.dio.post('/auth/social/wechat', data: {'code': code});
+    return SocialLoginResult.fromJson(_unwrapData(resp.data));
+  }
+
+  Future<AuthResult> verifySocialPhone({
+    required String ticket,
+    required String phone,
+    required String code,
+    required bool syncProfile,
+  }) async {
+    final resp = await _client.dio.post('/auth/social/verify-phone', data: {
+      'ticket': ticket,
+      'phone': phone,
+      'code': code,
+      'syncProfile': syncProfile,
+      'agreementVersion': '2026-08-19',
+    });
+    return AuthResult.fromJson(_unwrapData(resp.data));
+  }
+
   Future<CaptchaChallenge> createLoginCaptcha({
     required String phone,
   }) async {
@@ -257,6 +278,26 @@ class AuthResult {
         accessExpiresIn: (j['accessExpiresIn'] as num).toInt(),
         hasPassword: j['hasPassword'] == true,
       );
+}
+
+class SocialLoginResult {
+  const SocialLoginResult({required this.status, this.token, this.ticket, this.nickname, this.avatarUrl});
+  final String status;
+  final AuthResult? token;
+  final String? ticket;
+  final String? nickname;
+  final String? avatarUrl;
+
+  factory SocialLoginResult.fromJson(Map<String, dynamic> json) {
+    final token = json['token'];
+    return SocialLoginResult(
+      status: json['status'] as String? ?? '',
+      token: token is Map ? AuthResult.fromJson(Map<String, dynamic>.from(token)) : null,
+      ticket: json['ticket'] as String?,
+      nickname: json['nickname'] as String?,
+      avatarUrl: json['avatarUrl'] as String?,
+    );
+  }
 }
 
 class AccountInfo {

@@ -7,8 +7,8 @@ import '../../app/app_theme.dart';
 import '../../app/theme_controller.dart';
 import '../../features/privacy/privacy_policy_page.dart';
 
-const privacyPolicyUrl = 'https://jkcqplan.com/privacy';
-const termsOfServiceUrl = 'https://jkcqplan.com/terms';
+const privacyPolicyUrl = 'https://jkcqplan.com/privacy/index.html';
+const termsOfServiceUrl = 'https://jkcqplan.com/terms/index.html';
 const _privacyPolicyVersion = '2026-07-17';
 const _privacyConsentKey = 'privacy_policy_version';
 
@@ -120,7 +120,7 @@ class _PrivacyConsentPageState extends State<_PrivacyConsentPage> {
                           TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 12),
                   Text(
-                    '健康重启计划将在你同意并登录后处理必要信息，提供在线健康记录、多端同步和提醒服务。敏感健康数据由服务器加密后存储。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
+                    '健康重启计划将在你同意并登录后处理必要信息，提供在线健康记录、多端同步和提醒服务。提醒功能在你创建提醒后才会使用通知、精确闹钟和开机恢复。敏感健康数据由服务器加密后存储。云端 AI 功能需要在“我的 - AI 数据处理授权”中另行同意。',
                     style:
                         TextStyle(height: 1.55, color: colors.onSurfaceVariant),
                   ),

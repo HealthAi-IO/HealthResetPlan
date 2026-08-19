@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/auth/user_session.dart';
+import '../../core/auth/wechat_login_service.dart';
 import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
@@ -119,6 +120,96 @@ class _LoginPageState extends State<LoginPage> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<void> _loginWithWechat() async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
+      final wechat = sl<WechatLoginService>();
+      await wechat.initialize();
+      final code = await wechat.authorize();
+      if (code == null || !mounted) return;
+      final result = await sl<AuthApi>().startWechat(code);
+      if (result.status == 'login' && result.token != null) {
+        await _completeLogin(result.token!);
+      } else if (result.status == 'phone_required' && result.ticket != null) {
+        final auth = await _showSocialPhoneDialog(result);
+        if (auth != null) await _completeLogin(auth);
+      } else {
+        throw StateError('微信登录结果无效');
+      }
+    } catch (error) {
+      if (mounted) setState(() => _credentialError = friendlyAuthError(error));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<AuthResult?> _showSocialPhoneDialog(SocialLoginResult social) {
+    final phoneController = TextEditingController();
+    final codeController = TextEditingController();
+    var syncProfile = true;
+    var sending = false;
+    var countdown = 0;
+    Timer? timer;
+    return showDialog<AuthResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('绑定手机号后登录'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: '手机号')),
+            TextField(
+              controller: codeController,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                labelText: '验证码',
+                suffixIcon: TextButton(
+                  onPressed: sending || countdown > 0 ? null : () async {
+                    final phone = phoneController.text.replaceAll(RegExp(r'\D'), '');
+                    if (!RegExp(r'^1\d{10}$').hasMatch(phone)) return;
+                    setDialogState(() => sending = true);
+                    try {
+                      final captcha = await showLoginCaptchaDialog(context: context, api: sl<AuthApi>(), phone: phone);
+                      if (captcha == null || captcha.isEmpty) return;
+                      final sent = await sl<AuthApi>().sendSmsLoginCode(phone: phone, captchaTicket: captcha);
+                      if (sent.debugCode.isNotEmpty) codeController.text = sent.debugCode;
+                      setDialogState(() => countdown = 60);
+                      timer?.cancel();
+                      timer = Timer.periodic(const Duration(seconds: 1), (t) {
+                        if (!context.mounted || countdown <= 1) { t.cancel(); if (context.mounted) setDialogState(() => countdown = 0); } else { setDialogState(() => countdown--); }
+                      });
+                    } finally { if (context.mounted) setDialogState(() => sending = false); }
+                  },
+                  child: Text(countdown > 0 ? '$countdown 秒' : '获取验证码'),
+                ),
+              ),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: syncProfile,
+              onChanged: (value) => setDialogState(() => syncProfile = value ?? false),
+              title: const Text('同步微信昵称和头像'),
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () { timer?.cancel(); Navigator.pop(dialogContext); }, child: const Text('取消')),
+            FilledButton(
+              onPressed: () async {
+                final phone = phoneController.text.replaceAll(RegExp(r'\D'), '');
+                if (!RegExp(r'^1\d{10}$').hasMatch(phone) || codeController.text.length != 6) return;
+                final auth = await sl<AuthApi>().verifySocialPhone(ticket: social.ticket!, phone: phone, code: codeController.text, syncProfile: syncProfile);
+                if (dialogContext.mounted) { timer?.cancel(); Navigator.pop(dialogContext, auth); }
+              },
+              child: const Text('确认绑定'),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(() { phoneController.dispose(); codeController.dispose(); timer?.cancel(); });
   }
 
   Future<void> _completeLogin(AuthResult result) async {
@@ -333,6 +424,17 @@ class _LoginPageState extends State<LoginPage> {
           TextButton(
             onPressed: _submitting ? null : _openAccountRecovery,
             child: const Text('恢复已注销账号'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _submitting ? null : _loginWithWechat,
+            icon: const Icon(Icons.chat_bubble_outline),
+            label: const Text('微信登录'),
+          ),
+          OutlinedButton.icon(
+            onPressed: null,
+            icon: const Icon(Icons.account_balance_wallet_outlined),
+            label: const Text('支付宝登录（审核中）'),
           ),
           const SizedBox(height: 20),
           const SeniorModeEntry(),

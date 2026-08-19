@@ -49,6 +49,9 @@ dependencies:
   pdf: ^3.12.0
   printing: ^5.14.3
   excel: ^4.0.6
+  fluwx: 6.0.2
+  alipay_kit:
+    path: third_party/alipay_kit
 
 dev_dependencies:
   flutter_test:

@@ -9,11 +9,13 @@ class MealSlots extends StatelessWidget {
     required this.meals,
     required this.onAdd,
     required this.onEdit,
+    required this.onDelete,
   });
 
   final List<MealRecordData> meals;
   final ValueChanged<String> onAdd;
   final ValueChanged<MealRecordData> onEdit;
+  final ValueChanged<MealRecordData> onDelete;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -43,6 +45,7 @@ class MealSlots extends StatelessWidget {
                 meals: meals.where((meal) => meal.mealType == type.$1).toList(),
                 onAdd: onAdd,
                 onEdit: onEdit,
+                onDelete: onDelete,
               ),
           ],
         ),
@@ -57,6 +60,7 @@ class _MealSlot extends StatelessWidget {
     required this.meals,
     required this.onAdd,
     required this.onEdit,
+    required this.onDelete,
   });
 
   final String type;
@@ -65,6 +69,7 @@ class _MealSlot extends StatelessWidget {
   final List<MealRecordData> meals;
   final ValueChanged<String> onAdd;
   final ValueChanged<MealRecordData> onEdit;
+  final ValueChanged<MealRecordData> onDelete;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -98,7 +103,17 @@ class _MealSlot extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
               subtitle: Text('${meal.totalCalories.round()} kcal'),
-              trailing: const Icon(Icons.chevron_right),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: '删除餐食',
+                    onPressed: () => onDelete(meal),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
             ),
         ],
       );

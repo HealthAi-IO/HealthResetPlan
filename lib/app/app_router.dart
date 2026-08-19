@@ -29,6 +29,8 @@ import '../features/records/senior_record_page.dart' deferred as senior_records;
 import '../features/quit_smoking/quit_smoking_page.dart'
     deferred as quit_smoking;
 import '../features/privacy/privacy_policy_page.dart';
+import '../features/payment/ai_benefits_page.dart';
+import '../features/payment/ai_credit_page.dart';
 import '../features/report/report_page.dart' deferred as report;
 import '../features/self_check/self_check_page.dart' deferred as self_check;
 import '../features/shell/app_shell.dart';
@@ -62,9 +64,18 @@ class AppRouter {
           curve: Curves.easeOutQuad,
           reverseCurve: Curves.easeInQuad,
         );
-        return ScaleTransition(
-          scale: Tween<double>(begin: 0.995, end: 1).animate(curved),
-          child: FadeTransition(opacity: curved, child: child),
+        return SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0.025, 0),
+            end: Offset.zero,
+          ).animate(curved),
+          child: FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.995, end: 1).animate(curved),
+              child: child,
+            ),
+          ),
         );
       },
     );
@@ -220,6 +231,14 @@ class AppRouter {
             ),
           ),
         ),
+      ),
+      GoRoute(
+        path: '/ai-benefits',
+        pageBuilder: (_, state) => _page(state, const AiBenefitsPage()),
+      ),
+      GoRoute(
+        path: '/ai-credits',
+        pageBuilder: (_, state) => _page(state, const AiCreditPage()),
       ),
       GoRoute(
         path: '/clock',
