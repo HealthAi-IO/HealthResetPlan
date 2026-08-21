@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
+import 'meal_image.dart';
 
 class MealSlots extends StatelessWidget {
   const MealSlots({
@@ -77,8 +78,8 @@ class _MealSlot extends StatelessWidget {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Container(
-              width: 38,
-              height: 38,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.primaryContainer,
                 borderRadius: BorderRadius.circular(16),
@@ -95,8 +96,24 @@ class _MealSlot extends StatelessWidget {
           ),
           for (final meal in meals)
             ListTile(
-              contentPadding: const EdgeInsets.only(left: 50),
+              contentPadding: EdgeInsets.zero,
               onTap: () => onEdit(meal),
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: meal.imagePath.isEmpty
+                    ? Container(
+                        width: 48,
+                        height: 48,
+                        alignment: Alignment.center,
+                        color: AppTheme.primaryBlue.withValues(alpha: 0.10),
+                        child: Icon(Icons.restaurant, color: AppTheme.deepBlue),
+                      )
+                    : MealImage(
+                        path: meal.imagePath,
+                        width: 48,
+                        height: 48,
+                      ),
+              ),
               title: Text(
                 meal.name.isEmpty ? '未命名餐单' : meal.name,
                 maxLines: 1,

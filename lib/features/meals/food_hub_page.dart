@@ -6,11 +6,11 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
-import '../../core/auth/user_session.dart';
+import '../../app/app_messenger.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
-import '../../core/network/api_client.dart';
+import 'meal_image.dart';
 import 'meal_input_args.dart';
 import 'meal_slots.dart';
 import '../../core/widgets/health_ui.dart';
@@ -143,6 +143,8 @@ class _FoodHubPageState extends State<FoodHubPage> {
     );
     if (confirmed != true) return;
     await _repo.deleteMealRecord(meal);
+    if (mounted) showAppSnackBar(const SnackBar(content: Text('餐食已删除')));
+    await _load(silent: true);
   }
 
   Future<void> _duplicateMeal(MealRecordData meal) async {
@@ -278,12 +280,18 @@ class _FoodHubPageState extends State<FoodHubPage> {
       'budgetEnabled': result.$1,
       'monthlyBudget': result.$2,
     });
+    if (mounted) showAppSnackBar(const SnackBar(content: Text('饮食预算已保存')));
   }
 
   Future<void> _toggleFavorite(MealRecipeData recipe) async {
     await _repo.saveMealRecipe(
       recipe.copyWith(isFavorite: !recipe.isFavorite),
     );
+    if (mounted) {
+      showAppSnackBar(
+        SnackBar(content: Text(recipe.isFavorite ? '已取消收藏' : '已收藏菜谱')),
+      );
+    }
   }
 
   Future<void> _recordRecipe(MealRecipeData recipe) async {
@@ -327,6 +335,7 @@ class _FoodHubPageState extends State<FoodHubPage> {
     );
     if (result == null) return;
     await _repo.saveMealRecipe(result);
+    if (mounted) showAppSnackBar(const SnackBar(content: Text('菜谱已保存')));
   }
 
   Future<void> _openPersonalizedMenu() async {
@@ -1299,7 +1308,7 @@ class _DayFoodPreview extends StatelessWidget {
     if (image != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: _MealImage(path: image.imagePath, width: 34, height: 28),
+        child: MealImage(path: image.imagePath, width: 34, height: 28),
       );
     }
     return Container(
@@ -1350,7 +1359,7 @@ class _MealTile extends StatelessWidget {
                       color: AppTheme.primaryBlue.withValues(alpha: 0.10),
                       child: Icon(Icons.restaurant, color: AppTheme.deepBlue),
                     )
-                  : _MealImage(path: meal.imagePath, width: 66, height: 66),
+                  : MealImage(path: meal.imagePath, width: 66, height: 66),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1376,35 +1385,6 @@ class _MealTile extends StatelessWidget {
             menu ?? const Icon(Icons.chevron_right),
           ]),
         ),
-      ),
-    );
-  }
-}
-
-class _MealImage extends StatelessWidget {
-  const _MealImage(
-      {required this.path, required this.width, required this.height});
-
-  final String path;
-  final double width;
-  final double height;
-
-  @override
-  Widget build(BuildContext context) {
-    final base =
-        sl<ApiClient>().dio.options.baseUrl.replaceFirst(RegExp(r'/$'), '');
-    final token = UserSession.instance.accessToken;
-    return Image.network(
-      '$base/files/content?objectKey=${Uri.encodeQueryComponent(path)}',
-      headers: token == null ? null : {'Authorization': 'Bearer $token'},
-      width: width,
-      height: height,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
-        width: width,
-        height: height,
-        color: Theme.of(context).scaffoldBackgroundColor,
-        child: const Icon(Icons.restaurant_outlined),
       ),
     );
   }

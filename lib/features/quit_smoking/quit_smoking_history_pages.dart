@@ -37,13 +37,22 @@ class _QuitSmokingCalendarPageState extends State<QuitSmokingCalendarPage> {
   @override
   Widget build(BuildContext context) {
     final days = _monthCells(_focusedMonth);
+    final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
+    final calendarCellHeight =
+        58 + ((scaledBodySize - 14).clamp(0, 100) * 5).toDouble();
     final monthEvents = _events.where((event) {
       final time = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
       return time.year == _focusedMonth.year &&
           time.month == _focusedMonth.month;
     }).toList();
-    final checkedDays = monthEvents
-        .where((event) => event.type == QuitSmokingEventType.checkIn)
+    final recordDays = monthEvents
+        .map((event) =>
+            _dateOnly(DateTime.fromMillisecondsSinceEpoch(event.occurredAt)))
+        .toSet()
+        .length;
+    final achievedDays = monthEvents
+        .where((event) =>
+            event.type == QuitSmokingEventType.checkIn && event.success == true)
         .map((event) =>
             _dateOnly(DateTime.fromMillisecondsSinceEpoch(event.occurredAt)))
         .toSet()
@@ -98,24 +107,32 @@ class _QuitSmokingCalendarPageState extends State<QuitSmokingCalendarPage> {
                     GridView.builder(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 7,
-                        childAspectRatio: .8,
+                        mainAxisExtent: calendarCellHeight,
                         mainAxisSpacing: 4,
                         crossAxisSpacing: 4,
                       ),
                       itemCount: days.length,
                       itemBuilder: (context, index) {
                         final day = days[index];
+                        final dayEvents = day == null
+                            ? const <QuitSmokingEvent>[]
+                            : _eventsForDay(day);
                         return day == null
                             ? const SizedBox.shrink()
                             : _CalendarDay(
                                 day: day,
-                                events: _eventsForDay(day),
-                                target: _target,
+                                events: dayEvents,
+                                target: quitSmokingTargetForDay(
+                                  profile: widget.profile,
+                                  events: dayEvents,
+                                  day: day,
+                                ),
                                 enabled:
-                                    !day.isAfter(_dateOnly(DateTime.now())),
+                                    !day.isAfter(_dateOnly(DateTime.now())) &&
+                                        (!day.isBefore(_planStart) ||
+                                            dayEvents.isNotEmpty),
                                 onTap: () => _openDay(day),
                               );
                       },
@@ -125,9 +142,21 @@ class _QuitSmokingCalendarPageState extends State<QuitSmokingCalendarPage> {
                       spacing: 16,
                       runSpacing: 8,
                       children: [
-                        _Legend(color: Colors.teal, label: '打卡达标'),
-                        _Legend(color: Colors.orange, label: '打卡未达标'),
-                        _Legend(color: Colors.blueGrey, label: '有记录'),
+                        _Legend(
+                          icon: Icons.check_circle,
+                          color: Colors.teal,
+                          label: '已达标',
+                        ),
+                        _Legend(
+                          icon: Icons.error,
+                          color: Colors.orange,
+                          label: '未达标',
+                        ),
+                        _Legend(
+                          icon: Icons.description,
+                          color: Colors.blueGrey,
+                          label: '有记录',
+                        ),
                       ],
                     ),
                   ],
@@ -142,21 +171,20 @@ class _QuitSmokingCalendarPageState extends State<QuitSmokingCalendarPage> {
                   children: [
                     Expanded(
                       child: _CalendarMetric(
-                        label: '本月打卡',
-                        value: '$checkedDays 天',
+                        label: '记录天数',
+                        value: '$recordDays 天',
                       ),
                     ),
                     Expanded(
                       child: _CalendarMetric(
-                        label: '本月吸烟',
+                        label: '吸烟总数',
                         value: '$smokedCount 支',
                       ),
                     ),
                     Expanded(
                       child: _CalendarMetric(
-                        label: '连续达标',
-                        value:
-                            '${calculateCheckInStreak(events: _events, through: DateTime.now())} 天',
+                        label: '达标天数',
+                        value: '$achievedDays 天',
                       ),
                     ),
                   ],
@@ -169,9 +197,14 @@ class _QuitSmokingCalendarPageState extends State<QuitSmokingCalendarPage> {
     );
   }
 
-  int get _target => widget.profile.mode == QuitSmokingMode.gradual
-      ? widget.profile.stageGoal
-      : 0;
+  DateTime get _planStart {
+    final milliseconds = widget.profile.planStartDate > 0
+        ? widget.profile.planStartDate
+        : widget.profile.stageStartDate > 0
+            ? widget.profile.stageStartDate
+            : widget.profile.targetDate;
+    return _dateOnly(DateTime.fromMillisecondsSinceEpoch(milliseconds));
+  }
 
   bool get _canGoNext {
     final now = DateTime.now();
@@ -252,14 +285,11 @@ class _QuitSmokingDayDetailPageState extends State<QuitSmokingDayDetailPage> {
         .where((event) => event.type == QuitSmokingEventType.checkIn)
         .firstOrNull;
     final checked = checkIn != null;
-    final target = checkIn == null
-        ? (widget.profile.mode == QuitSmokingMode.gradual
-            ? widget.profile.stageGoal
-            : 0)
-        : widget.profile.mode == QuitSmokingMode.gradual &&
-                checkIn.cigarettes == 0
-            ? widget.profile.stageGoal
-            : checkIn.cigarettes;
+    final target = quitSmokingTargetForDay(
+      profile: widget.profile,
+      events: _events,
+      day: widget.day,
+    );
     final achieved = checkIn?.success;
     final avoided = (widget.profile.dailyBaseline - smoked)
         .clamp(0, widget.profile.dailyBaseline);
@@ -412,9 +442,11 @@ class _QuitSmokingDayDetailPageState extends State<QuitSmokingDayDetailPage> {
     final time = widget.day.isAtSameMomentAs(_dateOnly(DateTime.now()))
         ? DateTime.now()
         : DateTime(widget.day.year, widget.day.month, widget.day.day, 20);
-    final target = widget.profile.mode == QuitSmokingMode.gradual
-        ? widget.profile.stageGoal
-        : 0;
+    final target = quitSmokingTargetForDay(
+      profile: widget.profile,
+      events: _events,
+      day: widget.day,
+    );
     final smoked = _events
         .where((event) => event.type == QuitSmokingEventType.smoked)
         .fold<int>(0, (sum, event) => sum + event.cigarettes);
@@ -441,11 +473,7 @@ class _QuitSmokingDayDetailPageState extends State<QuitSmokingDayDetailPage> {
         .where((event) => event.type == QuitSmokingEventType.checkIn)
         .firstOrNull;
     if (checkIn != null) {
-      final target = widget.profile.mode == QuitSmokingMode.gradual
-          ? (checkIn.cigarettes > 0
-              ? checkIn.cigarettes
-              : widget.profile.stageGoal)
-          : 0;
+      final target = checkIn.cigarettes;
       final smoked = dayEvents
           .where((event) => event.type == QuitSmokingEventType.smoked)
           .fold<int>(0, (sum, event) => sum + event.cigarettes);
@@ -933,37 +961,50 @@ class _CalendarDay extends StatelessWidget {
         ? (achieved ? Colors.teal : Colors.orange)
         : events.isNotEmpty
             ? Colors.blueGrey
-            : Theme.of(context).colorScheme.outlineVariant;
+            : Theme.of(context).colorScheme.primary;
+    final icon = checked
+        ? (achieved ? Icons.check_circle : Icons.error)
+        : events.isNotEmpty
+            ? Icons.description
+            : null;
+    final status = checked
+        ? (achieved ? '已达标' : '未达标')
+        : events.isNotEmpty
+            ? '有记录，共吸烟 $smoked 支'
+            : '无记录';
     final today = _isSameDay(day, DateTime.now());
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: enabled ? onTap : null,
-      child: Opacity(
-        opacity: enabled ? 1 : .38,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: today ? Border.all(color: color, width: 2) : null,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text('${day.day}'),
-              const SizedBox(height: 4),
-              if (checked)
-                Icon(Icons.check_circle, size: 17, color: color)
-              else
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration:
-                      BoxDecoration(shape: BoxShape.circle, color: color),
-                ),
-              if (smoked > 0)
-                Text('$smoked 支',
-                    style: Theme.of(context).textTheme.labelSmall),
-            ],
+    return Semantics(
+      label: '${_fullDate(day)}，${enabled ? status : '不可选择'}',
+      button: enabled,
+      child: ExcludeSemantics(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: enabled ? onTap : null,
+          child: Opacity(
+            opacity: enabled ? 1 : .38,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: today
+                    ? Border.all(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      )
+                    : null,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('${day.day}'),
+                  const SizedBox(height: 3),
+                  if (enabled && icon != null)
+                    Icon(icon, size: 17, color: color)
+                  else
+                    const SizedBox(height: 17),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -1019,17 +1060,21 @@ class _TrendBar extends StatelessWidget {
 }
 
 class _Legend extends StatelessWidget {
-  const _Legend({required this.color, required this.label});
+  const _Legend({
+    required this.icon,
+    required this.color,
+    required this.label,
+  });
+
+  final IconData icon;
   final Color color;
   final String label;
+
   @override
   Widget build(BuildContext context) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-              width: 9,
-              height: 9,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
+          Icon(icon, size: 18, color: color),
           const SizedBox(width: 5),
           Text(label, style: Theme.of(context).textTheme.bodySmall),
         ],

@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../app/app_settings_controller.dart';
 import '../../app/app_theme.dart';
 import '../../core/auth/user_session.dart';
+import '../../core/auth/wechat_login_service.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_data_import_service.dart';
 import '../../core/data/health_pdf_service.dart';
@@ -28,6 +29,7 @@ import '../../core/storage/data_sync_merge.dart';
 import '../../core/widgets/health_ui.dart';
 import '../../core/widgets/numeric_picker_field.dart';
 import 'cancel_account_dialog.dart';
+import 'change_password_dialog.dart';
 import 'gender_selector.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -69,6 +71,7 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _saving = false;
   bool _dirty = false; // 用户已手动修改表单但尚未保存
   bool _avatarUploading = false;
+  bool _bindingWechat = false;
   UserProfileData? _profile;
   List<HealthIndicatorEntry> _indicators = const [];
   AccountInfo? _accountInfo;
@@ -256,6 +259,45 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     } finally {
       if (mounted) setState(() => _avatarUploading = false);
+    }
+  }
+
+  Future<void> _bindWechat() async {
+    if (_bindingWechat || _accountInfo?.hasWechat == true) return;
+    setState(() => _bindingWechat = true);
+    try {
+      final wechat = sl<WechatLoginService>();
+      await wechat.initialize();
+      final code = await wechat.authorize();
+      if (code == null || !mounted) return;
+      final authApi = sl<AuthApi>();
+      await authApi.bindWechat(code);
+      final accountInfo = await authApi.fetchAccountInfo();
+      if (!mounted) return;
+      setState(() => _accountInfo = accountInfo ?? _accountInfo);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('微信已绑定，可用于快捷登录')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyAuthError(error))),
+      );
+    } finally {
+      if (mounted) setState(() => _bindingWechat = false);
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const ChangePasswordDialog(),
+    );
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('登录密码已修改')),
+      );
     }
   }
 
@@ -991,6 +1033,15 @@ class _ProfilePageState extends State<ProfilePage> {
                 _openLegalDocument(termsOfServiceUrl);
               },
             ),
+            if (_accountInfo?.hasWechat == false)
+              _SeniorSettingsTile(
+                icon: Icons.chat_bubble_outline_rounded,
+                title: _bindingWechat ? '正在绑定微信' : '绑定微信',
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _bindWechat();
+                },
+              ),
             if (_accountInfo?.hasPassword == false)
               _SeniorSettingsTile(
                 icon: Icons.password_outlined,
@@ -998,6 +1049,15 @@ class _ProfilePageState extends State<ProfilePage> {
                 onTap: () {
                   Navigator.pop(sheetContext);
                   context.push('/set-password?returnTo=%2Fprofile&required=1');
+                },
+              ),
+            if (_accountInfo?.hasPassword == true)
+              _SeniorSettingsTile(
+                icon: Icons.password_outlined,
+                title: '修改登录密码',
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _changePassword();
                 },
               ),
             _SeniorSettingsTile(
@@ -1527,6 +1587,9 @@ class _ProfilePageState extends State<ProfilePage> {
                 onSetPassword: () => context.push(
                   '/set-password?returnTo=%2Fprofile&required=1',
                 ),
+                onChangePassword: _changePassword,
+                bindingWechat: _bindingWechat,
+                onBindWechat: _bindWechat,
                 onSignOut: _signOut,
                 onCancelAccount: _cancelAccount,
               ),
@@ -2323,77 +2386,168 @@ String _syncRowSummary(Map<String, Object?>? row) {
 }
 
 class _AccountSecurityPanel extends StatelessWidget {
-  const _AccountSecurityPanel(
-      {required this.accountInfo,
-      required this.onLogin,
-      required this.onSetPassword,
-      required this.onSignOut,
-      required this.onCancelAccount});
+  const _AccountSecurityPanel({
+    required this.accountInfo,
+    required this.onLogin,
+    required this.onSetPassword,
+    required this.onChangePassword,
+    required this.bindingWechat,
+    required this.onBindWechat,
+    required this.onSignOut,
+    required this.onCancelAccount,
+  });
   final AccountInfo? accountInfo;
   final VoidCallback onLogin;
   final VoidCallback onSetPassword;
+  final VoidCallback onChangePassword;
+  final bool bindingWechat;
+  final VoidCallback onBindWechat;
   final VoidCallback onSignOut;
   final VoidCallback onCancelAccount;
 
   @override
   Widget build(BuildContext context) {
     final loggedIn = UserSession.instance.isAccountLogin;
-    return _Panel(
-      title: '账号与数据安全',
-      subtitle: loggedIn ? '健康数据已与当前账号绑定' : '登录后加载账号中的健康数据',
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (!loggedIn)
-          FilledButton.icon(
-              onPressed: onLogin,
-              icon: const Icon(Icons.login_outlined),
-              label: const Text('注册 / 登录账号'))
-        else ...[
-          if (accountInfo != null) ...[
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.account_circle_outlined),
-              title: Text(accountInfo!.nickname.isEmpty
-                  ? '健康用户'
-                  : accountInfo!.nickname),
-              subtitle: Text(
-                '手机号 *******${accountInfo!.phoneTail}\n账号 ID ${accountInfo!.userId}',
-              ),
-              trailing: IconButton(
-                tooltip: '复制账号 ID',
-                onPressed: () async {
-                  await Clipboard.setData(
-                    ClipboardData(text: accountInfo!.userId),
-                  );
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('账号 ID 已复制')),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.copy_outlined),
-              ),
-            ),
-            if (!accountInfo!.hasPassword) ...[
-              OutlinedButton.icon(
-                onPressed: onSetPassword,
-                icon: const Icon(Icons.password_outlined),
-                label: const Text('设置登录密码（可选）'),
-              ),
-              const SizedBox(height: 8),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Panel(
+          title: '账号与安全',
+          subtitle: loggedIn ? '管理登录方式与账号保护' : '登录后同步并保护健康数据',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!loggedIn)
+                FilledButton.icon(
+                  onPressed: onLogin,
+                  icon: const Icon(Icons.login_outlined),
+                  label: const Text('注册 / 登录账号'),
+                )
+              else if (accountInfo != null) ...[
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor:
+                        Theme.of(context).colorScheme.primaryContainer,
+                    child: Icon(
+                      Icons.person_outline_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  title: Text(
+                    accountInfo!.nickname.isEmpty
+                        ? '健康用户'
+                        : accountInfo!.nickname,
+                  ),
+                  subtitle: Text('账号 ID ${accountInfo!.userId}'),
+                  trailing: IconButton(
+                    tooltip: '复制账号 ID',
+                    onPressed: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: accountInfo!.userId),
+                      );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('账号 ID 已复制')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                ),
+                const Divider(height: 24),
+                Text(
+                  '登录方式',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                _LoginMethodTile(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  title: '微信快捷登录',
+                  detail: accountInfo!.hasWechat
+                      ? '已绑定，可直接使用微信登录'
+                      : '绑定后可一键登录，无需输入验证码',
+                  trailing: accountInfo!.hasWechat
+                      ? const Icon(Icons.check_circle_rounded)
+                      : TextButton(
+                          onPressed: bindingWechat ? null : onBindWechat,
+                          child: Text(bindingWechat ? '绑定中' : '绑定'),
+                        ),
+                ),
+                const Divider(height: 1),
+                _LoginMethodTile(
+                  icon: Icons.phone_android_outlined,
+                  title: '手机号验证',
+                  detail: '尾号 ${accountInfo!.phoneTail} · 用于登录和找回账号',
+                  trailing: const Icon(Icons.verified_user_outlined),
+                ),
+                const Divider(height: 1),
+                _LoginMethodTile(
+                  icon: Icons.password_outlined,
+                  title: '登录密码',
+                  detail: accountInfo!.hasPassword
+                      ? '已设置，可作为备用登录方式'
+                      : '尚未设置，建议作为备用登录方式',
+                  trailing: accountInfo!.hasPassword
+                      ? TextButton(
+                          onPressed: onChangePassword,
+                          child: const Text('修改'),
+                        )
+                      : TextButton(
+                          onPressed: onSetPassword,
+                          child: const Text('设置'),
+                        ),
+                ),
+              ],
             ],
-          ],
+          ),
+        ),
+        if (loggedIn) ...[
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onSignOut,
+            icon: const Icon(Icons.logout_outlined),
+            label: const Text('退出当前账号'),
+          ),
+          const SizedBox(height: 4),
           TextButton.icon(
-              onPressed: onSignOut,
-              icon: const Icon(Icons.logout_outlined),
-              label: const Text('退出登录')),
-          TextButton.icon(
-              onPressed: onCancelAccount,
-              icon: const Icon(Icons.person_remove_outlined),
-              label: const Text('注销账号'),
-              style:
-                  TextButton.styleFrom(foregroundColor: Colors.red.shade700)),
+            onPressed: onCancelAccount,
+            icon: const Icon(Icons.person_remove_outlined),
+            label: const Text('注销账号'),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+          ),
         ],
-      ]),
+      ],
+    );
+  }
+}
+
+class _LoginMethodTile extends StatelessWidget {
+  const _LoginMethodTile({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.trailing,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon),
+      title: Text(title),
+      subtitle: Text(detail),
+      trailing: IconTheme(
+        data: IconThemeData(color: Theme.of(context).colorScheme.primary),
+        child: trailing,
+      ),
     );
   }
 }

@@ -44,10 +44,15 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
   }
 
   Future<void> _load() async {
-    final profile = await _repository.loadProfile();
+    var profile = await _repository.loadProfile();
     var events = await _repository.loadEvents();
     if (profile != null) {
       events = await _normalizeCheckIns(profile, events);
+      profile = await _repository.evaluateAdaptivePlan(
+        profile: profile,
+        events: events,
+        now: DateTime.now(),
+      );
     }
     if (!mounted) return;
     setState(() {
@@ -77,9 +82,7 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
         index--;
         continue;
       }
-      final target = profile.mode == QuitSmokingMode.gradual
-          ? (checkIn.cigarettes > 0 ? checkIn.cigarettes : profile.stageGoal)
-          : 0;
+      final target = checkIn.cigarettes;
       final smoked = events.where((event) {
         if (event.type != QuitSmokingEventType.smoked) return false;
         final eventTime = DateTime.fromMillisecondsSinceEpoch(event.occurredAt);
@@ -159,9 +162,11 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
               _SummaryPanel(
                 progress: progress,
                 todayCount: progress.todayCount,
-                target: profile.mode == QuitSmokingMode.gradual
-                    ? profile.stageGoal
-                    : 0,
+                target: quitSmokingTargetForDay(
+                  profile: profile,
+                  events: _events,
+                  day: _now,
+                ),
                 checkedInToday: checkedInToday,
                 achievedToday: todayCheckIn?.success,
                 successfulCravings: successCravings,
@@ -169,6 +174,15 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
                 onCheckIn: _checkIn,
               ),
               const SizedBox(height: 12),
+              if (profile.mode == QuitSmokingMode.gradual) ...[
+                _GradualPlanPanel(
+                  profile: profile,
+                  now: _now,
+                  onContinueStage: _continueCurrentStage,
+                  onReplan: _openReplan,
+                ),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
                   Expanded(
@@ -187,6 +201,11 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12),
+              _SavingsBreakdownPanel(
+                profile: profile,
+                progress: progress,
               ),
               const SizedBox(height: 12),
               _SevenDayTrack(
@@ -292,6 +311,14 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
     );
     if (!result && mounted) await _recordSmoked();
     await _load();
+    if (result && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('成功应对 +1，累计节省按真实少吸数量计算'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Future<void> _checkIn() async {
@@ -307,8 +334,11 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
       return;
     }
     final profile = _profile!;
-    final target =
-        profile.mode == QuitSmokingMode.gradual ? profile.stageGoal : 0;
+    final target = quitSmokingTargetForDay(
+      profile: profile,
+      events: _events,
+      day: _now,
+    );
     final todayCount = calculateQuitSmokingProgress(
       profile: profile,
       events: _events,
@@ -353,6 +383,31 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
     );
     final streak = calculateCheckInStreak(events: _events, through: _now);
     await _showCheckInResult(progress, streak, achieved);
+  }
+
+  Future<void> _continueCurrentStage() async {
+    final profile = _profile;
+    if (profile == null) return;
+    await _repository.continueCurrentStage(profile: profile, now: _now);
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('当前阶段已延长 3 天，目标支数保持不变')),
+    );
+  }
+
+  Future<void> _openReplan() async {
+    final profile = _profile;
+    if (profile == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _SetupView(
+          profile: profile,
+          onSaved: _load,
+          forceRestart: true,
+        ),
+      ),
+    );
   }
 
   Future<void> _openCalendar() async {
@@ -511,10 +566,15 @@ class _QuitSmokingPageState extends State<QuitSmokingPage> {
 }
 
 class _SetupView extends StatefulWidget {
-  const _SetupView({this.profile, required this.onSaved});
+  const _SetupView({
+    this.profile,
+    required this.onSaved,
+    this.forceRestart = false,
+  });
 
   final QuitSmokingProfile? profile;
   final Future<void> Function() onSaved;
+  final bool forceRestart;
 
   @override
   State<_SetupView> createState() => _SetupViewState();
@@ -525,16 +585,17 @@ class _SetupViewState extends State<_SetupView> {
   final _packCigarettes = TextEditingController(text: '20');
   final _packPrice = TextEditingController();
   final _smokingYears = TextEditingController();
-  final _stageGoal = TextEditingController();
   final _motivation = TextEditingController();
   final _triggers = TextEditingController();
   QuitSmokingMode _mode = QuitSmokingMode.immediate;
   DateTime _targetDate = DateTime.now();
+  int _planDurationDays = 14;
   bool _remindersEnabled = false;
 
   @override
   void initState() {
     super.initState();
+    _baseline.addListener(_refreshPreview);
     final profile = widget.profile;
     if (profile == null) return;
     _mode = profile.mode;
@@ -542,21 +603,22 @@ class _SetupViewState extends State<_SetupView> {
     _packCigarettes.text = '${profile.packCigarettes}';
     _packPrice.text = '${profile.packPrice}';
     _smokingYears.text = '${profile.smokingYears}';
-    _stageGoal.text = '${profile.stageGoal}';
     _motivation.text = profile.motivation;
     _triggers.text = profile.triggers.join('、');
     _targetDate = DateTime.fromMillisecondsSinceEpoch(profile.targetDate);
+    _planDurationDays =
+        profile.planDurationDays > 0 ? profile.planDurationDays : 14;
     _remindersEnabled = profile.remindersEnabled;
   }
 
   @override
   void dispose() {
+    _baseline.removeListener(_refreshPreview);
     for (final controller in [
       _baseline,
       _packCigarettes,
       _packPrice,
       _smokingYears,
-      _stageGoal,
       _motivation,
       _triggers
     ]) {
@@ -565,11 +627,30 @@ class _SetupViewState extends State<_SetupView> {
     super.dispose();
   }
 
+  void _refreshPreview() {
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final embedded = widget.profile != null;
+    final parsedBaseline = int.tryParse(_baseline.text.trim()) ?? 0;
+    final baseline = parsedBaseline > 0
+        ? parsedBaseline
+        : widget.profile?.dailyBaseline ?? 10;
+    final planStartTarget = _planStartTarget(baseline);
+    final planStart = _planStartDate;
+    final planEnd = planStart.add(Duration(days: _planDurationDays - 1));
+    final previewTargets = gradualTargetsFor(
+      startTarget: planStartTarget,
+      durationDays: _planDurationDays,
+    );
     return Scaffold(
-      appBar: embedded ? AppBar(title: const Text('调整戒烟计划')) : null,
+      appBar: embedded
+          ? AppBar(
+              title: Text(widget.forceRestart ? '重新规划' : '调整戒烟计划'),
+            )
+          : null,
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
         children: [
@@ -598,9 +679,43 @@ class _SetupViewState extends State<_SetupView> {
               unit: '元', max: 1000, initialValue: 25),
           _numberField(_smokingYears, '吸烟年限（可选）',
               unit: '年', min: 0, max: 100, initialValue: 10, optional: true),
-          if (_mode == QuitSmokingMode.gradual)
-            _numberField(_stageGoal, '当前阶段每日目标',
-                unit: '支', max: 200, initialValue: 5),
+          if (_mode == QuitSmokingMode.gradual) ...[
+            Text('自动减量周期', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(value: 7, label: Text('7 天')),
+                ButtonSegment(value: 14, label: Text('14 天')),
+                ButtonSegment(value: 28, label: Text('28 天')),
+              ],
+              selected: {_planDurationDays},
+              onSelectionChanged: (value) =>
+                  setState(() => _planDurationDays = value.first),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '预计 ${_dateText(planStart)} 开始，${_dateText(planEnd)} 降至 0 支',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  Text('${previewTargets.join(' → ')} → 0 支'),
+                  const SizedBox(height: 4),
+                  const Text('连续两天未达标时，当前阶段自动延长 3 天。'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           TextField(
             controller: _motivation,
             maxLines: 3,
@@ -615,13 +730,14 @@ class _SetupViewState extends State<_SetupView> {
             ),
           ),
           const SizedBox(height: 12),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('目标戒烟日期'),
-            subtitle: Text(_dateText(_targetDate)),
-            trailing: const Icon(Icons.calendar_today_outlined),
-            onTap: _pickTargetDate,
-          ),
+          if (_mode == QuitSmokingMode.immediate)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('目标戒烟日期'),
+              subtitle: Text(_dateText(_targetDate)),
+              trailing: const Icon(Icons.calendar_today_outlined),
+              onTap: _pickTargetDate,
+            ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('开启戒烟提醒'),
@@ -630,7 +746,10 @@ class _SetupViewState extends State<_SetupView> {
             onChanged: (value) => setState(() => _remindersEnabled = value),
           ),
           const SizedBox(height: 16),
-          FilledButton(onPressed: _save, child: const Text('保存戒烟计划')),
+          FilledButton(
+            onPressed: _save,
+            child: Text(widget.forceRestart ? '生成新计划' : '保存戒烟计划'),
+          ),
         ],
       ),
     );
@@ -681,6 +800,8 @@ class _SetupViewState extends State<_SetupView> {
       );
       return;
     }
+    final restartPlan = _shouldRestartPlan;
+    final planStartTarget = _planStartTarget(baseline);
     await sl<QuitSmokingRepository>().saveProfile(
       mode: _mode,
       dailyBaseline: baseline,
@@ -694,16 +815,57 @@ class _SetupViewState extends State<_SetupView> {
           .map((item) => item.trim())
           .where((item) => item.isNotEmpty)
           .toList(),
-      stageGoal: _mode == QuitSmokingMode.gradual
-          ? (int.tryParse(_stageGoal.text.trim()) ?? (baseline - 1))
-              .clamp(1, baseline)
-          : 0,
-      stageStartDate: DateTime.now(),
+      stageGoal: _mode == QuitSmokingMode.gradual ? planStartTarget : 0,
+      stageStartDate: _planStartDate,
       remindersEnabled: _remindersEnabled,
+      planDurationDays: _planDurationDays,
+      planStartTarget: planStartTarget,
+      restartPlan: restartPlan,
     );
     await _syncReminder(_remindersEnabled);
     await widget.onSaved();
     if (mounted && widget.profile != null) Navigator.of(context).pop();
+  }
+
+  bool get _shouldRestartPlan {
+    final profile = widget.profile;
+    return widget.forceRestart ||
+        profile == null ||
+        profile.mode != _mode ||
+        (_mode == QuitSmokingMode.gradual &&
+            profile.planDurationDays != _planDurationDays);
+  }
+
+  DateTime get _planStartDate {
+    final today = DateTime.now();
+    if (widget.profile == null) {
+      return DateTime(today.year, today.month, today.day);
+    }
+    if (_shouldRestartPlan) {
+      final tomorrow = today.add(const Duration(days: 1));
+      return DateTime(tomorrow.year, tomorrow.month, tomorrow.day);
+    }
+    final profile = widget.profile!;
+    return DateTime.fromMillisecondsSinceEpoch(
+      profile.planStartDate > 0
+          ? profile.planStartDate
+          : profile.stageStartDate,
+    );
+  }
+
+  int _planStartTarget(int baseline) {
+    final profile = widget.profile;
+    if (profile == null || profile.mode != QuitSmokingMode.gradual) {
+      return baseline.clamp(1, baseline).toInt();
+    }
+    if (!_shouldRestartPlan) {
+      return profile.planStartTarget > 0 ? profile.planStartTarget : baseline;
+    }
+    final currentTarget =
+        buildGradualQuitPlan(profile).stageFor(DateTime.now()).target;
+    return (currentTarget > 0 ? currentTarget : baseline)
+        .clamp(1, baseline)
+        .toInt();
   }
 
   Future<void> _syncReminder(bool enabled) async {
@@ -808,20 +970,9 @@ class _SummaryPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    hasSmokingRecord ? '距离上次吸烟' : '连续未吸烟',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-                IconButton(
-                  tooltip: '统计说明',
-                  onPressed: () => _showSavingsInfo(context, progress),
-                  icon: const Icon(Icons.info_outline, size: 20),
-                ),
-              ],
+            Text(
+              hasSmokingRecord ? '距离上次吸烟' : '连续未吸烟',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
             Text(
               _durationText(elapsed),
@@ -835,14 +986,15 @@ class _SummaryPanel extends StatelessWidget {
               children: [
                 Expanded(
                   child: _Metric(
-                    label: '累计少吸',
-                    value: '${progress.avoidedCigarettes} 支',
+                    label: '今日记录',
+                    value: '$todayCount 支',
                   ),
                 ),
                 Expanded(
                   child: _Metric(
-                    label: '累计节省',
-                    value: '¥${progress.savedMoney.toStringAsFixed(2)}',
+                    label: '累计少吸',
+                    value:
+                        '${progress.avoidedCigarettesExact.toStringAsFixed(1)} 支',
                   ),
                 ),
                 Expanded(
@@ -854,23 +1006,318 @@ class _SummaryPanel extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
+            Text(
+              '今日目标不超过 $target 支',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onCheckIn,
+                icon: Icon(
+                  checkedInToday
+                      ? Icons.edit_note_outlined
+                      : Icons.task_alt_outlined,
+                  size: 18,
+                ),
+                label: Text(checkedInToday ? '查看或更正今日记录' : '总结今天'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GradualPlanPanel extends StatelessWidget {
+  const _GradualPlanPanel({
+    required this.profile,
+    required this.now,
+    required this.onContinueStage,
+    required this.onReplan,
+  });
+
+  final QuitSmokingProfile profile;
+  final DateTime now;
+  final VoidCallback onContinueStage;
+  final VoidCallback onReplan;
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = buildGradualQuitPlan(profile);
+    final today = DateTime(now.year, now.month, now.day);
+    final current = plan.stageFor(today);
+    final beforeStart = today.isBefore(plan.stages.first.start);
+    final quitStage = current.target == 0;
+    final daysRemaining =
+        quitStage ? 0 : current.end.difference(today).inDays.clamp(0, 999) + 1;
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final extensionDays = profile.extendedStageIndexes.length * 3;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    '今日已记录 $todayCount 支 · 目标 $target 支',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+                  child: Text('自动渐进计划',
+                      style: Theme.of(context).textTheme.titleMedium),
                 ),
-                FilledButton.icon(
-                  onPressed: onCheckIn,
-                  icon: Icon(
-                    checkedInToday
-                        ? Icons.edit_note_outlined
-                        : Icons.task_alt_outlined,
-                    size: 18,
+                Text('${profile.planDurationDays} 天基础周期'),
+              ],
+            ),
+            const SizedBox(height: 14),
+            AnimatedSwitcher(
+              duration: disableAnimations
+                  ? Duration.zero
+                  : const Duration(milliseconds: 420),
+              switchInCurve: Curves.easeOutCubic,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: SizeTransition(
+                  sizeFactor: animation,
+                  axisAlignment: -1,
+                  child: child,
+                ),
+              ),
+              child: Container(
+                key: ValueKey(current.index),
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      beforeStart
+                          ? '计划将于 ${_dateText(plan.stages.first.start)} 开始'
+                          : quitStage
+                              ? '已进入完全戒烟阶段'
+                              : '当前每日目标：不超过 ${current.target} 支',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      beforeStart
+                          ? '今天继续按原目标记录，明天开始自动降低。'
+                          : quitStage
+                              ? '从 ${_dateText(plan.quitDate)} 起，每日目标保持为 0 支。'
+                              : '本阶段还剩 $daysRemaining 天；下一阶段会继续降低目标。',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (extensionDays > 0) ...[
+              const SizedBox(height: 10),
+              Text(
+                '计划已根据记录温和延长 $extensionDays 天，当前目标没有提高。',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (profile.needsReplan) ...[
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('延长阶段后仍连续两天未达标',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    const Text('你可以保持当前目标再尝试 3 天，或者从当前目标重新生成计划。'),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton(
+                          onPressed: onContinueStage,
+                          child: const Text('继续当前阶段'),
+                        ),
+                        FilledButton(
+                          onPressed: onReplan,
+                          child: const Text('重新生成计划'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 18),
+            for (final stage in plan.stages) ...[
+              _GradualStageRow(
+                stage: stage,
+                currentIndex: beforeStart ? -1 : current.index,
+                today: today,
+              ),
+              if (stage != plan.stages.last) const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GradualStageRow extends StatelessWidget {
+  const _GradualStageRow({
+    required this.stage,
+    required this.currentIndex,
+    required this.today,
+  });
+
+  final QuitSmokingStage stage;
+  final int currentIndex;
+  final DateTime today;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = stage.end.isBefore(today);
+    final current = stage.index == currentIndex;
+    final color = completed
+        ? AppTheme.success(context)
+        : current
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.outline;
+    final date = stage.target == 0
+        ? '${_dateText(stage.start)} 起'
+        : '${_dateText(stage.start)}—${_dateText(stage.end)}';
+    return Semantics(
+      label:
+          '${stage.target == 0 ? '完全戒烟' : '每日不超过 ${stage.target} 支'}，$date，${completed ? '已完成' : current ? '当前阶段' : '未开始'}',
+      child: ExcludeSemantics(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              completed
+                  ? Icons.check_circle
+                  : current
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+              color: color,
+              size: 22,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    stage.target == 0
+                        ? '完全戒烟 · 0 支'
+                        : '每日不超过 ${stage.target} 支',
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: current ? FontWeight.w800 : FontWeight.w600,
+                    ),
                   ),
-                  label: Text(checkedInToday ? '查看/更正记录' : '总结今天'),
+                  const SizedBox(height: 2),
+                  Text(date, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ),
+            if (current) const Text('当前'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SavingsBreakdownPanel extends StatelessWidget {
+  const _SavingsBreakdownPanel({
+    required this.profile,
+    required this.progress,
+  });
+
+  final QuitSmokingProfile profile;
+  final QuitSmokingProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final perCigarette = profile.packCigarettes <= 0
+        ? 0.0
+        : profile.packPrice / profile.packCigarettes;
+    final elapsed = DateTime.now().isBefore(progress.startedAt)
+        ? Duration.zero
+        : DateTime.now().difference(progress.startedAt);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('累计节省', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              '¥${progress.savedMoney.toStringAsFixed(2)}',
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineMedium
+                  ?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '金额按计划开始前的吸烟习惯随时间增加，并扣除实际记录。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            _SavingsRow(label: '原来每天吸', value: '${profile.dailyBaseline} 支'),
+            _SavingsRow(label: '计划已进行', value: _elapsedPlanText(elapsed)),
+            _SavingsRow(
+              label: '截至现在预计原本会吸',
+              value: '${progress.expectedCigarettes.toStringAsFixed(1)} 支',
+            ),
+            _SavingsRow(
+              label: '实际记录',
+              value: '${progress.actualCigarettes} 支',
+            ),
+            _SavingsRow(
+              label: '累计少吸',
+              value: '${progress.avoidedCigarettesExact.toStringAsFixed(1)} 支',
+              emphasized: true,
+            ),
+            const Divider(height: 28),
+            _SavingsRow(
+              label: '每支价格',
+              value: '¥${perCigarette.toStringAsFixed(2)}',
+            ),
+            Text(
+              '每包 ¥${profile.packPrice.toStringAsFixed(2)} ÷ ${profile.packCigarettes} 支',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('成功应对烟瘾单独计次，不直接折算成一支烟或增加节省金额。'),
                 ),
               ],
             ),
@@ -879,6 +1326,37 @@ class _SummaryPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SavingsRow extends StatelessWidget {
+  const _SavingsRow({
+    required this.label,
+    required this.value,
+    this.emphasized = false,
+  });
+
+  final String label;
+  final String value;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: Text(label)),
+            const SizedBox(width: 16),
+            Text(
+              value,
+              textAlign: TextAlign.end,
+              style: emphasized
+                  ? const TextStyle(fontWeight: FontWeight.w700)
+                  : null,
+            ),
+          ],
+        ),
+      );
 }
 
 class _TodayGuidePanel extends StatelessWidget {
@@ -976,8 +1454,6 @@ class _SevenDayTrack extends StatelessWidget {
     final today = DateTime(now.year, now.month, now.day);
     final days =
         List.generate(7, (index) => today.subtract(Duration(days: 6 - index)));
-    final target =
-        profile.mode == QuitSmokingMode.gradual ? profile.stageGoal : 0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -1005,7 +1481,12 @@ class _SevenDayTrack extends StatelessWidget {
                     today: today,
                     checked: _hasCheckIn(day),
                     achieved: _checkInForDay(day)?.success ??
-                        _smokedCount(day) <= target,
+                        _smokedCount(day) <=
+                            quitSmokingTargetForDay(
+                              profile: profile,
+                              events: events,
+                              day: day,
+                            ),
                     onTap: () => onDayTap(day),
                   ),
               ],
@@ -1436,6 +1917,13 @@ String _durationText(Duration value) {
   return '$days 天  $hours:$minutes:$seconds';
 }
 
+String _elapsedPlanText(Duration value) {
+  final duration = value.isNegative ? Duration.zero : value;
+  final days = duration.inDays;
+  final hours = duration.inHours.remainder(24);
+  return '$days 天 $hours 小时';
+}
+
 String? _checkInMilestone(int streak) => switch (streak) {
       3 => '连续达标 3 天',
       7 => '连续达标一周',
@@ -1449,24 +1937,6 @@ String? _checkInMilestone(int streak) => switch (streak) {
 
 String _weekday(int value) =>
     const ['一', '二', '三', '四', '五', '六', '日'][value - 1];
-
-void _showSavingsInfo(BuildContext context, QuitSmokingProgress progress) {
-  showDialog<void>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('预计节省说明'),
-      content: Text(
-        '累计节省按“计划开始后的基线应吸支数 - 实际吸烟支数”计算，再乘以每支价格。'
-        '\n\n当前已少吸约 ${progress.avoidedCigarettes} 支，预计节省 ¥${progress.savedMoney.toStringAsFixed(2)}。'
-        '\n修改每包价格后，历史金额会按新价格重新计算。',
-      ),
-      actions: [
-        FilledButton(
-            onPressed: () => Navigator.pop(context), child: const Text('知道了')),
-      ],
-    ),
-  );
-}
 
 void _showMilestones(BuildContext context, Duration elapsed) {
   showModalBottomSheet<void>(

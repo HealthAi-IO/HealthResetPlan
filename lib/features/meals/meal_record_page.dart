@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../app/app_messenger.dart';
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
@@ -15,6 +16,7 @@ import '../../core/widgets/ai_content_notice.dart';
 import '../../core/widgets/health_ui.dart';
 import '../../core/widgets/numeric_picker_field.dart';
 import 'macro_ring.dart';
+import 'meal_image.dart';
 
 const _proteinColor = Color(0xFF19B43B);
 const _carbColor = Color(0xFFF59E0B);
@@ -49,6 +51,8 @@ class _MealRecordPageState extends State<MealRecordPage> {
   late DateTime _eatenAt;
   XFile? _image;
   bool _loading = false;
+  bool _saving = false;
+  bool _saved = false;
   List<MealFoodItem> _foods = const [];
   Map<String, dynamic> _nutrition = const {};
   double _totalCalories = 0;
@@ -431,37 +435,65 @@ class _MealRecordPageState extends State<MealRecordPage> {
   }
 
   Future<void> _save() async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final clientId = widget.record?.clientId ?? HealthRepository.newClientId();
-    final imagePath = _image == null
-        ? widget.record?.imagePath ?? ''
-        : await sl<FileApi>().upload(_image!, clientId);
-    final record = MealRecordData(
-      id: widget.record?.id,
-      clientId: clientId,
-      name: _nameCtrl.text.trim().isEmpty ? '未命名餐单' : _nameCtrl.text.trim(),
-      mealType: _mealType,
-      eatenAt: _eatenAt.millisecondsSinceEpoch,
-      imagePath: imagePath,
-      totalCalories: _totalCalories,
-      proteinG: _proteinG,
-      carbsG: _carbsG,
-      fatG: _fatG,
-      healthScore: _healthScore,
-      glycemicLoad: _glycemicLoad,
-      foods: _foods,
-      nutrition: _nutrition,
-      createdAt: widget.record?.createdAt ?? now,
-      updatedAt: now,
-      portion: _portion,
-      cost: double.tryParse(_costCtrl.text) ?? 0,
-      diningType: _diningType,
-      merchant: _merchantCtrl.text.trim(),
-      note: _noteCtrl.text.trim(),
-    );
-    await _repo.saveMealRecord(record);
-    if (!mounted) return;
-    Navigator.pop(context, true);
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final clientId =
+          widget.record?.clientId ?? HealthRepository.newClientId();
+      final imagePath = _image == null
+          ? widget.record?.imagePath ?? ''
+          : await sl<FileApi>().uploadImage(_image!, clientId);
+      final record = MealRecordData(
+        id: widget.record?.id,
+        clientId: clientId,
+        name: _nameCtrl.text.trim().isEmpty ? '未命名餐单' : _nameCtrl.text.trim(),
+        mealType: _mealType,
+        eatenAt: _eatenAt.millisecondsSinceEpoch,
+        imagePath: imagePath,
+        totalCalories: _totalCalories,
+        proteinG: _proteinG,
+        carbsG: _carbsG,
+        fatG: _fatG,
+        healthScore: _healthScore,
+        glycemicLoad: _glycemicLoad,
+        foods: _foods,
+        nutrition: _nutrition,
+        createdAt: widget.record?.createdAt ?? now,
+        updatedAt: now,
+        portion: _portion,
+        cost: double.tryParse(_costCtrl.text) ?? 0,
+        diningType: _diningType,
+        merchant: _merchantCtrl.text.trim(),
+        note: _noteCtrl.text.trim(),
+      );
+      await _repo.saveMealRecord(record);
+      if (!mounted) return;
+      setState(() => _saved = true);
+      await Future<void>.delayed(const Duration(milliseconds: 320));
+      if (!mounted) return;
+      final message =
+          widget.record == null ? '${record.mealLabel}已保存' : '餐食已更新';
+      Navigator.pop(context, true);
+      Future<void>.delayed(const Duration(milliseconds: 200), () {
+        showAppSnackBar(
+          SnackBar(
+            content: Text(message),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      });
+    } on DioException catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showAppSnackBar(SnackBar(content: Text(_saveError(error))));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      showAppSnackBar(
+        const SnackBar(content: Text('餐食保存失败，请检查网络后重试')),
+      );
+    }
   }
 
   @override
@@ -478,7 +510,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
           children: [
             _UploadMealCard(
               image: _image,
-              imageName: _image?.name ?? widget.record?.imagePath,
+              existingImagePath: widget.record?.imagePath ?? '',
               loading: _loading,
               canUseCamera: canUseCamera,
               onCamera: () => _pick(ImageSource.camera),
@@ -535,9 +567,27 @@ class _MealRecordPageState extends State<MealRecordPage> {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: FilledButton.icon(
-                onPressed: _loading || _foods.isEmpty ? null : _save,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('保存到本餐'),
+                onPressed: _loading || _saving || _foods.isEmpty ? null : _save,
+                icon: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 160),
+                  child: _saved
+                      ? const Icon(Icons.check_circle_outline,
+                          key: ValueKey('saved'))
+                      : _saving
+                          ? const SizedBox(
+                              key: ValueKey('saving'),
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.save_outlined,
+                              key: ValueKey('save')),
+                ),
+                label: Text(_saved
+                    ? '已保存'
+                    : _saving
+                        ? '保存中…'
+                        : '保存到本餐'),
               ),
             ),
           ),
@@ -552,6 +602,15 @@ class _MealRecordPageState extends State<MealRecordPage> {
       return (data['message'] ?? data['msg'])?.toString() ?? 'AI 识别失败';
     }
     return '网络或服务请求失败，请稍后重试；也可以先手动添加食材。';
+  }
+
+  String _saveError(DioException error) {
+    final data = error.response?.data;
+    if (data is Map) {
+      final message = (data['message'] ?? data['msg'])?.toString();
+      if (message != null && message.isNotEmpty) return '餐食保存失败：$message';
+    }
+    return '餐食保存失败，请检查网络后重试';
   }
 }
 
@@ -616,7 +675,7 @@ class _MealDetailPageState extends State<MealDetailPage> {
 class _UploadMealCard extends StatelessWidget {
   const _UploadMealCard({
     required this.image,
-    required this.imageName,
+    required this.existingImagePath,
     required this.loading,
     required this.canUseCamera,
     required this.onCamera,
@@ -624,7 +683,7 @@ class _UploadMealCard extends StatelessWidget {
   });
 
   final XFile? image;
-  final String? imageName;
+  final String existingImagePath;
   final bool loading;
   final bool canUseCamera;
   final VoidCallback onCamera;
@@ -658,38 +717,45 @@ class _UploadMealCard extends StatelessWidget {
             label: const Text('从相册选择'),
           ),
         ]),
-        if (imageName != null && imageName!.isNotEmpty) ...[
+        if (image != null || existingImagePath.isNotEmpty) ...[
           const SizedBox(height: 10),
-          if (image != null) ...[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: FutureBuilder<Uint8List>(
-                future: image!.readAsBytes(),
-                builder: (context, snapshot) {
-                  final bytes = snapshot.data;
-                  if (bytes == null) {
-                    return Container(
-                      height: 150,
-                      alignment: Alignment.center,
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                      child: const CircularProgressIndicator(),
-                    );
-                  }
-                  return Image.memory(
-                    bytes,
-                    height: 180,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                  );
-                },
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: KeyedSubtree(
+                key: ValueKey(image?.path ?? existingImagePath),
+                child: image == null
+                    ? MealImage(
+                        path: existingImagePath,
+                        width: double.infinity,
+                        height: 180,
+                      )
+                    : FutureBuilder<Uint8List>(
+                        future: image!.readAsBytes(),
+                        builder: (context, snapshot) {
+                          final bytes = snapshot.data;
+                          if (bytes == null) {
+                            return Container(
+                              height: 180,
+                              alignment: Alignment.center,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              child: const CircularProgressIndicator(),
+                            );
+                          }
+                          return Image.memory(
+                            bytes,
+                            height: 180,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                          );
+                        },
+                      ),
               ),
             ),
-            const SizedBox(height: 8),
-          ],
-          Text(imageName!,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: AppTheme.muted, fontSize: 12)),
+          ),
         ],
         if (loading) ...[
           const SizedBox(height: 14),

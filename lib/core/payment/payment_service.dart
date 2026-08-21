@@ -22,6 +22,7 @@ class PaymentService {
   Future<Map<String, dynamic>> balance() => _api.balance();
   Future<List<Map<String, dynamic>>> products() => _api.products();
   Future<List<Map<String, dynamic>>> ledger() => _api.ledger();
+  Future<List<Map<String, dynamic>>> orders() => _api.orders();
 
   Future<Map<String, dynamic>> purchase({
     required String productCode,
@@ -42,8 +43,11 @@ class PaymentService {
     return _pollOrder(order['orderNo'] as String);
   }
 
-  Future<Map<String, dynamic>> requestRefund(String orderNo) =>
-      _api.requestRefund(orderNo: orderNo);
+  Future<Map<String, dynamic>> requestRefund(
+    String orderNo, {
+    required String reason,
+  }) =>
+      _api.requestRefund(orderNo: orderNo, reason: reason);
 
   Future<void> _payWechat(Map<String, dynamic> payment) async {
     final appId = payment['appId'] as String?;

@@ -7,10 +7,29 @@ class QuitSmokingRepository {
   final AppDatabase database;
 
   Future<QuitSmokingProfile?> loadProfile() async {
-    final rows = await database.open().then(
-          (db) => db.query('quit_smoking_profile', limit: 1),
-        );
-    return rows.isEmpty ? null : QuitSmokingProfile.fromRow(rows.first);
+    final db = await database.open();
+    final rows = await db.query('quit_smoking_profile', limit: 1);
+    if (rows.isEmpty) return null;
+    final profile = QuitSmokingProfile.fromRow(rows.first);
+    if (profile.mode != QuitSmokingMode.gradual ||
+        profile.planDurationDays > 0) {
+      return profile;
+    }
+    final tomorrow =
+        _dateOnlyValue(DateTime.now().add(const Duration(days: 1)));
+    final migrated = profile.copyWith(
+      planStartDate: tomorrow.millisecondsSinceEpoch,
+      targetDate: tomorrow.add(const Duration(days: 13)).millisecondsSinceEpoch,
+      planDurationDays: 14,
+      planStartTarget: profile.stageGoal > 0
+          ? profile.stageGoal.clamp(1, profile.dailyBaseline)
+          : profile.dailyBaseline,
+      extendedStageIndexes: const [],
+      needsReplan: false,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _updateProfile(db, migrated);
+    return migrated;
   }
 
   Future<QuitSmokingProfile> saveProfile({
@@ -25,10 +44,18 @@ class QuitSmokingRepository {
     required int stageGoal,
     required DateTime stageStartDate,
     required bool remindersEnabled,
+    int planDurationDays = 14,
+    int? planStartTarget,
+    bool restartPlan = false,
   }) async {
     final db = await database.open();
     final old = await loadProfile();
     final now = DateTime.now().millisecondsSinceEpoch;
+    final shouldRestart = old == null || old.mode != mode || restartPlan;
+    final gradualStart = shouldRestart
+        ? _dateOnlyValue(stageStartDate)
+        : DateTime.fromMillisecondsSinceEpoch(old.stageStartDate);
+    final gradualDuration = planDurationDays.clamp(7, 28);
     final profile = QuitSmokingProfile(
       id: old?.id,
       mode: mode,
@@ -36,12 +63,39 @@ class QuitSmokingRepository {
       packCigarettes: packCigarettes,
       packPrice: packPrice,
       smokingYears: smokingYears,
-      targetDate: _dateOnly(targetDate),
+      targetDate: mode == QuitSmokingMode.gradual
+          ? (shouldRestart
+              ? gradualStart
+                  .add(Duration(days: gradualDuration - 1))
+                  .millisecondsSinceEpoch
+              : old.targetDate)
+          : _dateOnly(targetDate),
       motivation: motivation,
       triggers: triggers,
       stageGoal: stageGoal,
       stageStartDate:
           old?.stageStartDate ?? stageStartDate.millisecondsSinceEpoch,
+      planStartDate: mode == QuitSmokingMode.gradual
+          ? (shouldRestart
+              ? gradualStart.millisecondsSinceEpoch
+              : old.planStartDate > 0
+                  ? old.planStartDate
+                  : old.stageStartDate)
+          : 0,
+      planDurationDays: mode == QuitSmokingMode.gradual
+          ? (shouldRestart ? gradualDuration : old.planDurationDays)
+          : 0,
+      planStartTarget: mode == QuitSmokingMode.gradual
+          ? (shouldRestart
+              ? (planStartTarget ?? dailyBaseline).clamp(1, dailyBaseline)
+              : old.planStartTarget)
+          : 0,
+      extendedStageIndexes: mode == QuitSmokingMode.gradual && !shouldRestart
+          ? old.extendedStageIndexes
+          : const [],
+      needsReplan: mode == QuitSmokingMode.gradual && !shouldRestart
+          ? old.needsReplan
+          : false,
       remindersEnabled: remindersEnabled,
       createdAt: old?.createdAt ?? now,
       updatedAt: now,
@@ -57,6 +111,55 @@ class QuitSmokingRepository {
       whereArgs: [old.id],
     );
     return profile;
+  }
+
+  Future<QuitSmokingProfile> evaluateAdaptivePlan({
+    required QuitSmokingProfile profile,
+    required List<QuitSmokingEvent> events,
+    required DateTime now,
+  }) async {
+    final db = await database.open();
+    final stageIndex = adaptiveStageToExtend(
+      profile: profile,
+      events: events,
+      now: now,
+    );
+    if (stageIndex != null) {
+      final updated = profile.copyWith(
+        extendedStageIndexes: [...profile.extendedStageIndexes, stageIndex],
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      await _updateProfile(db, updated);
+      return updated;
+    }
+    if (shouldSuggestGradualReplan(
+      profile: profile,
+      events: events,
+      now: now,
+    )) {
+      final updated = profile.copyWith(
+        needsReplan: true,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      await _updateProfile(db, updated);
+      return updated;
+    }
+    return profile;
+  }
+
+  Future<QuitSmokingProfile> continueCurrentStage({
+    required QuitSmokingProfile profile,
+    required DateTime now,
+  }) async {
+    final stage = buildGradualQuitPlan(profile).stageFor(now);
+    if (stage.target == 0) return profile;
+    final updated = profile.copyWith(
+      extendedStageIndexes: [...profile.extendedStageIndexes, stage.index],
+      needsReplan: false,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    await _updateProfile(await database.open(), updated);
+    return updated;
   }
 
   Future<List<QuitSmokingEvent>> loadEvents({int limit = 5000}) async {
@@ -141,4 +244,18 @@ class QuitSmokingRepository {
 
   static int _dateOnly(DateTime value) =>
       DateTime(value.year, value.month, value.day).millisecondsSinceEpoch;
+
+  static DateTime _dateOnlyValue(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
+
+  static Future<void> _updateProfile(
+    AppDatabase db,
+    QuitSmokingProfile profile,
+  ) =>
+      db.update(
+        'quit_smoking_profile',
+        profile.toRow(),
+        where: 'id = ?',
+        whereArgs: [profile.id],
+      );
 }

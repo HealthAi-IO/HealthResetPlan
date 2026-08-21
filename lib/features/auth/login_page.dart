@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/user_session.dart';
 import '../../core/auth/wechat_login_service.dart';
@@ -10,6 +11,7 @@ import '../../core/data/online_data_service.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
+import '../../core/privacy/privacy_consent_gate.dart';
 import 'account_recovery_dialog.dart';
 import 'register_page.dart';
 import 'widgets/captcha_dialog.dart';
@@ -19,13 +21,9 @@ import 'widgets/secure_password_field.dart';
 class LoginPage extends StatefulWidget {
   const LoginPage({
     super.key,
-    this.initialAccountMode = true,
-    this.accountOnly = true,
     this.returnTo = '/home',
   });
 
-  final bool initialAccountMode;
-  final bool accountOnly;
   final String returnTo;
 
   @override
@@ -38,12 +36,14 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
 
   bool _smsMode = true;
+  bool _agreed = false;
   bool _submitting = false;
   bool _sendingCode = false;
   int _countdown = 0;
   Timer? _timer;
   String? _phoneError;
   String? _credentialError;
+  String? _agreementError;
 
   @override
   void dispose() {
@@ -56,6 +56,7 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _submit() async {
     if (_submitting) return;
+    if (!_ensureAgreement()) return;
     final phone = _normalizedPhone;
     if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
       setState(() => _phoneError = '请输入正确的11位手机号');
@@ -124,6 +125,7 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _loginWithWechat() async {
     if (_submitting) return;
+    if (!_ensureAgreement()) return;
     setState(() => _submitting = true);
     try {
       final wechat = sl<WechatLoginService>();
@@ -146,7 +148,10 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  Future<AuthResult?> _showSocialPhoneDialog(SocialLoginResult social) {
+  Future<AuthResult?> _showSocialPhoneDialog(
+    SocialLoginResult social, {
+    String provider = '微信',
+  }) {
     final phoneController = TextEditingController();
     final codeController = TextEditingController();
     var syncProfile = true;
@@ -158,31 +163,52 @@ class _LoginPageState extends State<LoginPage> {
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('绑定手机号后登录'),
+          title: Text('绑定手机号后使用$provider登录'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: '手机号')),
+            TextField(
+                controller: phoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: '手机号')),
             TextField(
               controller: codeController,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
                 labelText: '验证码',
                 suffixIcon: TextButton(
-                  onPressed: sending || countdown > 0 ? null : () async {
-                    final phone = phoneController.text.replaceAll(RegExp(r'\D'), '');
-                    if (!RegExp(r'^1\d{10}$').hasMatch(phone)) return;
-                    setDialogState(() => sending = true);
-                    try {
-                      final captcha = await showLoginCaptchaDialog(context: context, api: sl<AuthApi>(), phone: phone);
-                      if (captcha == null || captcha.isEmpty) return;
-                      final sent = await sl<AuthApi>().sendSmsLoginCode(phone: phone, captchaTicket: captcha);
-                      if (sent.debugCode.isNotEmpty) codeController.text = sent.debugCode;
-                      setDialogState(() => countdown = 60);
-                      timer?.cancel();
-                      timer = Timer.periodic(const Duration(seconds: 1), (t) {
-                        if (!context.mounted || countdown <= 1) { t.cancel(); if (context.mounted) setDialogState(() => countdown = 0); } else { setDialogState(() => countdown--); }
-                      });
-                    } finally { if (context.mounted) setDialogState(() => sending = false); }
-                  },
+                  onPressed: sending || countdown > 0
+                      ? null
+                      : () async {
+                          final phone = phoneController.text
+                              .replaceAll(RegExp(r'\D'), '');
+                          if (!RegExp(r'^1\d{10}$').hasMatch(phone)) return;
+                          setDialogState(() => sending = true);
+                          try {
+                            final captcha = await showLoginCaptchaDialog(
+                                context: context,
+                                api: sl<AuthApi>(),
+                                phone: phone);
+                            if (captcha == null || captcha.isEmpty) return;
+                            final sent = await sl<AuthApi>().sendSmsLoginCode(
+                                phone: phone, captchaTicket: captcha);
+                            if (sent.debugCode.isNotEmpty)
+                              codeController.text = sent.debugCode;
+                            setDialogState(() => countdown = 60);
+                            timer?.cancel();
+                            timer =
+                                Timer.periodic(const Duration(seconds: 1), (t) {
+                              if (!context.mounted || countdown <= 1) {
+                                t.cancel();
+                                if (context.mounted)
+                                  setDialogState(() => countdown = 0);
+                              } else {
+                                setDialogState(() => countdown--);
+                              }
+                            });
+                          } finally {
+                            if (context.mounted)
+                              setDialogState(() => sending = false);
+                          }
+                        },
                   child: Text(countdown > 0 ? '$countdown 秒' : '获取验证码'),
                 ),
               ),
@@ -190,26 +216,45 @@ class _LoginPageState extends State<LoginPage> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               value: syncProfile,
-              onChanged: (value) => setDialogState(() => syncProfile = value ?? false),
-              title: const Text('同步微信昵称和头像'),
+              onChanged: (value) =>
+                  setDialogState(() => syncProfile = value ?? false),
+              title: Text('同步$provider昵称和头像'),
               controlAffinity: ListTileControlAffinity.leading,
             ),
           ]),
           actions: [
-            TextButton(onPressed: () { timer?.cancel(); Navigator.pop(dialogContext); }, child: const Text('取消')),
+            TextButton(
+                onPressed: () {
+                  timer?.cancel();
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('取消')),
             FilledButton(
               onPressed: () async {
-                final phone = phoneController.text.replaceAll(RegExp(r'\D'), '');
-                if (!RegExp(r'^1\d{10}$').hasMatch(phone) || codeController.text.length != 6) return;
-                final auth = await sl<AuthApi>().verifySocialPhone(ticket: social.ticket!, phone: phone, code: codeController.text, syncProfile: syncProfile);
-                if (dialogContext.mounted) { timer?.cancel(); Navigator.pop(dialogContext, auth); }
+                final phone =
+                    phoneController.text.replaceAll(RegExp(r'\D'), '');
+                if (!RegExp(r'^1\d{10}$').hasMatch(phone) ||
+                    codeController.text.length != 6) return;
+                final auth = await sl<AuthApi>().verifySocialPhone(
+                    ticket: social.ticket!,
+                    phone: phone,
+                    code: codeController.text,
+                    syncProfile: syncProfile);
+                if (dialogContext.mounted) {
+                  timer?.cancel();
+                  Navigator.pop(dialogContext, auth);
+                }
               },
               child: const Text('确认绑定'),
             ),
           ],
         ),
       ),
-    ).whenComplete(() { phoneController.dispose(); codeController.dispose(); timer?.cancel(); });
+    ).whenComplete(() {
+      phoneController.dispose();
+      codeController.dispose();
+      timer?.cancel();
+    });
   }
 
   Future<void> _completeLogin(AuthResult result) async {
@@ -256,6 +301,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _sendCode() async {
+    if (!_ensureAgreement()) return;
     final phone = _normalizedPhone;
     if (!RegExp(r'^1\d{10}$').hasMatch(phone)) {
       setState(() => _phoneError = '请输入正确的11位手机号');
@@ -299,6 +345,14 @@ class _LoginPageState extends State<LoginPage> {
 
   String get _normalizedPhone =>
       _phoneController.text.replaceAll(RegExp(r'\D'), '');
+
+  bool _ensureAgreement() {
+    if (_agreed) return true;
+    setState(() {
+      _agreementError = '请先阅读并勾选同意用户协议和隐私政策';
+    });
+    return false;
+  }
 
   void _changeLoginMode(bool smsMode) {
     setState(() {
@@ -405,7 +459,21 @@ class _LoginPageState extends State<LoginPage> {
               errorText: _credentialError,
               onSubmitted: (_) => _submit(),
             ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 18),
+          _LoginAgreementPanel(
+            agreed: _agreed,
+            enabled: !_submitting,
+            errorText: _agreementError,
+            onChanged: (value) {
+              setState(() {
+                _agreed = value;
+                if (value) _agreementError = null;
+              });
+            },
+            onTermsTap: () => launchUrl(Uri.parse(termsOfServiceUrl)),
+            onPrivacyTap: () => context.push('/privacy-policy'),
+          ),
+          const SizedBox(height: 14),
           FilledButton(
             onPressed: _submitting ? null : _submit,
             child: _submitting
@@ -418,10 +486,6 @@ class _LoginPageState extends State<LoginPage> {
           ),
           const SizedBox(height: 12),
           TextButton(
-            onPressed: () => context.push('/privacy-policy'),
-            child: const Text('登录即表示已阅读并同意《隐私政策》'),
-          ),
-          TextButton(
             onPressed: _submitting ? null : _openAccountRecovery,
             child: const Text('恢复已注销账号'),
           ),
@@ -431,14 +495,120 @@ class _LoginPageState extends State<LoginPage> {
             icon: const Icon(Icons.chat_bubble_outline),
             label: const Text('微信登录'),
           ),
-          OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.account_balance_wallet_outlined),
-            label: const Text('支付宝登录（审核中）'),
-          ),
           const SizedBox(height: 20),
           const SeniorModeEntry(),
         ],
+      ),
+    );
+  }
+}
+
+class _LoginAgreementPanel extends StatelessWidget {
+  const _LoginAgreementPanel({
+    required this.agreed,
+    required this.enabled,
+    required this.errorText,
+    required this.onChanged,
+    required this.onTermsTap,
+    required this.onPrivacyTap,
+  });
+
+  final bool agreed;
+  final bool enabled;
+  final String? errorText;
+  final ValueChanged<bool> onChanged;
+  final VoidCallback onTermsTap;
+  final VoidCallback onPrivacyTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+      decoration: BoxDecoration(
+        color: errorText == null
+            ? colors.surfaceContainerLow
+            : colors.errorContainer.withValues(alpha: 0.32),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: errorText == null ? colors.outlineVariant : colors.error,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Checkbox(
+                value: agreed,
+                onChanged:
+                    enabled ? (value) => onChanged(value ?? false) : null,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text('我已阅读并同意'),
+                    _LoginAgreementLink(
+                      label: '《用户协议》',
+                      onTap: onTermsTap,
+                    ),
+                    const Text('和'),
+                    _LoginAgreementLink(
+                      label: '《隐私政策》',
+                      onTap: onPrivacyTap,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (errorText != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(48, 0, 4, 6),
+              child: Text(
+                errorText!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.error,
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoginAgreementLink extends StatelessWidget {
+  const _LoginAgreementLink({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      link: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Center(
+            widthFactor: 1,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

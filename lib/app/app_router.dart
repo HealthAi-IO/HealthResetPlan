@@ -56,23 +56,26 @@ class AppRouter {
     return CustomTransitionPage<void>(
       key: state.pageKey,
       child: child,
-      transitionDuration: const Duration(milliseconds: 160),
-      reverseTransitionDuration: const Duration(milliseconds: 120),
+      transitionDuration: const Duration(milliseconds: 220),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+          return child;
+        }
         final curved = CurvedAnimation(
           parent: animation,
-          curve: Curves.easeOutQuad,
-          reverseCurve: Curves.easeInQuad,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
         );
         return SlideTransition(
           position: Tween<Offset>(
-            begin: const Offset(0.025, 0),
+            begin: const Offset(0.10, 0),
             end: Offset.zero,
           ).animate(curved),
           child: FadeTransition(
-            opacity: curved,
+            opacity: Tween<double>(begin: 0.88, end: 1).animate(curved),
             child: ScaleTransition(
-              scale: Tween<double>(begin: 0.995, end: 1).animate(curved),
+              scale: Tween<double>(begin: 0.98, end: 1).animate(curved),
               child: child,
             ),
           ),
@@ -102,8 +105,6 @@ class AppRouter {
         return Uri(
           path: '/login',
           queryParameters: {
-            'account': '1',
-            'accountOnly': '1',
             'returnTo': state.uri.toString(),
           },
         ).toString();
@@ -379,14 +380,9 @@ class AppRouter {
       GoRoute(
         path: '/login',
         pageBuilder: (_, state) {
-          final forceAccount = state.extra == true ||
-              state.uri.queryParameters['account'] == '1';
-          final accountOnly = state.uri.queryParameters['accountOnly'] == '1';
           return _page(
             state,
             LoginPage(
-              initialAccountMode: forceAccount,
-              accountOnly: accountOnly,
               returnTo: _safeReturnTo(state.uri.queryParameters['returnTo']),
             ),
           );
@@ -427,9 +423,7 @@ class AppRouter {
           final args = state.extra;
           return _page(
             state,
-            args is RegisterArgs
-                ? RegisterPage(args: args)
-                : const LoginPage(initialAccountMode: true),
+            args is RegisterArgs ? RegisterPage(args: args) : const LoginPage(),
           );
         },
       ),

@@ -20,6 +20,11 @@ class PaymentApi {
     return _list(response.data);
   }
 
+  Future<List<Map<String, dynamic>>> orders() async {
+    final response = await _client.dio.get('/ai-credits/orders');
+    return _list(response.data);
+  }
+
   Future<Map<String, dynamic>> createOrder({
     required String productCode,
     required String channel,

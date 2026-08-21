@@ -53,7 +53,8 @@ class AuthApi {
   }
 
   Future<SocialLoginResult> startWechat(String code) async {
-    final resp = await _client.dio.post('/auth/social/wechat', data: {'code': code});
+    final resp =
+        await _client.dio.post('/auth/social/wechat', data: {'code': code});
     return SocialLoginResult.fromJson(_unwrapData(resp.data));
   }
 
@@ -209,12 +210,17 @@ class AuthApi {
           avatarUrl: data['avatarUrl'] as String? ?? '',
           hasCloudSync: data['hasCloudSync'] == true,
           hasPassword: data['hasPassword'] == true,
+          hasWechat: data['hasWechat'] == true,
         );
       }
       return null;
     } on DioException {
       return null;
     }
+  }
+
+  Future<void> bindWechat(String code) async {
+    await _client.dio.post('/users/me/wechat', data: {'code': code});
   }
 
   Future<AccountInfo?> updateAccountProfile({
@@ -281,7 +287,12 @@ class AuthResult {
 }
 
 class SocialLoginResult {
-  const SocialLoginResult({required this.status, this.token, this.ticket, this.nickname, this.avatarUrl});
+  const SocialLoginResult(
+      {required this.status,
+      this.token,
+      this.ticket,
+      this.nickname,
+      this.avatarUrl});
   final String status;
   final AuthResult? token;
   final String? ticket;
@@ -292,7 +303,9 @@ class SocialLoginResult {
     final token = json['token'];
     return SocialLoginResult(
       status: json['status'] as String? ?? '',
-      token: token is Map ? AuthResult.fromJson(Map<String, dynamic>.from(token)) : null,
+      token: token is Map
+          ? AuthResult.fromJson(Map<String, dynamic>.from(token))
+          : null,
       ticket: json['ticket'] as String?,
       nickname: json['nickname'] as String?,
       avatarUrl: json['avatarUrl'] as String?,
@@ -309,6 +322,7 @@ class AccountInfo {
     required this.avatarUrl,
     required this.hasCloudSync,
     required this.hasPassword,
+    required this.hasWechat,
   });
 
   final String userId;
@@ -318,6 +332,7 @@ class AccountInfo {
   final String avatarUrl;
   final bool hasCloudSync;
   final bool hasPassword;
+  final bool hasWechat;
 
   factory AccountInfo.fromJson(Map<String, dynamic> j) => AccountInfo(
         userId: j['userId'] as String? ?? '',
@@ -327,6 +342,7 @@ class AccountInfo {
         avatarUrl: j['avatarUrl'] as String? ?? '',
         hasCloudSync: j['hasCloudSync'] == true,
         hasPassword: j['hasPassword'] == true,
+        hasWechat: j['hasWechat'] == true,
       );
 }
 
