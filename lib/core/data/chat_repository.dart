@@ -48,6 +48,7 @@ class ChatMessage {
     required this.updatedAt,
     required this.messageUuid,
     required this.sessionUuid,
+    required this.contextSources,
   });
 
   final int id;
@@ -60,6 +61,7 @@ class ChatMessage {
   final int updatedAt;
   final String messageUuid;
   final String sessionUuid;
+  final List<String> contextSources;
 
   factory ChatMessage.fromRow(Map<String, Object?> row) => ChatMessage(
         id: row['id'] as int,
@@ -73,6 +75,7 @@ class ChatMessage {
             (row['updated_at'] as int?) ?? (row['created_at'] as int?) ?? 0,
         messageUuid: (row['message_uuid'] as String?) ?? '',
         sessionUuid: (row['session_uuid'] as String?) ?? '',
+        contextSources: _decodeStringList(row['context_sources_json']),
       );
 
   Map<String, String> toApiFormat() => {
@@ -161,6 +164,79 @@ class ChatRepository {
 
   // ── 消息 ─────────────────────────────────────────────────────
 
+  Future<({int userMessageId, int assistantMessageId})> addMessagePair({
+    required int sessionId,
+    required String userContent,
+    required String provider,
+  }) async {
+    final db = await _database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    late int userMessageId;
+    late int assistantMessageId;
+    await db.transaction((txn) async {
+      final sessions = await txn.query(
+        'ai_session',
+        where: 'id = ?',
+        whereArgs: [sessionId],
+        limit: 1,
+      );
+      if (sessions.isEmpty) throw StateError('对话会话不存在');
+      final session = sessions.first;
+      final sessionUuid = session['session_uuid'] as String? ?? '';
+      userMessageId = await txn.insert('ai_message', {
+        'session_id': sessionId,
+        'role': 'user',
+        'content': userContent,
+        'provider': '',
+        'is_error': 0,
+        'created_at': now,
+        'updated_at': now,
+        'message_uuid': _uuid.v4(),
+        'session_uuid': sessionUuid,
+        'version': now,
+        'is_dirty': 1,
+        'sync_at': 0,
+      });
+      assistantMessageId = await txn.insert('ai_message', {
+        'session_id': sessionId,
+        'role': 'assistant',
+        'content': '',
+        'provider': provider,
+        'is_error': 0,
+        'created_at': now + 1,
+        'updated_at': now + 1,
+        'message_uuid': _uuid.v4(),
+        'session_uuid': sessionUuid,
+        'version': now + 1,
+        'is_dirty': 1,
+        'sync_at': 0,
+      });
+      final currentCount = (session['message_count'] as int?) ?? 0;
+      final currentTitle = session['title'] as String? ?? '';
+      final clean = userContent.trim().replaceAll(RegExp(r'\s+'), ' ');
+      final title =
+          currentCount == 0 && (currentTitle.isEmpty || currentTitle == '新对话')
+              ? (clean.length > 24 ? '${clean.substring(0, 24)}…' : clean)
+              : currentTitle;
+      await txn.update(
+        'ai_session',
+        {
+          'message_count': currentCount + 2,
+          'updated_at': now + 1,
+          'version': now + 1,
+          'is_dirty': 1,
+          'title': title,
+        },
+        where: 'id = ?',
+        whereArgs: [sessionId],
+      );
+    });
+    return (
+      userMessageId: userMessageId,
+      assistantMessageId: assistantMessageId,
+    );
+  }
+
   /// 加载某会话下的全部消息（按时间顺序）
   Future<List<ChatMessage>> loadMessages(int sessionId) async {
     final db = await _database.open();
@@ -247,6 +323,7 @@ class ChatRepository {
     required int messageId,
     required String content,
     bool isError = false,
+    List<String>? contextSources,
   }) async {
     final db = await _database.open();
     await db.update(
@@ -257,10 +334,53 @@ class ChatRepository {
         'updated_at': DateTime.now().millisecondsSinceEpoch,
         'version': DateTime.now().millisecondsSinceEpoch,
         'is_dirty': 1,
+        if (contextSources != null)
+          'context_sources_json': jsonEncode(contextSources),
       },
       where: 'id = ?',
       whereArgs: [messageId],
     );
+  }
+
+  Future<List<AiCoachMemory>> listMemories() async {
+    final db = await _database.open();
+    final rows = await db.query('ai_memory', orderBy: 'updated_at DESC');
+    return rows.map(AiCoachMemory.fromRow).toList();
+  }
+
+  Future<void> saveMemory({int? id, required String content}) async {
+    final value = content.trim();
+    if (value.isEmpty) return;
+    final db = await _database.open();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (id == null) {
+      await db.insert('ai_memory', {
+        'memory_uuid': _uuid.v4(),
+        'content': value,
+        'enabled': 1,
+        'created_at': now,
+        'updated_at': now,
+        'version': now,
+        'is_dirty': 1,
+      });
+      return;
+    }
+    await db.update(
+      'ai_memory',
+      {
+        'content': value,
+        'updated_at': now,
+        'version': now,
+        'is_dirty': 1,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> deleteMemory(int id) async {
+    final db = await _database.open();
+    await db.delete('ai_memory', where: 'id = ?', whereArgs: [id]);
   }
 
   /// 清空所有会话与消息（调试用）
@@ -354,5 +474,36 @@ class ChatRepository {
       'created_at': now,
       'updated_at': now,
     }).then((_) {});
+  }
+}
+
+class AiCoachMemory {
+  const AiCoachMemory({
+    required this.id,
+    required this.content,
+    required this.enabled,
+    required this.updatedAt,
+  });
+
+  final int id;
+  final String content;
+  final bool enabled;
+  final int updatedAt;
+
+  factory AiCoachMemory.fromRow(Map<String, Object?> row) => AiCoachMemory(
+        id: row['id'] as int,
+        content: row['content'] as String? ?? '',
+        enabled: (row['enabled'] as num?)?.toInt() != 0,
+        updatedAt: (row['updated_at'] as num?)?.toInt() ?? 0,
+      );
+}
+
+List<String> _decodeStringList(Object? raw) {
+  if (raw is! String || raw.isEmpty) return const [];
+  try {
+    final value = jsonDecode(raw);
+    return value is List ? value.map((item) => '$item').toList() : const [];
+  } catch (_) {
+    return const [];
   }
 }

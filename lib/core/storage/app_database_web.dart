@@ -84,6 +84,7 @@ class _MemoryAppDatabase extends AppDatabase {
     'meal_settings',
     'ai_session',
     'ai_message',
+    'ai_memory',
     'quit_smoking_profile',
     'smoking_event',
   ];
@@ -322,6 +323,7 @@ class _MemoryAppDatabase extends AppDatabase {
     'meal_settings',
     'ai_session',
     'ai_message',
+    'ai_memory',
     'quit_smoking_profile',
     'smoking_event',
   ];

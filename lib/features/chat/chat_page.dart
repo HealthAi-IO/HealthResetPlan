@@ -1,6 +1,12 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/data/chat_repository.dart';
@@ -9,6 +15,7 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
+import '../../core/network/telemetry_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
 import '../../core/widgets/health_ui.dart';
@@ -36,6 +43,13 @@ class _ChatPageState extends State<ChatPage> {
   bool _sending = false;
   bool _loadingHistory = true;
   UserProfileData? _profile;
+  bool _personalized = true;
+  CancelToken? _streamCancelToken;
+  Timer? _tokenFlushTimer;
+  String _pendingTokens = '';
+  int? _streamingMessageId;
+  List<String> _streamContextSources = const [];
+  int _lastPartialPersistAt = 0;
 
   static const _quickQuestions = [
     '我的血压今天偏高，有什么需要注意的？',
@@ -53,6 +67,8 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _streamCancelToken?.cancel('page_disposed');
+    _tokenFlushTimer?.cancel();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
     _focusNode.dispose();
@@ -68,6 +84,14 @@ class _ChatPageState extends State<ChatPage> {
     await requireAccountAndMember(context, PaywallFeature.aiPlan);
     if (!mounted) return;
 
+    final prefs = await SharedPreferences.getInstance();
+    final savedMode = prefs.getBool('ai_chat_personalized');
+    if (savedMode == null && mounted) {
+      _personalized = await _choosePersonalizationMode();
+      await prefs.setBool('ai_chat_personalized', _personalized);
+    } else {
+      _personalized = savedMode ?? true;
+    }
     _profile = await _repo.loadProfile();
     final sessions = await _chatRepo.listSessions();
 
@@ -85,6 +109,30 @@ class _ChatPageState extends State<ChatPage> {
     if (!mounted) return;
     setState(() => _loadingHistory = false);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  Future<bool> _choosePersonalizationMode() async {
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('选择健康管家模式'),
+            content: const Text(
+              '个性化模式会按需参考你的档案、近期指标、近 7 天饮食、今日计划和你确认保存的管家记忆；通用模式不会读取这些个人记录。之后可随时切换。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('使用通用模式'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('使用个性化模式'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   String _buildProfileSummary() {
@@ -317,20 +365,20 @@ class _ChatPageState extends State<ChatPage> {
 
       final sessionId = _currentSession!.id;
 
-      // 1) 写入 user 消息到本地
-      final userMsgId = await _chatRepo.addMessage(
+      // 一次事务写入用户消息和流式占位，减少发送前同步等待。
+      final messageIds = await _chatRepo.addMessagePair(
         sessionId: sessionId,
-        role: 'user',
-        content: trimmed,
-      );
-
-      // 2) 预占 assistant 消息（先空内容，流式累加）
-      final assistantMsgId = await _chatRepo.addMessage(
-        sessionId: sessionId,
-        role: 'assistant',
-        content: '',
+        userContent: trimmed,
         provider: _selectedProvider,
       );
+      final userMsgId = messageIds.userMessageId;
+      final assistantMsgId = messageIds.assistantMessageId;
+      final requestId = const Uuid().v4();
+      _streamCancelToken = CancelToken();
+      _streamingMessageId = assistantMsgId;
+      _streamContextSources = const [];
+      _pendingTokens = '';
+      _lastPartialPersistAt = 0;
 
       if (!mounted) return;
       setState(() {
@@ -352,28 +400,38 @@ class _ChatPageState extends State<ChatPage> {
 
       // 3) 构建发给 API 的历史（排除当前的空 assistant 占位）
       final history = _messages
-          .where((m) => m.content.isNotEmpty)
+          .where((m) => m.content.isNotEmpty && !m.isError)
           .map((m) => {'role': m.role, 'content': m.content})
           .toList();
 
+      unawaited(sl<TelemetryApi>().record('ai_chat_stream_started'));
       await _aiApi.streamChat(
         messages: history,
         provider: _apiProvider,
         profileSummary: _buildProfileSummary(),
-        onToken: (token) {
+        sessionId: _currentSession!.sessionUuid,
+        requestId: requestId,
+        personalized: _personalized,
+        cancelToken: _streamCancelToken,
+        onMetadata: (sources) {
+          if (_streamingMessageId != assistantMsgId) return;
+          _streamContextSources = List.unmodifiable(sources);
           if (!mounted) return;
-          setState(() {
-            final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
-            if (idx >= 0) {
+          final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
+          if (idx >= 0) {
+            setState(() {
               _messages[idx] = _messages[idx].copyWith(
-                content: _messages[idx].content + token,
+                contextSources: _streamContextSources,
               );
-            }
-          });
-          _scrollToBottom();
+            });
+          }
+        },
+        onToken: (token) {
+          _queueStreamToken(assistantMsgId, token);
         },
         onDone: () async {
-          if (!mounted) return;
+          if (!mounted || _streamingMessageId != assistantMsgId) return;
+          _flushStreamTokens(assistantMsgId);
           final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
           if (idx >= 0) {
             final finalContent = _messages[idx].content.trim();
@@ -388,19 +446,26 @@ class _ChatPageState extends State<ChatPage> {
             await _chatRepo.updateMessageContent(
               messageId: assistantMsgId,
               content: finalContent,
+              contextSources: _streamContextSources,
             );
+            _clearStreamState();
+            unawaited(sl<TelemetryApi>().record('ai_chat_stream_completed'));
           } else {
             setState(() => _sending = false);
           }
           _scrollToBottom();
         },
         onError: (error) async {
-          if (!mounted) return;
+          if (!mounted || _streamingMessageId != assistantMsgId) return;
+          _flushStreamTokens(assistantMsgId);
           final idx = _messages.indexWhere((m) => m.id == assistantMsgId);
           if (idx >= 0) {
+            final existing = _messages[idx].content.trim();
+            final displayContent =
+                existing.isEmpty ? error : '$existing\n\n（回答传输中断：$error）';
             setState(() {
               _messages[idx] = _messages[idx].copyWith(
-                content: error,
+                content: displayContent,
                 streaming: false,
                 isError: true,
               );
@@ -408,22 +473,96 @@ class _ChatPageState extends State<ChatPage> {
             });
             await _chatRepo.updateMessageContent(
               messageId: assistantMsgId,
-              content: error,
+              content: displayContent,
               isError: true,
+              contextSources: _streamContextSources,
             );
+            _clearStreamState();
+            unawaited(sl<TelemetryApi>().record('ai_chat_stream_failed'));
           } else {
             setState(() => _sending = false);
+          }
+          if (error.contains('AI 健康权益已用完') && mounted) {
+            await showAiCreditRequiredDialog(context);
           }
         },
       );
     } catch (_) {
       if (mounted) {
+        _clearStreamState();
         setState(() => _sending = false);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('消息发送失败，请重试')));
       }
     }
+  }
+
+  void _queueStreamToken(int messageId, String token) {
+    if (token.isEmpty || _streamingMessageId != messageId) return;
+    _pendingTokens += token;
+    _tokenFlushTimer ??= Timer(const Duration(milliseconds: 50), () {
+      _tokenFlushTimer = null;
+      _flushStreamTokens(messageId);
+    });
+  }
+
+  void _flushStreamTokens(int messageId) {
+    final token = _pendingTokens;
+    _pendingTokens = '';
+    if (!mounted || token.isEmpty) return;
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx < 0) return;
+    setState(() {
+      _messages[idx] = _messages[idx].copyWith(
+        content: _messages[idx].content + token,
+      );
+    });
+    _scrollToBottom();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastPartialPersistAt >= 2000) {
+      _lastPartialPersistAt = now;
+      unawaited(_chatRepo.updateMessageContent(
+        messageId: messageId,
+        content: _messages[idx].content,
+        contextSources: _streamContextSources,
+      ));
+    }
+  }
+
+  Future<void> _stopGeneration() async {
+    final messageId = _streamingMessageId;
+    if (messageId == null) return;
+    _streamCancelToken?.cancel('user_stopped');
+    unawaited(sl<TelemetryApi>().record('ai_chat_stream_stopped'));
+    _flushStreamTokens(messageId);
+    final idx = _messages.indexWhere((message) => message.id == messageId);
+    if (idx >= 0) {
+      final content = _messages[idx].content.trim();
+      final savedContent = content.isEmpty ? '已停止生成' : content;
+      setState(() {
+        _messages[idx] = _messages[idx].copyWith(
+          content: savedContent,
+          streaming: false,
+        );
+        _sending = false;
+      });
+      await _chatRepo.updateMessageContent(
+        messageId: messageId,
+        content: savedContent,
+        contextSources: _streamContextSources,
+      );
+    }
+    _clearStreamState();
+  }
+
+  void _clearStreamState() {
+    _tokenFlushTimer?.cancel();
+    _tokenFlushTimer = null;
+    _pendingTokens = '';
+    _streamCancelToken = null;
+    _streamingMessageId = null;
+    _streamContextSources = const [];
   }
 
   Future<ChatSession> _ensureSession() async {
@@ -433,6 +572,22 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   String get _apiProvider => _selectedProvider;
+
+  Future<void> _showCoachSettings() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _CoachSettingsSheet(
+        repository: _chatRepo,
+        personalized: _personalized,
+        onPersonalizedChanged: (value) async {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('ai_chat_personalized', value);
+          if (mounted) setState(() => _personalized = value);
+        },
+      ),
+    );
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -468,12 +623,17 @@ class _ChatPageState extends State<ChatPage> {
           child: Padding(
             padding: EdgeInsets.only(bottom: 6),
             child: Text(
-              '● 结合你的记录回答 · 仅供参考',
+              _personalized ? '● 个性化模式 · 结合你的记录回答' : '● 通用模式 · 不读取个人健康数据',
               style: TextStyle(color: AppTheme.aiPurple, fontSize: 11),
             ),
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: '个性化与管家记忆',
+            icon: const Icon(Icons.psychology_alt_outlined),
+            onPressed: _showCoachSettings,
+          ),
           // 历史
           IconButton(
             tooltip: '历史对话',
@@ -518,6 +678,7 @@ class _ChatPageState extends State<ChatPage> {
                                 provider: m.provider,
                                 isError: m.isError,
                                 streaming: m.streaming,
+                                contextSources: m.contextSources,
                               );
                             },
                           ),
@@ -550,6 +711,12 @@ class _ChatPageState extends State<ChatPage> {
           Text(
             '有什么健康问题，直接问我吧',
             style: TextStyle(color: AppTheme.muted, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '首次成功回复扣 1 次，30 分钟内最多 10 轮追问不重复扣费',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppTheme.muted, fontSize: 12),
           ),
         ],
       ),
@@ -633,16 +800,14 @@ class _ChatPageState extends State<ChatPage> {
             ),
             const SizedBox(width: 8),
             _sending
-                ? const SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: Center(
-                      child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                ? IconButton.filled(
+                    tooltip: '停止生成',
+                    onPressed: _stopGeneration,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.red.shade600,
+                      foregroundColor: Colors.white,
                     ),
+                    icon: const Icon(Icons.stop_rounded, size: 20),
                   )
                 : IconButton.filled(
                     onPressed: () => _sendMessage(_inputCtrl.text),
@@ -669,6 +834,7 @@ class _UiMessage {
     this.provider = '',
     this.isError = false,
     this.streaming = false,
+    this.contextSources = const [],
   });
 
   final int id;
@@ -677,8 +843,14 @@ class _UiMessage {
   String provider;
   bool isError;
   bool streaming;
+  final List<String> contextSources;
 
-  _UiMessage copyWith({String? content, bool? streaming, bool? isError}) =>
+  _UiMessage copyWith({
+    String? content,
+    bool? streaming,
+    bool? isError,
+    List<String>? contextSources,
+  }) =>
       _UiMessage(
         id: id,
         role: role,
@@ -686,6 +858,7 @@ class _UiMessage {
         provider: provider,
         isError: isError ?? this.isError,
         streaming: streaming ?? this.streaming,
+        contextSources: contextSources ?? this.contextSources,
       );
 
   factory _UiMessage.fromDb(ChatMessage m) => _UiMessage(
@@ -694,6 +867,7 @@ class _UiMessage {
         content: m.content,
         provider: m.provider,
         isError: m.isError,
+        contextSources: m.contextSources,
       );
 }
 
@@ -706,6 +880,7 @@ class _MessageBubble extends StatelessWidget {
     this.provider = '',
     this.isError = false,
     this.streaming = false,
+    this.contextSources = const [],
   });
 
   final String role;
@@ -713,6 +888,7 @@ class _MessageBubble extends StatelessWidget {
   final String provider;
   final bool isError;
   final bool streaming;
+  final List<String> contextSources;
 
   bool get isUser => role == 'user';
 
@@ -790,6 +966,37 @@ class _MessageBubble extends StatelessWidget {
                                 : Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
+                    if (!isUser && contextSources.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '参考：${contextSources.join(' · ')}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                    if (!isUser && !isError && !streaming) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          _ChatAction(
+                            label: '今日计划',
+                            onTap: () => context.go('/plan'),
+                          ),
+                          _ChatAction(
+                            label: '记录饮食',
+                            onTap: () => context.go('/meals'),
+                          ),
+                          _ChatAction(
+                            label: '指标趋势',
+                            onTap: () => context.go('/indicators'),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -797,6 +1004,199 @@ class _MessageBubble extends StatelessWidget {
           ),
           if (isUser) const SizedBox(width: 8),
         ],
+      ),
+    );
+  }
+}
+
+class _ChatAction extends StatelessWidget {
+  const _ChatAction({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      visualDensity: VisualDensity.compact,
+      label: Text(label, style: const TextStyle(fontSize: 11)),
+      onPressed: onTap,
+    );
+  }
+}
+
+class _CoachSettingsSheet extends StatefulWidget {
+  const _CoachSettingsSheet({
+    required this.repository,
+    required this.personalized,
+    required this.onPersonalizedChanged,
+  });
+
+  final ChatRepository repository;
+  final bool personalized;
+  final Future<void> Function(bool value) onPersonalizedChanged;
+
+  @override
+  State<_CoachSettingsSheet> createState() => _CoachSettingsSheetState();
+}
+
+class _CoachSettingsSheetState extends State<_CoachSettingsSheet> {
+  late bool _personalized;
+  List<AiCoachMemory> _memories = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _personalized = widget.personalized;
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final memories = await widget.repository.listMemories();
+    if (!mounted) return;
+    setState(() {
+      _memories = memories;
+      _loading = false;
+    });
+  }
+
+  Future<void> _editMemory([AiCoachMemory? memory]) async {
+    final controller = TextEditingController(text: memory?.content ?? '');
+    final content = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(memory == null ? '添加管家记忆' : '修改管家记忆'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 120,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: '例如：不吃海鲜，工作日只能晚上运动',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (content == null || content.trim().isEmpty) return;
+    await widget.repository.saveMemory(id: memory?.id, content: content);
+    await _reload();
+  }
+
+  Future<void> _deleteMemory(AiCoachMemory memory) async {
+    await widget.repository.deleteMemory(memory.id);
+    await _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          16,
+          20,
+          20 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.68,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '个性化与管家记忆',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('结合我的健康数据'),
+                subtitle: Text(
+                  _personalized
+                      ? '读取档案、近期指标、饮食、今日计划和下方记忆'
+                      : '仅提供通用健康知识，不读取个人记录',
+                ),
+                value: _personalized,
+                onChanged: (value) async {
+                  setState(() => _personalized = value);
+                  await widget.onPersonalizedChanged(value);
+                },
+              ),
+              const Divider(),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '我希望管家记住',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _editMemory,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('添加'),
+                  ),
+                ],
+              ),
+              Text(
+                '只保存你确认的目标、偏好和生活安排，可随时修改或删除。',
+                style: TextStyle(fontSize: 12, color: AppTheme.muted),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _memories.isEmpty
+                        ? Center(
+                            child: Text(
+                              '尚未添加长期记忆',
+                              style: TextStyle(color: AppTheme.muted),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: _memories.length,
+                            separatorBuilder: (_, __) => const Divider(),
+                            itemBuilder: (_, index) {
+                              final memory = _memories[index];
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.psychology_outlined),
+                                title: Text(memory.content),
+                                onTap: () => _editMemory(memory),
+                                trailing: IconButton(
+                                  tooltip: '删除记忆',
+                                  onPressed: () => _deleteMemory(memory),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              );
+                            },
+                          ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as image_lib;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +18,7 @@ import '../../core/membership/paywall.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_response.dart';
 import '../../core/network/file_api.dart';
+import '../../core/payment/payment_service.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/storage/report_image_storage.dart';
 import '../../core/widgets/ai_content_notice.dart';
@@ -221,6 +223,8 @@ class _ReportPageState extends State<ReportPage> {
   bool _saving = false;
   String _analyzeStage = '';
   XFile? _pickedImage;
+  String? _uploadedImagePath;
+  String? _reportClientId;
   _OcrResult? _ocrResult;
   List<HealthReportRecord> _reports = const [];
   int? _aiRemaining;
@@ -253,11 +257,9 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _loadAiUsage() async {
     try {
-      final response = await _apiClient.dio.get('/ai/chat/daily-usage');
-      final body = _unwrapResponseData(response.data);
-      final report = body['report'];
-      if (mounted && report is Map) {
-        setState(() => _aiRemaining = (report['remaining'] as num?)?.toInt());
+      final balance = await sl<PaymentService>().balance();
+      if (mounted) {
+        setState(() => _aiRemaining = (balance['balance'] as num?)?.toInt());
       }
     } catch (_) {}
   }
@@ -341,7 +343,9 @@ class _ReportPageState extends State<ReportPage> {
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('报告图片处理提示'),
-          content: const Text('报告图片会发送给已配置的 AI 服务商，仅用于本次指标识别。是否继续？'),
+          content: const Text(
+            '报告图片会加密保存到当前账号的私有对象存储，并发送给已配置的 AI 服务商用于指标识别。是否继续？',
+          ),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -372,8 +376,22 @@ class _ReportPageState extends State<ReportPage> {
         throw const FormatException('仅支持 JPEG、PNG、WebP 或 GIF 图片');
       }
       if (!mounted) return;
-      setState(() => _analyzeStage = '正在上传报告并识别...');
-      final response = await _uploadReport(bytes, file.name, mimeType);
+      setState(() => _analyzeStage = '正在压缩并上传报告...');
+      final compressedBytes = await compute(_compressReportImage, bytes);
+      final clientId = const Uuid().v4();
+      final uploadedImagePath = await sl<FileApi>().uploadImage(
+        XFile.fromData(
+          compressedBytes,
+          name: '$clientId.jpg',
+          mimeType: 'image/jpeg',
+        ),
+        clientId,
+      );
+      _uploadedImagePath = uploadedImagePath;
+      _reportClientId = clientId;
+      if (!mounted) return;
+      setState(() => _analyzeStage = '正在识别报告内容...');
+      final response = await _uploadReport(uploadedImagePath, 'image/jpeg');
       if (!mounted) return;
       setState(() => _analyzeStage = '正在整理健康指标...');
       final result = _OcrResult.fromJson(requireApiMap(response.data));
@@ -392,12 +410,16 @@ class _ReportPageState extends State<ReportPage> {
         _analyzing = false;
         _analyzeStage = '';
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('识别失败：${_friendlyError(e)}'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (isAiCreditError(e)) {
+        await showAiCreditRequiredDialog(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('识别失败：${_friendlyError(e)}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -411,22 +433,18 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<Response<dynamic>> _uploadReport(
-      Uint8List bytes, String fileName, String mimeType) async {
+      String imageObjectKey, String mimeType) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         return await _apiClient.dio.post(
-          '/reports/analyze',
-          data: FormData.fromMap({
-            'file': MultipartFile.fromBytes(
-              bytes,
-              filename: fileName,
-              contentType: DioMediaType.parse(mimeType),
-            ),
-          }),
+          '/reports/analyze-stored',
+          data: {
+            'objectKey': imageObjectKey,
+            'mimeType': mimeType,
+          },
           options: Options(
-            contentType: 'multipart/form-data',
             connectTimeout: const Duration(seconds: 15),
-            sendTimeout: const Duration(seconds: 30),
+            sendTimeout: const Duration(seconds: 15),
             receiveTimeout: const Duration(seconds: 90),
           ),
         );
@@ -519,7 +537,7 @@ class _ReportPageState extends State<ReportPage> {
 
     try {
       final reportTime = _parseReportDate(result.reportDate) ?? DateTime.now();
-      final clientId = const Uuid().v4();
+      final clientId = _reportClientId ?? const Uuid().v4();
       final imagePath = await _persistReportImage(clientId);
 
       await _repo.saveReportRecord(
@@ -534,7 +552,11 @@ class _ReportPageState extends State<ReportPage> {
       await _saveIndicatorsLocally(result, reportTime);
 
       if (!mounted) return;
-      setState(() => _saving = false);
+      setState(() {
+        _saving = false;
+        _uploadedImagePath = null;
+        _reportClientId = null;
+      });
       messenger.showSnackBar(
         const SnackBar(content: Text('报告已保存'), backgroundColor: Colors.green),
       );
@@ -697,6 +719,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<String> _persistReportImage(String clientId) async {
+    final uploadedImagePath = _uploadedImagePath;
+    if (uploadedImagePath != null && uploadedImagePath.isNotEmpty) {
+      return uploadedImagePath;
+    }
     final image = _pickedImage;
     if (image == null) return '';
 
@@ -768,31 +794,12 @@ class _ReportPageState extends State<ReportPage> {
       if (message != null && message.isNotEmpty) return message;
     }
     final status = e.response?.statusCode;
+    if (status == 413) return '图片过大，请重新选择；建议分段拍摄报告后识别';
     if (status == 429) return '请求过于频繁，请稍后重试';
     if (status == 401) return '登录已过期，请重新登录';
     if (e.type == DioExceptionType.receiveTimeout) return 'AI 识别超时，请重试';
     if (e.message?.trim().isNotEmpty == true) return e.message!.trim();
     return '网络连接失败，请稍后重试';
-  }
-
-  Map<String, dynamic> _unwrapResponseData(dynamic body) {
-    if (body is! Map) {
-      throw StateError('服务端响应格式异常');
-    }
-    if (!body.containsKey('code')) {
-      return Map<String, dynamic>.from(body);
-    }
-    final code = (body['code'] as num?)?.toInt() ?? 0;
-    if (code != 0) {
-      throw StateError(
-        (body['message'] ?? body['msg'])?.toString() ?? '服务端处理失败',
-      );
-    }
-    final data = body['data'];
-    if (data is Map) {
-      return Map<String, dynamic>.from(data);
-    }
-    throw StateError('报告识别未返回有效结果，请检查 AI 配置');
   }
 
   @override
@@ -813,7 +820,7 @@ class _ReportPageState extends State<ReportPage> {
               if (_aiRemaining != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Text('今日报告识别剩余 $_aiRemaining / 5 次',
+                  child: Text('AI 健康权益剩余 $_aiRemaining 次',
                       style: TextStyle(color: AppTheme.muted, fontSize: 13)),
                 ),
               _PickCard(
@@ -846,6 +853,29 @@ class _ReportPageState extends State<ReportPage> {
       ),
     );
   }
+}
+
+Uint8List _compressReportImage(Uint8List bytes) {
+  final decoded = image_lib.decodeImage(bytes);
+  if (decoded == null) throw const FormatException('无法读取图片内容');
+  final oriented = image_lib.bakeOrientation(decoded);
+  final longestSide =
+      oriented.width > oriented.height ? oriented.width : oriented.height;
+  final resized = longestSide > 2400
+      ? image_lib.copyResize(
+          oriented,
+          width: oriented.width >= oriented.height ? 2400 : null,
+          height: oriented.height > oriented.width ? 2400 : null,
+          interpolation: image_lib.Interpolation.linear,
+        )
+      : oriented;
+  for (final quality in const [85, 76, 68, 60]) {
+    final encoded = Uint8List.fromList(
+      image_lib.encodeJpg(resized, quality: quality),
+    );
+    if (encoded.length <= 4 * 1024 * 1024 || quality == 60) return encoded;
+  }
+  throw const FormatException('图片压缩失败');
 }
 
 class _PickCard extends StatelessWidget {

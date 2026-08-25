@@ -109,23 +109,22 @@ class _AppLoaderState extends State<_AppLoader> {
 
   /// 用户昵称补全（非首屏关键路径）
   void _hydrateAccountDisplayInBackground() {
-    if (UserSession.instance.isAccountLogin) {
-      sl<AuthApi>().fetchAccountInfo().then((account) {
-        if (account != null) {
-          UserSession.instance.setAccountDisplay(
-            nickname: account.nickname,
-            avatarUrl: account.avatarUrl,
-          );
-        }
-      }).catchError((_) {});
-    }
-    if (!UserSession.instance.hasName) {
-      sl<HealthRepository>().loadProfile().then((profile) {
-        if (profile != null && profile.nickname.isNotEmpty) {
-          UserSession.instance.setName(profile.nickname);
-        }
-      }).catchError((_) {});
-    }
+    Future.wait([
+      sl<HealthRepository>().loadProfile(),
+      if (UserSession.instance.isAccountLogin) sl<AuthApi>().fetchAccountInfo(),
+    ]).then((values) {
+      final profile = values.first as UserProfileData?;
+      final account = values.length > 1 ? values[1] as AccountInfo? : null;
+      final nickname = profile?.nickname.trim().isNotEmpty == true
+          ? profile!.nickname
+          : account?.nickname ?? '';
+      if (nickname.isNotEmpty) {
+        UserSession.instance.setName(nickname);
+      }
+      if (account != null) {
+        UserSession.instance.setAccountDisplay(avatarUrl: account.avatarUrl);
+      }
+    }).catchError((_) {});
   }
 
   void _initNotificationsInBackground() {

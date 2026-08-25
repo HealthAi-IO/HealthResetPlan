@@ -131,7 +131,7 @@ class _AiBenefitsPageState extends State<AiBenefitsPage> {
                 key: _benefitsKey,
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
-            Text('每次成功生成扣 1 次，失败不扣次',
+            Text('健康管家按会话计费，其他能力按成功结果计费；失败不扣次',
                 style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 10),
             ..._benefits.map(
@@ -405,9 +405,11 @@ class _UsageRules extends StatelessWidget {
           SizedBox(height: 8),
           Text('1. 选择上方任一 AI 能力并提交生成。'),
           SizedBox(height: 5),
-          Text('2. 生成成功后统一扣除 1 次；失败不扣次。'),
+          Text('2. 健康管家首次成功回复扣 1 次，30 分钟内最多 10 轮追问不重复扣费。'),
           SizedBox(height: 5),
-          Text('3. 赠送与购买次数共用，永久有效且不自动续费。'),
+          Text('3. 其他 AI 能力每次成功生成扣 1 次；失败不扣次。'),
+          SizedBox(height: 5),
+          Text('4. 赠送与购买次数共用，永久有效且不自动续费。'),
         ],
       ),
     );

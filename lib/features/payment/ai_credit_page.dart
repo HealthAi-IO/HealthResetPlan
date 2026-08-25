@@ -548,7 +548,7 @@ class _BalanceSummary extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      available ? '成功生成扣 1 次，失败不扣次' : '购买后次数永久有效，不自动续费',
+                      available ? '健康管家按会话计费，其他能力成功后扣次' : '购买后次数永久有效，不自动续费',
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall

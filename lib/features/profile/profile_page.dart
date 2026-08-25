@@ -154,7 +154,9 @@ class _ProfilePageState extends State<ProfilePage> {
         accountInfo = await sl<AuthApi>().fetchAccountInfo();
         if (accountInfo != null) {
           await UserSession.instance.setAccountDisplay(
-            nickname: accountInfo.nickname,
+            nickname: profile?.nickname.trim().isNotEmpty == true
+                ? profile!.nickname
+                : accountInfo.nickname,
             avatarUrl: accountInfo.avatarUrl,
           );
         }
@@ -244,13 +246,25 @@ class _ProfilePageState extends State<ProfilePage> {
       }
       if (!mounted) return;
       await UserSession.instance.setAccountDisplay(
-        nickname: account.nickname,
+        nickname: _profile?.nickname.trim().isNotEmpty == true
+            ? _profile!.nickname
+            : account.nickname,
         avatarUrl: account.avatarUrl,
       );
       if (!mounted) return;
       setState(() => _accountInfo = account);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('头像已更新')),
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('头像上传成功'),
+          content: const Text('你的新头像已保存并同步到账号。'),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
       );
     } catch (_) {
       if (!mounted) return;
@@ -294,11 +308,32 @@ class _ProfilePageState extends State<ProfilePage> {
       barrierDismissible: false,
       builder: (context) => const ChangePasswordDialog(),
     );
-    if (changed == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('登录密码已修改')),
-      );
+    if (changed != true || !mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('密码修改成功'),
+        content: const Text('为保护账号安全，请使用新密码重新登录。'),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('重新登录'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    final refreshToken = UserSession.instance.refreshToken;
+    await sl<OnlineDataService>().signOut();
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      try {
+        await sl<AuthApi>().logout(refreshToken);
+      } catch (_) {}
     }
+    await UserSession.instance.clear();
+    sl<ApiClient>().setAccessToken(null);
+    if (mounted) context.go('/login');
   }
 
   bool _isBasicProfileComplete(UserProfileData? profile) {
@@ -576,7 +611,7 @@ class _ProfilePageState extends State<ProfilePage> {
         title: Text(accepted ? '管理 AI 数据处理授权' : 'AI 数据处理说明'),
         content: Text(accepted
             ? '你已同意云端 AI 数据处理。撤回后，健康管家、智能计划、报告识别、餐食识别和图像分析将停止；账号中的健康记录不受影响。'
-            : '使用健康管家、智能计划、报告识别、餐食识别或图像分析时，你主动提交的必要健康信息或图片会由本服务的受控服务器短暂转发给通义千问处理。请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库；管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
+            : '健康管家个性化模式会按需读取你的健康档案、近期指标、近 7 天饮食、今日计划和你主动保存的管家记忆，并由受控服务器转发给通义千问处理。你可以切换为通用模式并随时管理记忆。图片仅在主动选择后用于对应分析并加密保存；请求正文、AI 回答和图片不写入运营数据、审计日志或明文数据库，管理后台无法查看。AI 仅提供健康管理参考，不能替代医生诊断。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context), child: const Text('取消')),
@@ -1581,6 +1616,11 @@ class _ProfilePageState extends State<ProfilePage> {
               const SizedBox(height: 20),
               _AccountSecurityPanel(
                 accountInfo: _accountInfo,
+                displayName: _profile?.nickname.trim().isNotEmpty == true
+                    ? _profile!.nickname.trim()
+                    : (_accountInfo?.nickname.trim().isNotEmpty == true
+                        ? _accountInfo!.nickname.trim()
+                        : '健康用户'),
                 onLogin: () => context
                     .push('/login', extra: true)
                     .then((_) => setState(() {})),
@@ -1745,14 +1785,16 @@ class _EditableAvatar extends StatelessWidget {
               radius: radius,
               backgroundColor: Theme.of(context).colorScheme.primaryContainer,
               foregroundImage: image,
-              child: Text(
-                fallback,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  fontSize: radius * 0.76,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
+              child: image == null
+                  ? Text(
+                      fallback,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        fontSize: radius * 0.76,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    )
+                  : null,
             ),
             if (uploading)
               Positioned.fill(
@@ -1839,10 +1881,10 @@ class _SeniorProfileView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final loggedIn = UserSession.instance.isAccountLogin;
-    final nickname = accountInfo?.nickname.trim().isNotEmpty == true
-        ? accountInfo!.nickname
-        : profile.nickname.trim().isNotEmpty
-            ? profile.nickname
+    final nickname = profile.nickname.trim().isNotEmpty
+        ? profile.nickname
+        : accountInfo?.nickname.trim().isNotEmpty == true
+            ? accountInfo!.nickname
             : '健康用户';
     final phone = accountInfo?.phoneTail ?? '';
     final syncText = switch (syncStatus.phase) {
@@ -2388,6 +2430,7 @@ String _syncRowSummary(Map<String, Object?>? row) {
 class _AccountSecurityPanel extends StatelessWidget {
   const _AccountSecurityPanel({
     required this.accountInfo,
+    required this.displayName,
     required this.onLogin,
     required this.onSetPassword,
     required this.onChangePassword,
@@ -2397,6 +2440,7 @@ class _AccountSecurityPanel extends StatelessWidget {
     required this.onCancelAccount,
   });
   final AccountInfo? accountInfo;
+  final String displayName;
   final VoidCallback onLogin;
   final VoidCallback onSetPassword;
   final VoidCallback onChangePassword;
@@ -2434,11 +2478,7 @@ class _AccountSecurityPanel extends StatelessWidget {
                       color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
-                  title: Text(
-                    accountInfo!.nickname.isEmpty
-                        ? '健康用户'
-                        : accountInfo!.nickname,
-                  ),
+                  title: Text(displayName),
                   subtitle: Text('账号 ID ${accountInfo!.userId}'),
                   trailing: IconButton(
                     tooltip: '复制账号 ID',

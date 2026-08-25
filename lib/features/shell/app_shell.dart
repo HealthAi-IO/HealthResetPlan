@@ -118,92 +118,102 @@ class _AppShellState extends State<AppShell> {
           builder: (context, constraints) {
             final wide = constraints.maxWidth >= 720;
             final colors = Theme.of(context).colorScheme;
-            return Scaffold(
-              backgroundColor: colors.surface,
-              resizeToAvoidBottomInset: true,
-              appBar: null,
-              drawer: wide || seniorMode ? null : const _AppDrawer(),
-              drawerEnableOpenDragGesture: !wide && !seniorMode,
-              body: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [colors.surfaceContainerLowest, colors.surface],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
+            final shouldReturnHome =
+                defaultTargetPlatform == TargetPlatform.android && _index != 0;
+            return PopScope(
+              canPop: !shouldReturnHome,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop && shouldReturnHome) {
+                  widget.navigationShell?.goBranch(0);
+                }
+              },
+              child: Scaffold(
+                backgroundColor: colors.surface,
+                resizeToAvoidBottomInset: true,
+                appBar: null,
+                drawer: wide || seniorMode ? null : const _AppDrawer(),
+                drawerEnableOpenDragGesture: !wide && !seniorMode,
+                body: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [colors.surfaceContainerLowest, colors.surface],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
                   ),
+                  child: wide
+                      ? Row(
+                          children: [
+                            _DesktopNavigation(
+                              tabs: tabs,
+                              seniorMode: seniorMode,
+                              compact: constraints.maxWidth < 1200,
+                              selectedIndex: _index,
+                              onDestinationSelected: (value) =>
+                                  _goTab(context, value),
+                            ),
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  const _DesktopCommandBar(),
+                                  const Divider(height: 1),
+                                  Expanded(child: pageHost),
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : SafeArea(
+                          top: true,
+                          bottom: false,
+                          child: pageHost,
+                        ),
                 ),
-                child: wide
-                    ? Row(
-                        children: [
-                          _DesktopNavigation(
-                            tabs: tabs,
-                            seniorMode: seniorMode,
-                            compact: constraints.maxWidth < 1200,
+                bottomNavigationBar: wide
+                    ? null
+                    : defaultTargetPlatform == TargetPlatform.iOS
+                        ? CupertinoTabBar(
+                            key: ValueKey(
+                              seniorMode
+                                  ? 'senior-navigation'
+                                  : 'regular-navigation',
+                            ),
+                            currentIndex: _index,
+                            onTap: (value) => _goTab(context, value),
+                            activeColor: colors.primary,
+                            inactiveColor: AppTheme.muted,
+                            backgroundColor:
+                                colors.surface.withValues(alpha: 0.96),
+                            items: [
+                              for (final tab in tabs)
+                                BottomNavigationBarItem(
+                                  icon: Icon(tab.icon),
+                                  activeIcon: Icon(tab.selectedIcon),
+                                  label: tab.label,
+                                ),
+                            ],
+                          )
+                        : NavigationBar(
+                            key: ValueKey(
+                              seniorMode
+                                  ? 'senior-navigation'
+                                  : 'regular-navigation',
+                            ),
                             selectedIndex: _index,
                             onDestinationSelected: (value) =>
                                 _goTab(context, value),
+                            destinations: [
+                              for (final tab in tabs)
+                                NavigationDestination(
+                                  icon: Icon(tab.icon),
+                                  selectedIcon: Icon(tab.selectedIcon),
+                                  label: tab.label,
+                                ),
+                            ],
+                            indicatorColor:
+                                colors.primary.withValues(alpha: 0.14),
                           ),
-                          Expanded(
-                            child: Column(
-                              children: [
-                                const _DesktopCommandBar(),
-                                const Divider(height: 1),
-                                Expanded(child: pageHost),
-                              ],
-                            ),
-                          ),
-                        ],
-                      )
-                    : SafeArea(
-                        top: true,
-                        bottom: false,
-                        child: pageHost,
-                      ),
               ),
-              bottomNavigationBar: wide
-                  ? null
-                  : defaultTargetPlatform == TargetPlatform.iOS
-                      ? CupertinoTabBar(
-                          key: ValueKey(
-                            seniorMode
-                                ? 'senior-navigation'
-                                : 'regular-navigation',
-                          ),
-                          currentIndex: _index,
-                          onTap: (value) => _goTab(context, value),
-                          activeColor: colors.primary,
-                          inactiveColor: AppTheme.muted,
-                          backgroundColor:
-                              colors.surface.withValues(alpha: 0.96),
-                          items: [
-                            for (final tab in tabs)
-                              BottomNavigationBarItem(
-                                icon: Icon(tab.icon),
-                                activeIcon: Icon(tab.selectedIcon),
-                                label: tab.label,
-                              ),
-                          ],
-                        )
-                      : NavigationBar(
-                          key: ValueKey(
-                            seniorMode
-                                ? 'senior-navigation'
-                                : 'regular-navigation',
-                          ),
-                          selectedIndex: _index,
-                          onDestinationSelected: (value) =>
-                              _goTab(context, value),
-                          destinations: [
-                            for (final tab in tabs)
-                              NavigationDestination(
-                                icon: Icon(tab.icon),
-                                selectedIcon: Icon(tab.selectedIcon),
-                                label: tab.label,
-                              ),
-                          ],
-                          indicatorColor:
-                              colors.primary.withValues(alpha: 0.14),
-                        ),
             );
           },
         );
@@ -255,13 +265,15 @@ class _AppDrawer extends StatelessWidget {
                             backgroundColor: colors.primary,
                             foregroundColor: colors.onPrimary,
                             foregroundImage: avatar,
-                            child: Text(
-                              initial,
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
+                            child: avatar == null
+                                ? Text(
+                                    initial,
+                                    style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  )
+                                : null,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
@@ -626,7 +638,9 @@ class _DesktopCommandBar extends StatelessWidget {
           CircleAvatar(
             radius: 16,
             foregroundImage: avatar,
-            child: Text(displayName.characters.first.toUpperCase()),
+            child: avatar == null
+                ? Text(displayName.characters.first.toUpperCase())
+                : null,
           ),
           const SizedBox(width: 10),
           Text(displayName,

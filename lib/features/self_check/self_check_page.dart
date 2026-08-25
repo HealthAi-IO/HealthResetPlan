@@ -75,6 +75,7 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
         _loading = false;
         _error = _friendlyDioError(e);
       });
+      if (isAiCreditError(e)) await showAiCreditRequiredDialog(context);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -224,7 +225,7 @@ class _SkinIntroCard extends StatelessWidget {
             contentPadding: EdgeInsets.zero,
             controlAffinity: ListTileControlAffinity.leading,
             title: Text(
-              '仅收集必要脸部照片用于智能测肤及面部特征分析，我已阅读并同意隐私说明。',
+              '照片会加密保存到当前账号的私有对象存储，仅用于智能测肤及面部特征分析；我已阅读并同意隐私说明。',
               style: TextStyle(color: AppTheme.muted, fontSize: 13),
             ),
           ),

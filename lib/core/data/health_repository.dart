@@ -2367,6 +2367,7 @@ class HealthRepository extends ChangeNotifier {
       'meal_settings',
       'ai_message',
       'ai_session',
+      'ai_memory',
       'quit_smoking_profile',
       'smoking_event',
       'sync_queue',
@@ -2499,6 +2500,7 @@ class HealthRepository extends ChangeNotifier {
       where: 'user_id = ?',
       whereArgs: [kLocalUserId],
     );
+    final aiMemoryRows = await db.query('ai_memory');
     return {
       'version': '1.0',
       'exportedAt': DateTime.now().toIso8601String(),
@@ -2512,6 +2514,7 @@ class HealthRepository extends ChangeNotifier {
         'mealRecords': mealRows,
         'mealRecipes': mealRecipeRows,
         'mealSettings': mealSettingsRows,
+        'aiMemories': aiMemoryRows,
       },
     };
   }
@@ -2676,6 +2679,7 @@ class HealthRepository extends ChangeNotifier {
         ('mealRecords', 'meal_record'),
         ('mealRecipes', 'meal_recipe'),
         ('mealSettings', 'meal_settings'),
+        ('aiMemories', 'ai_memory'),
       ]) {
         final rows = exportData[entry.$1] as List?;
         if (rows == null) continue;

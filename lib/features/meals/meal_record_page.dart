@@ -50,6 +50,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
   late String _mealType;
   late DateTime _eatenAt;
   XFile? _image;
+  String _uploadedImagePath = '';
   bool _loading = false;
   bool _saving = false;
   bool _saved = false;
@@ -142,13 +143,18 @@ class _MealRecordPageState extends State<MealRecordPage> {
       final result = await _api.analyzeVision(image: image, type: 'meal');
       if (!mounted) return;
       _provider = result.provider;
+      _uploadedImagePath = result.imageObjectKey;
       _applyMealMap(result.structured);
     } on DioException catch (e) {
       if (!mounted) return;
       _clearRecognizedMeal(_friendlyError(e));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_friendlyError(e))),
-      );
+      if (isAiCreditError(e)) {
+        await showAiCreditRequiredDialog(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_friendlyError(e))),
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       const message = 'AI 已返回结果，但餐食数据不完整，暂时无法自动生成食材明细；请重拍完整食物或手动添加食材。';
@@ -443,7 +449,9 @@ class _MealRecordPageState extends State<MealRecordPage> {
           widget.record?.clientId ?? HealthRepository.newClientId();
       final imagePath = _image == null
           ? widget.record?.imagePath ?? ''
-          : await sl<FileApi>().uploadImage(_image!, clientId);
+          : _uploadedImagePath.isNotEmpty
+              ? _uploadedImagePath
+              : await sl<FileApi>().uploadImage(_image!, clientId);
       final record = MealRecordData(
         id: widget.record?.id,
         clientId: clientId,

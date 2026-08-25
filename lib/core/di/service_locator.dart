@@ -135,7 +135,9 @@ Future<void> setupServiceLocator() async {
   sl.registerLazySingleton<MembershipService>(
     () => MembershipService(client: apiClient),
   );
-  sl.registerLazySingleton<AiApi>(() => AiApi(client: apiClient));
+  sl.registerLazySingleton<AiApi>(
+    () => AiApi(client: apiClient, fileApi: sl<FileApi>()),
+  );
   sl.registerLazySingleton<AiPlanGenerationController>(
     () => AiPlanGenerationController(
       repository: healthRepository,

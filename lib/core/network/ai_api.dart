@@ -3,14 +3,19 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 
 import '../data/health_models.dart';
 import 'api_client.dart';
+import 'file_api.dart';
 
 class AiApi {
-  AiApi({required ApiClient client}) : _client = client;
+  AiApi({required ApiClient client, FileApi? fileApi})
+      : _client = client,
+        _fileApi = fileApi ?? FileApi(client: client);
 
   final ApiClient _client;
+  final FileApi _fileApi;
 
   Future<Map<String, int>> dailyUsage() async {
     final response = await _client.dio.get('/ai/chat/daily-usage');
@@ -111,6 +116,9 @@ class AiApi {
     required List<Map<String, String>> messages,
     String? provider,
     String? profileSummary,
+    String? sessionId,
+    String? requestId,
+    bool personalized = true,
   }) async {
     final apiProvider = _normalizeProvider(provider);
     final resp = await _client.dio.post(
@@ -119,6 +127,9 @@ class AiApi {
         if (apiProvider != null) 'provider': apiProvider,
         'messages': messages,
         if (profileSummary != null) 'profileSummary': profileSummary,
+        if (sessionId != null) 'sessionId': sessionId,
+        if (requestId != null) 'requestId': requestId,
+        'personalized': personalized,
       },
       options: _aiRequestOptions,
     );
@@ -135,26 +146,26 @@ class AiApi {
     required String type,
   }) async {
     final bytes = await image.readAsBytes();
+    final mimeType =
+        FileApi.detectImageMimeType(bytes) ?? _mimeType(image.name);
+    final objectKey = await _fileApi.uploadImage(image, const Uuid().v4());
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         final resp = await _client.dio.post(
-          '/ai/vision/analyze',
-          data: FormData.fromMap({
+          '/ai/vision/analyze-stored',
+          data: {
             'type': type,
-            'file': MultipartFile.fromBytes(
-              bytes,
-              filename: image.name,
-              contentType: DioMediaType.parse(_mimeType(image.name)),
-            ),
-          }),
+            'objectKey': objectKey,
+            'mimeType': mimeType,
+          },
           options: Options(
-            contentType: 'multipart/form-data',
             connectTimeout: const Duration(seconds: 15),
-            sendTimeout: const Duration(seconds: 45),
+            sendTimeout: const Duration(seconds: 15),
             receiveTimeout: const Duration(minutes: 2),
           ),
         );
-        return AiVisionResult.fromJson(_unwrapData(resp.data));
+        final data = _unwrapData(resp.data)..['imageObjectKey'] = objectKey;
+        return AiVisionResult.fromJson(data);
       } on DioException catch (error) {
         if (attempt == 1 || !_isTransientAiError(error)) rethrow;
       }
@@ -166,11 +177,17 @@ class AiApi {
     required List<Map<String, String>> messages,
     String? provider,
     String? profileSummary,
+    String? sessionId,
+    required String requestId,
+    required bool personalized,
+    CancelToken? cancelToken,
+    required void Function(List<String> sources) onMetadata,
     required void Function(String token) onToken,
     required void Function() onDone,
     required void Function(String error) onError,
   }) async {
     var completed = false;
+    var receivedToken = false;
     final apiProvider = _normalizeProvider(provider);
 
     void completeOnce() {
@@ -186,6 +203,9 @@ class AiApi {
           if (apiProvider != null) 'provider': apiProvider,
           'messages': messages,
           if (profileSummary != null) 'profileSummary': profileSummary,
+          if (sessionId != null) 'sessionId': sessionId,
+          'requestId': requestId,
+          'personalized': personalized,
         },
         options: Options(
           responseType: ResponseType.stream,
@@ -194,6 +214,7 @@ class AiApi {
           sendTimeout: const Duration(seconds: 45),
           receiveTimeout: const Duration(minutes: 3),
         ),
+        cancelToken: cancelToken,
       );
 
       final stream = (response.data as ResponseBody).stream;
@@ -209,33 +230,55 @@ class AiApi {
           buffer = buffer.substring(splitIndex + 2);
           final shouldStop = _handleSseEvent(
             eventBlock,
-            onToken,
+            (token) {
+              receivedToken = true;
+              onToken(token);
+            },
             completeOnce,
             onError,
+            onMetadata,
           );
           if (shouldStop) return;
         }
       }
 
       if (buffer.trim().isNotEmpty) {
-        _handleSseEvent(buffer, onToken, completeOnce, onError);
+        _handleSseEvent(buffer, (token) {
+          receivedToken = true;
+          onToken(token);
+        }, completeOnce, onError, onMetadata);
       }
       completeOnce();
     } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) return;
+      if (receivedToken) {
+        onError('回答传输中断，请重新提问');
+        return;
+      }
       await _fallbackToNormalChat(
         messages: messages,
         provider: apiProvider,
         profileSummary: profileSummary,
+        sessionId: sessionId,
+        requestId: requestId,
+        personalized: personalized,
         onToken: onToken,
         onDone: completeOnce,
         onError: onError,
         fallbackReason: _friendlyDioError(e),
       );
     } catch (e) {
+      if (receivedToken) {
+        onError('回答传输中断，请重新提问');
+        return;
+      }
       await _fallbackToNormalChat(
         messages: messages,
         provider: apiProvider,
         profileSummary: profileSummary,
+        sessionId: sessionId,
+        requestId: requestId,
+        personalized: personalized,
         onToken: onToken,
         onDone: completeOnce,
         onError: onError,
@@ -248,6 +291,9 @@ class AiApi {
     required List<Map<String, String>> messages,
     required String? provider,
     required String? profileSummary,
+    required String? sessionId,
+    required String requestId,
+    required bool personalized,
     required void Function(String token) onToken,
     required void Function() onDone,
     required void Function(String error) onError,
@@ -258,6 +304,9 @@ class AiApi {
         messages: messages,
         provider: provider,
         profileSummary: profileSummary,
+        sessionId: sessionId,
+        requestId: requestId,
+        personalized: personalized,
       );
       if (reply.content.isNotEmpty) {
         onToken(reply.content);
@@ -275,6 +324,7 @@ class AiApi {
     void Function(String) onToken,
     void Function() onDone,
     void Function(String) onError,
+    void Function(List<String>) onMetadata,
   ) {
     String? eventName;
     final dataLines = <String>[];
@@ -304,6 +354,13 @@ class AiApi {
 
     try {
       final json = jsonDecode(data) as Map<String, dynamic>;
+      if (eventName == 'meta') {
+        final rawSources = json['contextSources'];
+        onMetadata(rawSources is List
+            ? rawSources.map((item) => '$item').toList()
+            : const []);
+        return false;
+      }
       if (eventName == 'error' || json.containsKey('code')) {
         final code = (json['code'] as num?)?.toInt() ?? 0;
         final msg = json['message'] as String? ?? 'AI 服务异常';
@@ -321,6 +378,7 @@ class AiApi {
 
   String _friendlyCode(int code, String msg) {
     if (code == 42901) return '今日 AI 使用次数已达上限，明日 0 点重置';
+    if (code == 42903) return 'AI 健康权益已用完，请充值后继续使用';
     if (code == 42902) return 'AI 服务暂时繁忙，请稍后再试';
     if (code == 40101) return 'AI 服务认证异常，请稍后重试';
     if (code == 40301) return '请先登录手机号账号';
@@ -481,6 +539,7 @@ class AiVisionResult {
     required this.riskLevel,
     required this.provider,
     required this.rawText,
+    required this.imageObjectKey,
   });
 
   final Map<String, dynamic> structured;
@@ -496,6 +555,7 @@ class AiVisionResult {
   final String riskLevel;
   final String provider;
   final String rawText;
+  final String imageObjectKey;
 
   factory AiVisionResult.fromJson(Map<String, dynamic> json) {
     final rawObservations = json['observations'];
@@ -526,6 +586,7 @@ class AiVisionResult {
       riskLevel: json['riskLevel'] as String? ?? 'low',
       provider: json['provider'] as String? ?? '',
       rawText: json['rawText'] as String? ?? '',
+      imageObjectKey: json['imageObjectKey'] as String? ?? '',
     );
   }
 }

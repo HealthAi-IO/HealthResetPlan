@@ -7,6 +7,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/ai_api.dart';
+import '../../core/membership/paywall.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
 
@@ -145,6 +146,9 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _error = _friendlyAiError(error));
+      if (error is DioException && isAiCreditError(error)) {
+        await showAiCreditRequiredDialog(context);
+      }
     } finally {
       if (mounted) setState(() => _generating = false);
     }
@@ -166,7 +170,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
             decoration: BoxDecoration(
               gradient: AppTheme.accentGradient(context),
               borderRadius: BorderRadius.circular(20),
-              boxShadow:  [
+              boxShadow: [
                 BoxShadow(
                   color: AppTheme.softShadow,
                   blurRadius: 18,
@@ -272,7 +276,7 @@ class _WeeklyReportBody extends StatelessWidget {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(20),
-        boxShadow:  [
+        boxShadow: [
           BoxShadow(
             color: AppTheme.softShadow,
             blurRadius: 18,
@@ -290,13 +294,13 @@ class _WeeklyReportBody extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             data['summary']?.toString() ?? '',
-            style:  TextStyle(color: AppTheme.muted, height: 1.55),
+            style: TextStyle(color: AppTheme.muted, height: 1.55),
           ),
           if (quality['message'] != null) ...[
             const SizedBox(height: 12),
             Text(
               '数据说明：${quality['message']}',
-              style:  TextStyle(color: AppTheme.muted, fontSize: 13),
+              style: TextStyle(color: AppTheme.muted, fontSize: 13),
             ),
           ],
           if (wins.isNotEmpty) _ReportSection(title: '做得不错', items: wins),
@@ -312,7 +316,7 @@ class _WeeklyReportBody extends StatelessWidget {
             for (final action in actions)
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading:  Icon(
+                leading: Icon(
                   Icons.check_circle_outline,
                   color: AppTheme.primaryBlue,
                 ),
@@ -348,7 +352,7 @@ class _ReportSection extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text('• $item',
-                    style:  TextStyle(height: 1.5, color: AppTheme.muted)),
+                    style: TextStyle(height: 1.5, color: AppTheme.muted)),
               ),
           ],
         ),
@@ -365,7 +369,7 @@ class _ReportEmpty extends StatelessWidget {
           color: Theme.of(context).colorScheme.surfaceContainerLow,
           borderRadius: BorderRadius.circular(20),
         ),
-        child:  Column(
+        child: Column(
           children: [
             Icon(Icons.summarize_outlined,
                 size: 42, color: AppTheme.primaryBlue),

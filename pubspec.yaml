@@ -36,6 +36,7 @@ dependencies:
   # 图片选择（相机 / 相册）
   image_picker: ^1.1.2
   file_picker: ^8.3.7
+  image: ^4.3.0
 
   # UI / 工具
   intl: ^0.20.2

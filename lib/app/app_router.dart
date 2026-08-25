@@ -193,6 +193,7 @@ class AppRouter {
                     builder: () => appSettingsController.seniorMode
                         ? profile.ProfilePage()
                         : records.RecordHubPage(
+                            key: ValueKey('records:${state.uri.query}'),
                             initialView:
                                 state.uri.queryParameters['view'] ?? 'clock',
                             initialReminderId: int.tryParse(
@@ -221,6 +222,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/profile',
+        name: '/profile',
         pageBuilder: (_, state) => _page(
           state,
           _DeferredPage(
@@ -239,6 +241,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/ai-credits',
+        name: '/ai-credits',
         pageBuilder: (_, state) => _page(state, const AiCreditPage()),
       ),
       GoRoute(
@@ -280,6 +283,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/record-history/weekly',
+        name: '/record-history/weekly',
         pageBuilder: (_, state) => _page(
           state,
           _DeferredPage(
@@ -290,6 +294,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/quit-smoking',
+        name: '/quit-smoking',
         pageBuilder: (_, state) => _page(
           state,
           _DeferredPage(
@@ -394,6 +399,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/report',
+        name: '/report',
         pageBuilder: (_, state) => _page(
           state,
           _DeferredPage(
@@ -447,6 +453,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/content',
+        name: '/content',
         pageBuilder: (_, state) => _page(
           state,
           _DeferredPage(
@@ -469,6 +476,7 @@ class AppRouter {
       ),
       GoRoute(
         path: '/messages',
+        name: '/messages',
         pageBuilder: (_, state) => _page(
           state,
           _DeferredPage(

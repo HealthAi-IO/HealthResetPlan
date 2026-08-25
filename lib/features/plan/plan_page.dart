@@ -14,8 +14,10 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/network/telemetry_api.dart';
+import '../../core/membership/paywall.dart';
 import '../../core/notification/reminder_consent.dart';
 import '../../core/notification/reminder_scheduler.dart';
+import '../../core/payment/payment_service.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
 import '../../core/widgets/health_ui.dart';
@@ -45,7 +47,6 @@ class PlanPage extends StatefulWidget {
 
 class _PlanPageState extends State<PlanPage> {
   final HealthRepository _repo = sl<HealthRepository>();
-  final AiApi _aiApi = sl<AiApi>();
   final AiPlanGenerationController _aiPlanController =
       sl<AiPlanGenerationController>();
   final ReminderScheduler _reminderScheduler = sl<ReminderScheduler>();
@@ -80,8 +81,10 @@ class _PlanPageState extends State<PlanPage> {
 
   Future<void> _loadAiUsage() async {
     try {
-      final usage = await _aiApi.dailyUsage();
-      if (mounted) setState(() => _aiRemaining = usage['plan']);
+      final balance = await sl<PaymentService>().balance();
+      if (mounted) {
+        setState(() => _aiRemaining = (balance['balance'] as num?)?.toInt());
+      }
     } catch (_) {}
   }
 
@@ -306,6 +309,11 @@ class _PlanPageState extends State<PlanPage> {
   Future<void> _handleAiFailure() async {
     final error = _aiPlanController.error;
     if (!mounted) return;
+    if (error is DioException && isAiCreditError(error)) {
+      await showAiCreditRequiredDialog(context);
+      _aiPlanController.clear();
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(_friendlyError(error ?? 'AI 生成失败')),
@@ -705,7 +713,7 @@ class _PlanPageState extends State<PlanPage> {
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
-                    '今天还可使用 $_aiRemaining 次',
+                    'AI 健康权益剩余 $_aiRemaining 次',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppTheme.muted),
                   ),
@@ -832,7 +840,7 @@ class _PlanPageState extends State<PlanPage> {
                       ),
                       if (_aiRemaining != null &&
                           !_aiPlanController.isGenerating)
-                        Text('$_aiRemaining 次',
+                        Text('权益 $_aiRemaining 次',
                             style:
                                 TextStyle(color: AppTheme.muted, fontSize: 12)),
                     ],
