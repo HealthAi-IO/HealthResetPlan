@@ -135,17 +135,49 @@ class _ChatPageState extends State<ChatPage> {
         false;
   }
 
-  String _buildProfileSummary() {
+  Future<String> _buildProfileSummary() async {
     final p = _profile;
-    if (p == null) return '';
-    final age = p.birthYear > 0 ? '${DateTime.now().year - p.birthYear}岁' : '';
-    final gender = p.gender == 'male'
-        ? '男'
-        : p.gender == 'female'
-            ? '女'
-            : '';
-    final bmi = p.bmi > 0 ? '，BMI ${p.bmi.toStringAsFixed(1)}' : '';
-    return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
+    final profileText = p == null
+        ? ''
+        : () {
+            final age =
+                p.birthYear > 0 ? '${DateTime.now().year - p.birthYear}岁' : '';
+            final gender = p.gender == 'male'
+                ? '男'
+                : p.gender == 'female'
+                    ? '女'
+                    : '';
+            final bmi = p.bmi > 0 ? '，BMI ${p.bmi.toStringAsFixed(1)}' : '';
+            return '$gender$age，身高${p.heightCm.toInt()}cm 体重${p.weightKg}kg$bmi';
+          }();
+    try {
+      final now = DateTime.now();
+      final meals = await _repo.loadMealsBetween(
+        now.subtract(const Duration(days: 30)),
+        now.add(const Duration(days: 1)),
+      );
+      final indicators = await _repo.loadIndicatorsSince(
+        now.subtract(const Duration(days: 30)),
+      );
+      final mealText = meals
+          .take(12)
+          .map((meal) =>
+              '${DateFormat('MM-dd').format(meal.eatenTime)} ${meal.mealLabel}${meal.name.isEmpty ? '' : ' ${meal.name}'} ${meal.totalCalories.round()}kcal')
+          .join('；');
+      final indicatorText = indicators
+          .take(8)
+          .map((item) =>
+              '${item.label} ${DateFormat('MM-dd').format(item.measuredTime)} ${item.payload}')
+          .join('；');
+      final summary = [
+        profileText,
+        if (mealText.isNotEmpty) '近30天饮食：$mealText',
+        if (indicatorText.isNotEmpty) '近30天指标：$indicatorText',
+      ].where((item) => item.isNotEmpty).join('\n');
+      return summary.length <= 1000 ? summary : summary.substring(0, 1000);
+    } catch (_) {
+      return profileText;
+    }
   }
 
   // ── 新建会话 ──────────────────────────────────────────────────
@@ -408,7 +440,7 @@ class _ChatPageState extends State<ChatPage> {
       await _aiApi.streamChat(
         messages: history,
         provider: _apiProvider,
-        profileSummary: _buildProfileSummary(),
+        profileSummary: await _buildProfileSummary(),
         sessionId: _currentSession!.sessionUuid,
         requestId: requestId,
         personalized: _personalized,
