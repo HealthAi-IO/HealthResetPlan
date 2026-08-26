@@ -87,6 +87,7 @@ class _MemoryAppDatabase extends AppDatabase {
     'ai_memory',
     'quit_smoking_profile',
     'smoking_event',
+    'ai_action_log',
   ];
 
   OnlineDataApi? _onlineApi;
@@ -326,6 +327,7 @@ class _MemoryAppDatabase extends AppDatabase {
     'ai_memory',
     'quit_smoking_profile',
     'smoking_event',
+    'ai_action_log',
   ];
 
   @override

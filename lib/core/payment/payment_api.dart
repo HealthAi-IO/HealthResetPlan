@@ -15,6 +15,16 @@ class PaymentApi {
     return _map(response.data);
   }
 
+  Future<Map<String, dynamic>> vipStatus() async {
+    final response = await _client.dio.get('/ai-credits/vip-status');
+    return _map(response.data);
+  }
+
+  Future<Map<String, dynamic>> entitlements() async {
+    final response = await _client.dio.get('/ai-credits/entitlements');
+    return _map(response.data);
+  }
+
   Future<List<Map<String, dynamic>>> ledger() async {
     final response = await _client.dio.get('/ai-credits/ledger');
     return _list(response.data);

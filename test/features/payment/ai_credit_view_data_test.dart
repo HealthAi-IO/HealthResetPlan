@@ -6,7 +6,8 @@ void main() {
       () {
     final products = <Map<String, dynamic>>[
       {'code': 'ai_test_1'},
-      {'code': 'ai_20'},
+      {'code': 'ai_10_trial'},
+      {'code': 'ai_30'},
     ];
 
     expect(
@@ -15,7 +16,7 @@ void main() {
         isDevelopment: true,
         isInternal: false,
       ),
-      hasLength(2),
+      hasLength(3),
     );
     expect(
       visibleAiCreditProducts(
@@ -23,7 +24,7 @@ void main() {
         isDevelopment: false,
         isInternal: true,
       ),
-      hasLength(2),
+      hasLength(3),
     );
     expect(
       visibleAiCreditProducts(
@@ -31,7 +32,7 @@ void main() {
         isDevelopment: false,
         isInternal: false,
       ).map((product) => product['code']),
-      ['ai_20'],
+      ['ai_10_trial', 'ai_30'],
     );
   });
 

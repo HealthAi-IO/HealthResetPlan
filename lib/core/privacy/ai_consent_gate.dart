@@ -25,6 +25,15 @@ Future<bool> ensureAiConsent(BuildContext context) async {
     ),
   );
   if (accepted != true) return false;
-  await api.accept();
-  return true;
+  try {
+    await api.accept();
+    return true;
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI 授权保存失败，请检查网络后重试')),
+      );
+    }
+    return false;
+  }
 }

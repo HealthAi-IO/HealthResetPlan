@@ -133,7 +133,7 @@ Future<void> setupServiceLocator() async {
 
   // 延迟创建：在线能力与通知调度首次访问时才实例化
   sl.registerLazySingleton<MembershipService>(
-    () => MembershipService(client: apiClient),
+    () => MembershipService(api: sl<PaymentApi>()),
   );
   sl.registerLazySingleton<AiApi>(
     () => AiApi(client: apiClient, fileApi: sl<FileApi>()),

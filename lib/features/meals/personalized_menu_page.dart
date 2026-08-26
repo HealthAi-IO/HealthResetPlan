@@ -6,6 +6,7 @@ import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/membership/paywall.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
@@ -73,6 +74,10 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
     }
     if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
+    if (!await confirmAiCreditUseIfNeeded(context, 'personalized_menu')) {
+      return;
+    }
+    if (!mounted) return;
     setState(() {
       _generating = true;
       _error = null;
@@ -134,6 +139,8 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
         );
     final meals = day['meals'];
     if (meals is! Map || meals[mealType] is! Map) return;
+    if (!await confirmAiCreditUseIfNeeded(context, 'meal_swap')) return;
+    if (!mounted) return;
     setState(() {
       _generating = true;
       _error = null;

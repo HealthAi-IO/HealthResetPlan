@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
+import 'package:get_it/get_it.dart';
 
 import '../auth/user_session.dart';
 import '../network/api_response.dart';
+import '../payment/payment_service.dart';
 
 enum PaywallFeature {
   cloudSync,
@@ -73,4 +75,48 @@ Future<void> showAiCreditRequiredDialog(BuildContext context) async {
     ),
   );
   if (recharge == true && context.mounted) context.push('/ai-credits');
+}
+
+Future<bool> confirmAiCreditUseIfNeeded(
+  BuildContext context,
+  String feature,
+) async {
+  try {
+    final status = await GetIt.instance<PaymentService>().entitlements();
+    final benefits = status['benefits'];
+    Map<dynamic, dynamic>? benefit;
+    if (benefits is List) {
+      for (final item in benefits.whereType<Map>()) {
+        if ('${item['feature']}' == feature) {
+          benefit = item;
+          break;
+        }
+      }
+    }
+    final included = benefit?['included'] == true;
+    final remaining = (benefit?['remaining'] as num?)?.toInt() ?? 0;
+    if (included && remaining > 0) return true;
+    final creditBalance = (status['creditBalance'] as num?)?.toInt() ?? 0;
+    if (creditBalance <= 0 || !context.mounted) return true;
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('使用 1 次加量权益？'),
+            content: Text('本项周期权益已用完。继续后将使用 1 次永久加量权益，当前剩余 $creditBalance 次。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('暂不使用'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('确认使用'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  } catch (_) {
+    return true;
+  }
 }

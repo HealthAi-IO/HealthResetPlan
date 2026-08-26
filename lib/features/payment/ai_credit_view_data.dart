@@ -6,7 +6,9 @@ List<Map<String, dynamic>> visibleAiCreditProducts(
   return products
       .where(
         (product) =>
-            isDevelopment || isInternal || '${product['code']}' != 'ai_test_1',
+            isDevelopment ||
+            isInternal ||
+            !'${product['code']}'.startsWith('ai_test_'),
       )
       .toList(growable: false);
 }

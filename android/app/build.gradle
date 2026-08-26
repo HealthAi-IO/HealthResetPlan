@@ -75,6 +75,23 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def flavorPrefix = variant.flavorName ? "${variant.flavorName}-" : ""
+            def apkFileName = "jkcqplan-${flavorPrefix}${variant.buildType.name}.apk"
+
+            def copyTaskName = "copy${variant.name.capitalize()}FlutterApk"
+            def copyTask = tasks.register(copyTaskName, Copy) {
+                from(output.outputFile)
+                into(file("${rootProject.projectDir}/../build/app/outputs/flutter-apk"))
+                rename { apkFileName }
+            }
+            tasks.named("assemble${variant.name.capitalize()}").configure {
+                finalizedBy(copyTask)
+            }
+        }
+    }
 }
 
 flutter {

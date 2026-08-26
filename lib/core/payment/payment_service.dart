@@ -20,6 +20,8 @@ class PaymentService {
   }
 
   Future<Map<String, dynamic>> balance() => _api.balance();
+  Future<Map<String, dynamic>> vipStatus() => _api.vipStatus();
+  Future<Map<String, dynamic>> entitlements() => _api.entitlements();
   Future<List<Map<String, dynamic>>> products() => _api.products();
   Future<List<Map<String, dynamic>>> ledger() => _api.ledger();
   Future<List<Map<String, dynamic>>> orders() => _api.orders();

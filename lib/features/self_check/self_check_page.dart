@@ -58,6 +58,13 @@ class _SelfCheckPageState extends State<SelfCheckPage> {
   }
 
   Future<void> _analyze(XFile image) async {
+    if (!await confirmAiCreditUseIfNeeded(
+      context,
+      'ai_vision_${_type.value}',
+    )) {
+      return;
+    }
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;

@@ -140,6 +140,8 @@ class _MealRecordPageState extends State<MealRecordPage> {
       if (!mounted) return;
       if (!await ensureAiConsent(context)) return;
       if (!mounted) return;
+      if (!await confirmAiCreditUseIfNeeded(context, 'meal_analysis')) return;
+      if (!mounted) return;
       final result = await _api.analyzeVision(image: image, type: 'meal');
       if (!mounted) return;
       _provider = result.provider;

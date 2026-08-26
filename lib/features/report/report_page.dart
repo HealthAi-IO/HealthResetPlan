@@ -336,6 +336,8 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _analyzeImage(XFile file) async {
     if (!await ensureAiConsent(context)) return;
+    if (!mounted) return;
+    if (!await confirmAiCreditUseIfNeeded(context, 'report_ocr')) return;
     final preferences = await SharedPreferences.getInstance();
     if (preferences.getBool('report_ai_image_consent') != true) {
       if (!mounted) return;

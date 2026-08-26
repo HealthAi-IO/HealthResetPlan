@@ -376,6 +376,11 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _sendMessage(String content) async {
     final trimmed = content.trim();
     if (trimmed.isEmpty || _sending) return;
+    final localIntent = _resolveLocalIntent(trimmed);
+    if (localIntent != null) {
+      await _sendLocalIntentResponse(trimmed, localIntent);
+      return;
+    }
     setState(() => _sending = true);
 
     try {
@@ -388,6 +393,12 @@ class _ChatPageState extends State<ChatPage> {
       if (!mounted) return;
       final ok = await requireAccountAndMember(context, PaywallFeature.aiPlan);
       if (!ok) {
+        if (mounted) setState(() => _sending = false);
+        return;
+      }
+      if (!mounted) return;
+      if (_messages.isEmpty &&
+          !await confirmAiCreditUseIfNeeded(context, 'ai_chat')) {
         if (mounted) setState(() => _sending = false);
         return;
       }
@@ -530,6 +541,69 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  _LocalChatIntent? _resolveLocalIntent(String content) {
+    final text = content.toLowerCase().replaceAll(RegExp(r'\s+'), '');
+    final mentionsProduct = text.contains('vip') ||
+        text.contains('会员') ||
+        text.contains('次数包') ||
+        text.contains('ai次数');
+    final wantsPurchase = text.contains('充值') ||
+        text.contains('购买') ||
+        text.contains('开通') ||
+        text.contains('续费') ||
+        text.contains('怎么买') ||
+        text.contains('我要买');
+    if (mentionsProduct && wantsPurchase) {
+      return const _LocalChatIntent(
+        response: '可以，点击下方“查看 VIP 套餐”即可查看当前套餐、价格和可用权益。支付前请确认套餐期限和退款条件。',
+      );
+    }
+    return null;
+  }
+
+  Future<void> _sendLocalIntentResponse(
+    String content,
+    _LocalChatIntent intent,
+  ) async {
+    setState(() => _sending = true);
+    try {
+      _currentSession ??= await _ensureSession();
+      final sessionId = _currentSession!.id;
+      final userMessageId = await _chatRepo.addMessage(
+        sessionId: sessionId,
+        role: 'user',
+        content: content,
+      );
+      final assistantMessageId = await _chatRepo.addMessage(
+        sessionId: sessionId,
+        role: 'assistant',
+        content: intent.response,
+      );
+      if (!mounted) return;
+      setState(() {
+        _messages.add(_UiMessage(
+          id: userMessageId,
+          role: 'user',
+          content: content,
+        ));
+        _messages.add(_UiMessage(
+          id: assistantMessageId,
+          role: 'assistant',
+          content: intent.response,
+        ));
+        _sending = false;
+      });
+      _inputCtrl.clear();
+      _scrollToBottom();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暂时无法打开购买入口，请稍后重试')),
+      );
+    }
+  }
+
   void _queueStreamToken(int messageId, String token) {
     if (token.isEmpty || _streamingMessageId != messageId) return;
     _pendingTokens += token;
@@ -586,6 +660,18 @@ class _ChatPageState extends State<ChatPage> {
       );
     }
     _clearStreamState();
+  }
+
+  Future<void> _retryStreamingResponse() async {
+    final content = _messages
+        .lastWhere(
+          (message) => message.role == 'user',
+          orElse: () => _UiMessage(id: 0, role: 'user', content: ''),
+        )
+        .content;
+    if (content.isEmpty) return;
+    await _stopGeneration();
+    await _sendMessage(content);
   }
 
   void _clearStreamState() {
@@ -702,15 +788,21 @@ class _ChatPageState extends State<ChatPage> {
                             itemCount: _messages.length,
                             itemBuilder: (_, i) {
                               final m = _messages[i];
+                              final prompt =
+                                  i > 0 && _messages[i - 1].role == 'user'
+                                      ? _messages[i - 1].content
+                                      : '';
                               return _MessageBubble(
                                 role: m.role,
-                                content: m.content.isEmpty && m.streaming
-                                    ? '...'
-                                    : m.content,
+                                content: m.content,
+                                prompt: prompt,
                                 provider: m.provider,
                                 isError: m.isError,
                                 streaming: m.streaming,
                                 contextSources: m.contextSources,
+                                onRetry: m.streaming && m.content.isEmpty
+                                    ? _retryStreamingResponse
+                                    : null,
                               );
                             },
                           ),
@@ -903,26 +995,107 @@ class _UiMessage {
       );
 }
 
+class _LocalChatIntent {
+  const _LocalChatIntent({required this.response});
+
+  final String response;
+}
+
 // ── 消息气泡 ──────────────────────────────────────────────────
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends StatefulWidget {
   const _MessageBubble({
     required this.role,
     required this.content,
+    this.prompt = '',
     this.provider = '',
     this.isError = false,
     this.streaming = false,
     this.contextSources = const [],
+    this.onRetry,
   });
 
   final String role;
   final String content;
+  final String prompt;
   final String provider;
   final bool isError;
   final bool streaming;
   final List<String> contextSources;
+  final Future<void> Function()? onRetry;
 
-  bool get isUser => role == 'user';
+  @override
+  State<_MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<_MessageBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _waitingController;
+  Timer? _slowTimer;
+  Timer? _retryTimer;
+  bool _slow = false;
+  bool _canRetry = false;
+
+  bool get _waiting =>
+      widget.role != 'user' && widget.streaming && widget.content.isEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _waitingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _syncWaitingState();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_waiting && !MediaQuery.disableAnimationsOf(context)) {
+      _waitingController.repeat();
+    } else {
+      _waitingController.stop();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _MessageBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_waiting !=
+        (oldWidget.role != 'user' &&
+            oldWidget.streaming &&
+            oldWidget.content.isEmpty)) {
+      _syncWaitingState();
+    }
+  }
+
+  void _syncWaitingState() {
+    _slowTimer?.cancel();
+    _retryTimer?.cancel();
+    _slow = false;
+    _canRetry = false;
+    if (!_waiting) {
+      _waitingController.stop();
+      return;
+    }
+    _slowTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted && _waiting) setState(() => _slow = true);
+    });
+    _retryTimer = Timer(const Duration(seconds: 30), () {
+      if (mounted && _waiting) setState(() => _canRetry = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _slowTimer?.cancel();
+    _retryTimer?.cancel();
+    _waitingController.dispose();
+    super.dispose();
+  }
+
+  bool get isUser => widget.role == 'user';
 
   @override
   Widget build(BuildContext context) {
@@ -937,11 +1110,24 @@ class _MessageBubble extends StatelessWidget {
             SizedBox(
               width: 32,
               height: 32,
-              child: isError
+              child: widget.isError
                   ? Icon(Icons.error_outline, color: Colors.red.shade700)
-                  : Image.asset(
-                      'assets/images/ai_robot_avatar.png',
-                      fit: BoxFit.contain,
+                  : AnimatedBuilder(
+                      animation: _waitingController,
+                      builder: (context, child) {
+                        final scale = _waiting
+                            ? 1 +
+                                0.04 *
+                                    (1 -
+                                        (2 * _waitingController.value - 1)
+                                            .abs())
+                            : 1.0;
+                        return Transform.scale(scale: scale, child: child);
+                      },
+                      child: Image.asset(
+                        'assets/images/ai_robot_avatar.png',
+                        fit: BoxFit.contain,
+                      ),
                     ),
             ),
             const SizedBox(width: 8),
@@ -949,7 +1135,8 @@ class _MessageBubble extends StatelessWidget {
           Flexible(
             child: GestureDetector(
               onLongPress: () {
-                Clipboard.setData(ClipboardData(text: content));
+                if (widget.content.isEmpty) return;
+                Clipboard.setData(ClipboardData(text: widget.content));
                 ScaffoldMessenger.of(
                   context,
                 ).showSnackBar(const SnackBar(content: Text('已复制')));
@@ -962,7 +1149,7 @@ class _MessageBubble extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isUser
                       ? AppTheme.deepBlue
-                      : isError
+                      : widget.isError
                           ? Colors.red.shade50
                           : Theme.of(context).colorScheme.surfaceContainerLow,
                   borderRadius: BorderRadius.only(
@@ -974,7 +1161,7 @@ class _MessageBubble extends StatelessWidget {
                   border: isUser
                       ? null
                       : Border.all(
-                          color: isError
+                          color: widget.isError
                               ? Colors.red.shade200
                               : Theme.of(context).colorScheme.outlineVariant,
                         ),
@@ -982,51 +1169,46 @@ class _MessageBubble extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (!isUser && !isError && !streaming) ...[
+                    if (!isUser && !widget.isError && !widget.streaming) ...[
                       const AiContentNotice(feature: '健康管家'),
                       const SizedBox(height: 8),
                     ],
-                    Text(
-                      content,
-                      style: TextStyle(
-                        fontSize: 14,
-                        height: 1.55,
-                        color: isUser
-                            ? Colors.white
-                            : isError
-                                ? Colors.red.shade700
-                                : Theme.of(context).colorScheme.onSurface,
+                    if (_waiting)
+                      _AiWaitingIndicator(
+                        controller: _waitingController,
+                        slow: _slow,
+                        canRetry: _canRetry,
+                        onRetry: widget.onRetry,
+                      )
+                    else
+                      Text(
+                        widget.content,
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.55,
+                          color: isUser
+                              ? Colors.white
+                              : widget.isError
+                                  ? Colors.red.shade700
+                                  : Theme.of(context).colorScheme.onSurface,
+                        ),
                       ),
-                    ),
-                    if (!isUser && contextSources.isNotEmpty) ...[
+                    if (!isUser && widget.contextSources.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text(
-                        '参考：${contextSources.join(' · ')}',
+                        '参考：${widget.contextSources.join(' · ')}',
                         style: TextStyle(
                           fontSize: 11,
                           color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                     ],
-                    if (!isUser && !isError && !streaming) ...[
+                    if (!isUser && !widget.isError && !widget.streaming) ...[
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
-                        children: [
-                          _ChatAction(
-                            label: '今日计划',
-                            onTap: () => context.go('/plan'),
-                          ),
-                          _ChatAction(
-                            label: '记录饮食',
-                            onTap: () => context.go('/meals'),
-                          ),
-                          _ChatAction(
-                            label: '指标趋势',
-                            onTap: () => context.go('/indicators'),
-                          ),
-                        ],
+                        children: _buildActions(context),
                       ),
                     ],
                   ],
@@ -1039,18 +1221,225 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+
+  List<Widget> _buildActions(BuildContext context) {
+    final text = '${widget.prompt} ${widget.content}'.toLowerCase();
+    if (_containsAny(text, const ['vip', '会员', '充值', '次数包'])) {
+      return [
+        _ChatAction(
+          label: '查看 VIP 套餐',
+          icon: Icons.workspace_premium_outlined,
+          onTap: () => context.push('/ai-credits'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['血压', '收缩压', '舒张压'])) {
+      return [
+        _ChatAction(
+          label: '记录血压',
+          icon: Icons.favorite_outline,
+          onTap: () => context.push('/indicators/input', extra: 'bp'),
+        ),
+        _ChatAction(
+          label: '查看趋势',
+          icon: Icons.show_chart_rounded,
+          onTap: () => context.push('/indicators'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['血糖', '空腹血糖', '餐后血糖'])) {
+      return [
+        _ChatAction(
+          label: '记录血糖',
+          icon: Icons.water_drop_outlined,
+          onTap: () => context.push('/indicators/input', extra: 'glucose'),
+        ),
+        _ChatAction(
+          label: '查看趋势',
+          icon: Icons.show_chart_rounded,
+          onTap: () => context.push('/indicators'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['体重', '减重', '增重', 'bmi'])) {
+      return [
+        _ChatAction(
+          label: '记录体重',
+          icon: Icons.scale_outlined,
+          onTap: () => context.push('/indicators/input', extra: 'weight'),
+        ),
+        _ChatAction(
+          label: '查看趋势',
+          icon: Icons.show_chart_rounded,
+          onTap: () => context.push('/indicators'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['睡眠', '失眠', '入睡', '睡不着'])) {
+      return [
+        _ChatAction(
+          label: '记录睡眠',
+          icon: Icons.bedtime_outlined,
+          onTap: () => context.push('/indicators/input', extra: 'sleep'),
+        ),
+        _ChatAction(
+          label: '查看趋势',
+          icon: Icons.show_chart_rounded,
+          onTap: () => context.push('/indicators'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['饮食', '早餐', '午餐', '晚餐', '热量', '食谱'])) {
+      return [
+        _ChatAction(
+          label: '记录饮食',
+          icon: Icons.restaurant_outlined,
+          onTap: () => context.push('/meals/input'),
+        ),
+        _ChatAction(
+          label: '查看饮食',
+          icon: Icons.history_rounded,
+          onTap: () => context.push('/meals'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['运动', '锻炼', '训练', '打卡'])) {
+      return [
+        _ChatAction(
+          label: '今日计划',
+          icon: Icons.event_note_outlined,
+          onTap: () => context.push('/plan'),
+        ),
+        _ChatAction(
+          label: '完成打卡',
+          icon: Icons.check_circle_outline,
+          onTap: () => context.push('/clock'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['戒烟', '吸烟', '烟瘾'])) {
+      return [
+        _ChatAction(
+          label: '戒烟记录',
+          icon: Icons.smoke_free_outlined,
+          onTap: () => context.push('/quit-smoking'),
+        ),
+      ];
+    }
+    if (_containsAny(text, const ['周报', '每周报告', '健康报告'])) {
+      return [
+        _ChatAction(
+          label: '查看健康周报',
+          icon: Icons.summarize_outlined,
+          onTap: () => context.push('/record-history/weekly'),
+        ),
+      ];
+    }
+    return [
+      _ChatAction(
+        label: '今日计划',
+        icon: Icons.event_note_outlined,
+        onTap: () => context.push('/plan'),
+      ),
+      _ChatAction(
+        label: '记录饮食',
+        icon: Icons.restaurant_outlined,
+        onTap: () => context.push('/meals/input'),
+      ),
+      _ChatAction(
+        label: '指标趋势',
+        icon: Icons.show_chart_rounded,
+        onTap: () => context.push('/indicators'),
+      ),
+    ];
+  }
+
+  bool _containsAny(String text, List<String> values) =>
+      values.any(text.contains);
+}
+
+class _AiWaitingIndicator extends StatelessWidget {
+  const _AiWaitingIndicator({
+    required this.controller,
+    required this.slow,
+    required this.canRetry,
+    required this.onRetry,
+  });
+
+  final AnimationController controller;
+  final bool slow;
+  final bool canRetry;
+  final Future<void> Function()? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Semantics(
+      liveRegion: true,
+      label: slow ? 'AI 分析时间稍长，请稍候' : 'AI 正在分析健康记录',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                slow ? '分析时间稍长，请稍候' : '正在结合你的健康记录分析',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(width: 8),
+              AnimatedBuilder(
+                animation: controller,
+                builder: (context, _) => Row(
+                  children: List.generate(3, (index) {
+                    final phase = (controller.value * 3 - index) % 3;
+                    final active = phase >= 0 && phase < 1;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: active ? 1 : 0.28),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ],
+          ),
+          if (canRetry) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('停止并重试'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _ChatAction extends StatelessWidget {
-  const _ChatAction({required this.label, required this.onTap});
+  const _ChatAction({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
 
   final String label;
+  final IconData icon;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return ActionChip(
       visualDensity: VisualDensity.compact,
+      avatar: Icon(icon, size: 16),
       label: Text(label, style: const TextStyle(fontSize: 11)),
       onPressed: onTap,
     );

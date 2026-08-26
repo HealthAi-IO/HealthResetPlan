@@ -1,13 +1,18 @@
 import 'package:dio/dio.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../app/app_theme.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
+import '../../core/data/ai_action_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/ai_api.dart';
 import '../../core/membership/paywall.dart';
+import '../../core/membership/membership_service.dart';
+import '../../core/notification/reminder_consent.dart';
+import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/ai_consent_gate.dart';
 import '../../core/widgets/ai_content_notice.dart';
 
@@ -21,16 +26,21 @@ class WeeklyHealthReportPage extends StatefulWidget {
 class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
   final _repo = sl<HealthRepository>();
   final _api = sl<AiApi>();
+  final _membership = sl<MembershipService>();
+  final _reminderScheduler = sl<ReminderScheduler>();
 
   bool _loading = true;
   bool _generating = false;
+  bool _vipActive = false;
   String? _error;
   int _recordedDays = 0;
   Map<String, dynamic> _stats = const {};
   List<WeeklyHealthReportData> _reports = const [];
+  List<Map<String, Object?>> _actionLogs = const [];
 
   DateTime get _endDate => DateUtils.dateOnly(DateTime.now());
-  DateTime get _startDate => _endDate.subtract(const Duration(days: 6));
+  DateTime get _startDate =>
+      _endDate.subtract(Duration(days: _vipActive ? 29 : 6));
 
   @override
   void initState() {
@@ -41,6 +51,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
   Future<void> _load() async {
     if (mounted) setState(() => _loading = true);
     try {
+      _vipActive = (await _membership.getStatus(forceRefresh: true)).isActive;
       final results = await Future.wait<Object>([
         _repo.loadIndicatorsSince(_startDate),
         _repo.loadMealsBetween(
@@ -49,6 +60,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
         ),
         _repo.loadClockRecords(limit: 500),
         _repo.loadWeeklyHealthReports(),
+        AiActionRepository.instance.recent(limit: 10),
       ]);
       final indicators = results[0] as List<HealthIndicatorEntry>;
       final meals = results[1] as List<MealRecordData>;
@@ -63,6 +75,8 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
         for (final item in clocks)
           DateFormat('yyyy-MM-dd').format(item.clockTime),
       };
+      final todayKey = DateFormat('yyyy-MM-dd').format(_endDate);
+      final currentStreak = _currentStreak(days, _endDate);
       final calories = meals.fold<double>(
         0,
         (sum, item) => sum + item.totalCalories,
@@ -85,6 +99,16 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
           .length;
       final stats = <String, dynamic>{
         'recordedDays': days.length,
+        'currentStreak': currentStreak,
+        'todayMealCount': meals
+            .where((item) =>
+                DateFormat('yyyy-MM-dd').format(item.eatenTime) == todayKey)
+            .length,
+        'todayCheckIns': clocks
+            .where((item) =>
+                item.status == 'done' &&
+                DateFormat('yyyy-MM-dd').format(item.clockTime) == todayKey)
+            .length,
         'mealDays': meals
             .map((item) => DateFormat('yyyy-MM-dd').format(item.eatenTime))
             .toSet()
@@ -105,9 +129,10 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
       };
       if (!mounted) return;
       setState(() {
-        _recordedDays = days.length.clamp(0, 7);
+        _recordedDays = days.length.clamp(0, _vipActive ? 30 : 7);
         _stats = stats;
         _reports = results[3] as List<WeeklyHealthReportData>;
+        _actionLogs = results[4] as List<Map<String, Object?>>;
         _error = null;
         _loading = false;
       });
@@ -123,6 +148,8 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
   Future<void> _generate() async {
     if (_recordedDays < 3 || _generating) return;
     if (!await ensureAiConsent(context)) return;
+    if (!mounted) return;
+    if (!await confirmAiCreditUseIfNeeded(context, 'weekly_report')) return;
     if (!mounted) return;
     setState(() {
       _generating = true;
@@ -191,7 +218,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${DateFormat('M月d日').format(_startDate)}—${DateFormat('M月d日').format(_endDate)} · 已记录 $_recordedDays/7 天',
+                  '${DateFormat('M月d日').format(_startDate)}—${DateFormat('M月d日').format(_endDate)} · ${_vipActive ? 'VIP 深度分析' : '基础分析'}',
                   style: TextStyle(
                     color: colors.onPrimary.withValues(alpha: 0.82),
                   ),
@@ -227,7 +254,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
                       : _recordedDays < 3
                           ? '还差 ${3 - _recordedDays} 天可生成'
                           : latest == null
-                              ? '生成最近7天周报'
+                              ? '生成${_vipActive ? '最近30天' : '最近7天'}周报'
                               : '重新生成'),
                 ),
                 if (_recordedDays < 3) ...[
@@ -253,9 +280,131 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
             const SizedBox(height: 16),
             const _ReportEmpty(),
           ],
+          _DailySummary(stats: _stats, onCreateReminder: _createRecordReminder),
+          _ActionLogSection(logs: _actionLogs, onUndo: _undoAction),
         ],
       ),
     );
+  }
+
+  Future<void> _undoAction(int id) async {
+    final row = _actionLogs.where((item) => item['id'] == id).firstOrNull;
+    final targetId = int.tryParse('${row?['target_id']}');
+    if (row?['target_table'] == 'reminder' && targetId != null) {
+      await _repo.deleteReminder(targetId);
+      await _reminderScheduler.syncAll();
+    }
+    final ok = await AiActionRepository.instance.undo(id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(ok ? '操作已撤销' : '操作已超过30分钟，无法撤销')));
+    if (ok) {
+      setState(() => _actionLogs = _actionLogs
+          .map((row) => row['id'] == id ? {...row, 'status': 'undone'} : row)
+          .toList());
+    }
+  }
+
+  Future<void> _createRecordReminder(String type) async {
+    if (await confirmReminderUse(context, _reminderScheduler) !=
+        ReminderConsentResult.allowed) {
+      return;
+    }
+    if (!mounted) return;
+    final now = DateTime.now();
+    final hour = type == 'meal' ? 19 : 20;
+    final date = now.hour < hour ? now : now.add(const Duration(days: 1));
+    final reminder = await _repo.addReminder(
+      type: type,
+      time: TimeOfDayValue(hour: hour, minute: 0),
+      date: date,
+      scheduleMode: 'once',
+      weekdays: const [],
+      note: type == 'meal' ? '今天还没有饮食记录，记得补充' : '今天还没有完成打卡，记得记录',
+      payloadExtras: const {'source': 'record-summary'},
+    );
+    await _reminderScheduler.syncReminder(reminder);
+    await AiActionRepository.instance.recordConfirmed(
+      type: 'reminder',
+      title: type == 'meal' ? '饮食记录提醒' : '健康打卡提醒',
+      detail: '已创建一次性提醒',
+      targetTable: 'reminder',
+      targetId: reminder.id,
+    );
+    await _load();
+  }
+
+  int _currentStreak(Set<String> days, DateTime today) {
+    var cursor = today;
+    if (!days.contains(DateFormat('yyyy-MM-dd').format(cursor))) {
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    var count = 0;
+    while (days.contains(DateFormat('yyyy-MM-dd').format(cursor))) {
+      count++;
+      cursor = cursor.subtract(const Duration(days: 1));
+    }
+    return count;
+  }
+}
+
+class _DailySummary extends StatelessWidget {
+  const _DailySummary({required this.stats, required this.onCreateReminder});
+  final Map<String, dynamic> stats;
+  final Future<void> Function(String type) onCreateReminder;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(
+              '今日摘要：已记录 ${stats['todayMealCount'] ?? 0} 条饮食、完成 ${stats['todayCheckIns'] ?? 0} 次打卡；当前连续记录 ${stats['currentStreak'] ?? 0} 天。',
+              style: TextStyle(color: AppTheme.muted, height: 1.5)),
+          if ((stats['todayMealCount'] as int? ?? 0) == 0)
+            TextButton.icon(
+                onPressed: () => onCreateReminder('meal'),
+                icon: const Icon(Icons.notifications_none),
+                label: const Text('提醒我记录饮食')),
+          if ((stats['todayCheckIns'] as int? ?? 0) == 0)
+            TextButton.icon(
+                onPressed: () => onCreateReminder('exercise'),
+                icon: const Icon(Icons.notifications_none),
+                label: const Text('提醒我完成打卡')),
+        ]),
+      );
+}
+
+class _ActionLogSection extends StatelessWidget {
+  const _ActionLogSection({required this.logs, required this.onUndo});
+  final List<Map<String, Object?>> logs;
+  final Future<void> Function(int id) onUndo;
+  @override
+  Widget build(BuildContext context) {
+    if (logs.isEmpty) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: 18),
+      const Text('AI 操作记录',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+      for (final row in logs)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(row['title']?.toString() ?? ''),
+          subtitle: Text(row['status'] == 'undone'
+              ? '已撤销'
+              : (row['detail']?.toString() ?? '')),
+          trailing: _canUndo(row)
+              ? TextButton(
+                  onPressed: () => onUndo(int.tryParse('${row['id']}') ?? 0),
+                  child: const Text('撤销'))
+              : null,
+        ),
+    ]);
+  }
+
+  bool _canUndo(Map<String, Object?> row) {
+    if (row['status'] == 'undone' || row['target_id'] == null) return false;
+    final createdAt = int.tryParse('${row['created_at']}') ?? 0;
+    return DateTime.now().millisecondsSinceEpoch - createdAt <=
+        const Duration(minutes: 30).inMilliseconds;
   }
 }
 
@@ -322,6 +471,11 @@ class _WeeklyReportBody extends StatelessWidget {
                 ),
                 title: Text(action['title']?.toString() ?? ''),
                 subtitle: Text(action['detail']?.toString() ?? ''),
+                trailing: IconButton(
+                  tooltip: '去执行',
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  onPressed: () => _openAction(context, action),
+                ),
               ),
           ],
           const SizedBox(height: 10),
@@ -329,6 +483,45 @@ class _WeeklyReportBody extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _openAction(
+      BuildContext context, Map<String, dynamic> action) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('确认执行这条建议？'),
+        content: Text('${action['title'] ?? ''}\n\n${action['detail'] ?? ''}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认并前往'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await AiActionRepository.instance.recordConfirmed(
+      type: action['planType']?.toString() ?? 'unknown',
+      title: action['title']?.toString() ?? '',
+      detail: action['detail']?.toString() ?? '',
+    );
+    if (!context.mounted) return;
+    switch (action['planType']?.toString()) {
+      case 'meal':
+        context.go('/meals');
+        break;
+      case 'exercise':
+      case 'measurement':
+        context.go('/plan');
+        break;
+      default:
+        context.go('/clock');
+    }
   }
 }
 

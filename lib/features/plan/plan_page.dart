@@ -277,6 +277,8 @@ class _PlanPageState extends State<PlanPage> {
     if (!mounted) return;
     if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
+    if (!await confirmAiCreditUseIfNeeded(context, 'ai_plan')) return;
+    if (!mounted) return;
     _aiPlanController.start(
       profile: _profile!,
       provider: _selectedProvider,
