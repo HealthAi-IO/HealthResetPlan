@@ -9,7 +9,7 @@ import '../../features/privacy/privacy_policy_page.dart';
 
 const privacyPolicyUrl = 'https://jkcqplan.com/privacy/index.html';
 const termsOfServiceUrl = 'https://jkcqplan.com/terms/index.html';
-const _privacyPolicyVersion = '2026-07-17';
+const _privacyPolicyVersion = '2026-09-06';
 const _privacyConsentKey = 'privacy_policy_version';
 
 class PrivacyConsentGate extends StatefulWidget {

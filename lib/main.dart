@@ -236,7 +236,7 @@ class _SplashContent extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '每一次记录，都在靠近更好的自己',
+                  '有健康，才有未来！',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w500,

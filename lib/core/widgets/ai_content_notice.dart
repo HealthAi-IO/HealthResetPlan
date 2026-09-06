@@ -11,7 +11,7 @@ class AiContentNotice extends StatelessWidget {
   Future<void> _reportIssue(BuildContext context) async {
     final uri = Uri(
       scheme: 'mailto',
-      path: '87103978@qq.com',
+      path: 'caokun@weilingji.com',
       queryParameters: {
         'subject': '健康重启计划 AI内容反馈 - $feature',
         'body': 'AI功能：$feature\n问题描述：\n\n请勿在邮件中填写身份证号、病历原文等敏感信息。',
@@ -23,7 +23,7 @@ class AiContentNotice extends StatelessWidget {
     }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('无法打开邮件客户端，请联系 87103978@qq.com')),
+      const SnackBar(content: Text('无法打开邮件客户端，请联系 caokun@weilingji.com')),
     );
   }
 
