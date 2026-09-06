@@ -340,7 +340,6 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     _siteMessageSubscription = siteMessages.events.listen(_showSiteMessage);
     siteMessages.start();
     _scheduleReminderRefresh();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdate());
   }
 
   @override
