@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'app/app_router.dart';
@@ -25,6 +26,7 @@ import 'core/update/app_update_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('zh_CN');
   ErrorWidget.builder = (details) {
     debugPrint('Page rendering failed: ${details.exceptionAsString()}');
     debugPrintStack(stackTrace: details.stack);

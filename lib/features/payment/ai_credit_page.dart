@@ -270,10 +270,10 @@ class _AiCreditPageState extends State<AiCreditPage> {
               vipStatus: _vipStatus,
             ),
             const SizedBox(height: 26),
-            Text('VIP 会员', style: Theme.of(context).textTheme.titleLarge),
+            Text('会员版', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              '把每天的记录变成持续、完整的健康管理',
+              '把每天的记录变成持续、完整的健康管理，免费版也不受影响',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
@@ -926,7 +926,7 @@ class _PurchaseNotice extends StatelessWidget {
         Text('购买说明', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Text(
-          '健康记录功能永久免费。AI 次数包适合偶尔使用，VIP 月卡和年卡适合持续追踪。',
+          '健康记录功能永久免费。会员版适合持续使用 AI，次数包适合偶尔使用。',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 6),

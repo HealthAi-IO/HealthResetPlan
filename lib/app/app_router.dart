@@ -22,7 +22,7 @@ import '../features/indicators/indicator_list_page.dart'
 import '../features/meals/meal_record_page.dart' deferred as meals;
 import '../features/meals/food_hub_page.dart' deferred as food_hub;
 import '../features/meals/meal_input_args.dart';
-import '../features/plan/plan_page.dart' deferred as plan;
+import '../features/plan/plan_page.dart' as plan;
 import '../features/profile/profile_page.dart' deferred as profile;
 import '../features/records/record_hub_page.dart' deferred as records;
 import '../features/records/senior_record_page.dart' deferred as senior_records;
@@ -151,7 +151,7 @@ class AppRouter {
                   _DeferredPage(
                     load: appSettingsController.seniorMode
                         ? senior_records.loadLibrary
-                        : plan.loadLibrary,
+                        : () async {},
                     builder: () => appSettingsController.seniorMode
                         ? senior_records.SeniorRecordPage()
                         : plan.PlanPage(),

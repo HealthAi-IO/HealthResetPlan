@@ -50,6 +50,7 @@ class _AiBenefitsPageState extends State<AiBenefitsPage> {
   final _service = GetIt.instance<PaymentService>();
   final _benefitsKey = GlobalKey();
   Map<String, dynamic> _balance = const {};
+  Map<String, dynamic> _entitlements = const {};
   ({int gifted, int purchased}) _sources = (gifted: 0, purchased: 0);
   bool _loading = true;
   bool _failed = false;
@@ -69,13 +70,16 @@ class _AiBenefitsPageState extends State<AiBenefitsPage> {
       final results = await Future.wait([
         _service.balance(),
         _service.ledger(),
+        _service.entitlements(),
       ]).timeout(const Duration(seconds: 8));
       if (!mounted) return;
       final balance = results[0] as Map<String, dynamic>;
       final ledgerSources =
           aiCreditSources(results[1] as List<Map<String, dynamic>>);
+      final entitlements = results[2] as Map<String, dynamic>;
       setState(() {
         _balance = balance;
+        _entitlements = entitlements;
         _sources = (
           gifted: balance.containsKey('gifted_total')
               ? creditIntValue(balance['gifted_total'])
@@ -139,11 +143,23 @@ class _AiBenefitsPageState extends State<AiBenefitsPage> {
                 icon: benefit.icon,
                 title: benefit.title,
                 description: benefit.description,
-                onTap: () => context.push(benefit.route),
+                onTap: () => benefit.route == '/plan'
+                    ? context.go('/plan')
+                    : context.push(benefit.route),
               ),
             ),
             const SizedBox(height: 22),
-            const _FreeBenefits(),
+            _FreeBenefits(
+              benefits: (_entitlements['benefits'] as List?)
+                      ?.whereType<Map>()
+                      .map((item) => Map<String, dynamic>.from(item))
+                      .toList(growable: false) ??
+                  const [],
+            ),
+            const SizedBox(height: 14),
+            const _PlanComparison(),
+            const SizedBox(height: 14),
+            const _WhyWeCharge(),
             const SizedBox(height: 14),
             const _UsageRules(),
             const SizedBox(height: 18),
@@ -362,7 +378,9 @@ class _BenefitRow extends StatelessWidget {
 }
 
 class _FreeBenefits extends StatelessWidget {
-  const _FreeBenefits();
+  const _FreeBenefits({required this.benefits});
+
+  final List<Map<String, dynamic>> benefits;
 
   @override
   Widget build(BuildContext context) {
@@ -372,13 +390,105 @@ class _FreeBenefits extends StatelessWidget {
       decoration: BoxDecoration(
           color: colors.secondaryContainer,
           borderRadius: BorderRadius.circular(16)),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(Icons.health_and_safety_outlined),
           SizedBox(width: 12),
-          Expanded(
-              child: Text('基础健康功能永久免费\n健康档案、指标记录、提醒、打卡、基础趋势和历史记录不消耗 AI 次数。')),
+          Expanded(child: _FreeBenefitsContent()),
+        ],
+      ),
+    );
+  }
+}
+
+class _FreeBenefitsContent extends StatelessWidget {
+  const _FreeBenefitsContent();
+
+  @override
+  Widget build(BuildContext context) {
+    final benefits =
+        context.findAncestorWidgetOfExactType<_FreeBenefits>()!.benefits;
+    final included =
+        benefits.where((item) => item['included'] == true).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('免费版'),
+        const SizedBox(height: 4),
+        const Text('健康档案、指标记录、提醒、打卡、基础趋势和历史记录永久免费。'),
+        if (included.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          for (final item in included)
+            Text(
+                '${item['label'] ?? item['feature']}：剩余 ${creditIntValue(item['remaining'])} 次/${_periodLabel(item['period'])}'),
+        ],
+      ],
+    );
+  }
+
+  String _periodLabel(Object? period) => switch ('$period') {
+        'day' => '每日',
+        'week' => '每周',
+        'month' => '每月',
+        'trial' => '体验期',
+        _ => '周期',
+      };
+}
+
+class _PlanComparison extends StatelessWidget {
+  const _PlanComparison();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.outlineVariant),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('免费版和会员版的区别'),
+          SizedBox(height: 10),
+          Text('免费版：记录健康数据、查看历史、设置提醒、做打卡。'),
+          SizedBox(height: 6),
+          Text('会员版：获得更多 AI 次数，用来做报告识别、健康对话、智能计划、餐食分析和周报。'),
+          SizedBox(height: 6),
+          Text('简单说，免费版负责“把数据记下来”，会员版负责“把数据用起来”。'),
+        ],
+      ),
+    );
+  }
+}
+
+class _WhyWeCharge extends StatelessWidget {
+  const _WhyWeCharge();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: colors.secondaryContainer,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('为什么我们要收费'),
+          SizedBox(height: 8),
+          Text('1. AI 调用有真实成本：每次生成都要消耗模型、接口和算力资源。'),
+          SizedBox(height: 5),
+          Text('2. 健康数据要长期保存和同步，需要服务器、存储、带宽和风控成本。'),
+          SizedBox(height: 5),
+          Text('3. 识别报告、分析餐食、生成计划都要持续优化，收费才能支撑版本迭代。'),
+          SizedBox(height: 5),
+          Text('4. 我们只对高成本的 AI 能力收费，核心健康记录一直免费。'),
         ],
       ),
     );
@@ -410,6 +520,8 @@ class _UsageRules extends StatelessWidget {
           Text('3. 其他 AI 能力每次成功生成扣 1 次；失败不扣次。'),
           SizedBox(height: 5),
           Text('4. 赠送与购买次数共用，永久有效且不自动续费。'),
+          SizedBox(height: 5),
+          Text('5. 免费版可以继续记健康数据，次数用完也不会影响历史记录。'),
         ],
       ),
     );

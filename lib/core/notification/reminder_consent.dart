@@ -16,6 +16,8 @@ Future<ReminderConsentResult> confirmReminderUse(
         title: const Text('开启健康提醒'),
         content: const Text(
           'APP 将在你设定的时间发送饮食、运动、用药、称重等通知。'
+          '你同意开启后，APP 可能在到达提醒时间、设备重启或应用更新后由系统唤起本地通知组件，'
+          '用于发送或恢复你主动创建的提醒，不会用于广告、营销或拉起第三方应用。'
           '提醒可能受系统限制产生延迟，不用于紧急或关键医疗用途。',
         ),
         actions: [
