@@ -31,10 +31,6 @@ bool _isAiPlanProvider(String provider) =>
     provider.isNotEmpty && provider != 'local' && provider != 'manual';
 
 String _planProviderLabel(String provider) => switch (provider) {
-      'doubao' => '豆包',
-      'qwen' => 'AI',
-      'glm' => '智谱 GLM',
-      'deepseek' => 'DeepSeek',
       _ => 'AI',
     };
 
@@ -53,7 +49,7 @@ class _PlanPageState extends State<PlanPage> {
 
   bool _loading = true;
   bool _presentingAiResult = false;
-  static const String _selectedProvider = 'qwen';
+  static const String _selectedProvider = '';
   UserProfileData? _profile;
   List<PlanRecordData> _plans = const [];
   List<ClockRecordData> _clockRecords = const [];
@@ -134,23 +130,35 @@ class _PlanPageState extends State<PlanPage> {
     if (!silent) {
       setState(() => _loading = true);
     }
-    final profile = await _repo.loadProfile();
-    final plans = await _repo.loadPlans(limit: 1000);
-    final clockRecords = await _repo.loadClockRecords(limit: 40);
-    if (!mounted) return;
-    setState(() {
-      _profile = profile;
-      final riskList = plans.where((p) => p.type == 'risk').toList();
-      _riskPlan = riskList.isEmpty ? null : riskList.first;
-      final isCritical = _isCriticalRiskPlan(_riskPlan);
-      _plans = isCritical
-          ? const []
-          : plans
-              .where((p) => p.type == 'exercise' || p.type == 'measurement')
-              .toList();
-      _clockRecords = clockRecords;
-      _loading = false;
-    });
+    try {
+      final profile = await _repo.loadProfile();
+      final plans = await _repo.loadPlans(limit: 1000);
+      final clockRecords = await _repo.loadClockRecords(limit: 40);
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        final riskList = plans.where((p) => p.type == 'risk').toList();
+        _riskPlan = riskList.isEmpty ? null : riskList.first;
+        final isCritical = _isCriticalRiskPlan(_riskPlan);
+        _plans = isCritical
+            ? const []
+            : plans
+                .where((p) => p.type == 'exercise' || p.type == 'measurement')
+                .toList();
+        _clockRecords = clockRecords;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _plans = const [];
+        _clockRecords = const [];
+        _loading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('计划加载失败，请下拉刷新重试')),
+      );
+    }
   }
 
   Future<void> _generate() async {

@@ -17,7 +17,7 @@ class ApiClient {
   })  : _refreshDio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
-            connectTimeout: const Duration(seconds: 3),
+            connectTimeout: const Duration(seconds: 15),
             receiveTimeout: const Duration(seconds: 15),
             sendTimeout: const Duration(seconds: 15),
             headers: const {
@@ -29,8 +29,7 @@ class ApiClient {
         _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
-            // 严格控制超时，避免后端没起时 UI 长时间卡死
-            connectTimeout: const Duration(seconds: 3),
+            connectTimeout: const Duration(seconds: 15),
             receiveTimeout: const Duration(seconds: 15),
             sendTimeout: const Duration(seconds: 15),
             headers: const {

@@ -175,8 +175,26 @@ class AppTheme {
               color: colorScheme.onSurface,
             ),
             bodySmall: TextStyle(
-              fontSize: 12,
+              fontSize: 13,
               height: 1.5,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            labelLarge: TextStyle(
+              fontSize: 14,
+              height: 1.45,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurface,
+            ),
+            labelMedium: TextStyle(
+              fontSize: 13,
+              height: 1.45,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            labelSmall: TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
               color: colorScheme.onSurfaceVariant,
             ),
           ),
@@ -204,7 +222,7 @@ class AppTheme {
       ),
       cardTheme: CardThemeData(
         color: colorScheme.surfaceContainerLow,
-        elevation: 2,
+        elevation: 0,
         shadowColor: Colors.transparent,
         surfaceTintColor: colorScheme.surfaceContainerLow,
         margin: EdgeInsets.zero,
@@ -355,10 +373,10 @@ class AppTheme {
     );
     final scheme = generatedScheme.copyWith(
       primary: seed,
-      onSurface: const Color(0xFFF5ECE7),
-      onSurfaceVariant: const Color(0xFFCBBDB5),
-      outline: const Color(0xFF9D8B82),
-      outlineVariant: const Color(0xFF5C4D46),
+      onSurface: const Color(0xFFF3F7FB),
+      onSurfaceVariant: const Color(0xFFB9C8D6),
+      outline: const Color(0xFF899CAD),
+      outlineVariant: const Color(0xFF536779),
     );
     final textTheme = ThemeData.dark()
         .textTheme
@@ -371,14 +389,12 @@ class AppTheme {
           headlineLarge: TextStyle(
             fontSize: 30,
             height: 1.3,
-            letterSpacing: -0.2,
             fontWeight: FontWeight.w700,
             color: scheme.onSurface,
           ),
           headlineMedium: TextStyle(
             fontSize: 26,
             height: 1.35,
-            letterSpacing: -0.1,
             fontWeight: FontWeight.w700,
             color: scheme.onSurface,
           ),
@@ -415,9 +431,8 @@ class AppTheme {
             color: scheme.onSurface,
           ),
           bodySmall: TextStyle(
-            fontSize: 12,
+            fontSize: 13,
             height: 1.55,
-            letterSpacing: 0.1,
             fontWeight: FontWeight.w400,
             color: scheme.onSurfaceVariant,
           ),

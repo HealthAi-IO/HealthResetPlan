@@ -72,17 +72,30 @@ class PaymentService {
   }
 
   Future<Map<String, dynamic>> _pollOrder(String orderNo) async {
+    Object? lastError;
     for (var i = 0; i < 12; i++) {
       await Future<void>.delayed(const Duration(seconds: 2));
-      final status = await _api.orderStatus(orderNo);
-      if (status['status'] == 'paid' ||
-          status['status'] == 'expired' ||
-          status['status'] == 'failed' ||
-          status['status'] == 'refunded') {
-        return status;
+      try {
+        final status = await _api.orderStatus(orderNo);
+        if (status['status'] == 'paid' ||
+            status['status'] == 'expired' ||
+            status['status'] == 'failed' ||
+            status['status'] == 'refunded') {
+          return status;
+        }
+      } catch (error) {
+        lastError = error;
       }
     }
-    return _api.orderStatus(orderNo);
+    try {
+      return await _api.orderStatus(orderNo);
+    } catch (_) {
+      return {
+        'orderNo': orderNo,
+        'status': 'pending',
+        if (lastError != null) 'queryError': '$lastError',
+      };
+    }
   }
 
   Future<void> dispose() =>

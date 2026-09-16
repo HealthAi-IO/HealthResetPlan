@@ -157,7 +157,6 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
     });
     try {
       final result = await _api.generateWeeklyHealthReport({
-        'provider': 'qwen',
         'startDate': DateFormat('yyyy-MM-dd').format(_startDate),
         'endDate': DateFormat('yyyy-MM-dd').format(_endDate),
         'recordedDays': _recordedDays,

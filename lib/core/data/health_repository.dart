@@ -2313,6 +2313,39 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deleteReportIndicators({
+    required String reportClientId,
+    required DateTime measuredAt,
+  }) async {
+    final db = await database.open();
+    final rows = await db.query(
+      'health_indicator',
+      where: 'user_id = ?',
+      whereArgs: [kLocalUserId],
+    );
+    final targetTime = measuredAt.millisecondsSinceEpoch;
+    final matches = rows.where((row) {
+      final source = row['source'] as String? ?? '';
+      final payload = decodeJson(row['payload_json'] as String? ?? '{}');
+      final linked = source == 'report:$reportClientId' ||
+          payload['reportClientId'] == reportClientId;
+      final legacy =
+          source == 'report' && (_asInt(row['measured_at']) ?? 0) == targetTime;
+      return linked || legacy;
+    }).toList();
+    for (final row in matches) {
+      final clientId = row['client_id'] as String?;
+      if (clientId == null || clientId.isEmpty) continue;
+      await _deleteSyncedRow(
+        db,
+        table: 'health_indicator',
+        where: 'user_id = ? AND client_id = ?',
+        whereArgs: [kLocalUserId, clientId],
+      );
+    }
+    if (matches.isNotEmpty) notifyListeners();
+  }
+
   Future<void> _deleteSyncedRow(
     AppDatabase db, {
     required String table,

@@ -1911,6 +1911,8 @@ class _ReminderDialogState extends State<_ReminderDialog> {
                         }
                         return Image.memory(
                           bytes,
+                          cacheWidth: 1024,
+                          cacheHeight: 1024,
                           width: double.infinity,
                           height: 140,
                           fit: BoxFit.cover,

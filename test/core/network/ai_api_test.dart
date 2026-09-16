@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,7 +20,7 @@ void main() {
       'recordedDays': 3,
     });
 
-    expect(result.provider, 'qwen');
+    expect(result.provider, 'ai');
     expect(result.data['summary'], '记录稳定');
     expect(result.data['actions'], [1, 2, 3]);
   });
@@ -48,10 +49,36 @@ void main() {
 
     final body = adapter.lastOptions!.data as Map<String, dynamic>;
     expect(body['goal'], 'improve_fitness');
-    expect(body['provider'], 'qwen');
+    expect(body['provider'], 'doubao');
     expect(body['goalDetail'], '希望爬三层楼不明显气喘');
     expect(body['targetDate'], '2026-10-01');
     expect(adapter.lastOptions!.receiveTimeout, const Duration(minutes: 6));
+  });
+
+  test('SSE 中文字符跨网络分片时保持完整解码', () async {
+    final event = utf8.encode('data: {"token":"你好"}\n\n' 'data: [DONE]\n\n');
+    final adapter = _StreamAdapter(
+      Uint8List.fromList(event.sublist(0, event.length - 3)),
+      Uint8List.fromList(event.sublist(event.length - 3)),
+    );
+    final client = ApiClient(adapter: adapter);
+    final tokens = <String>[];
+    var done = false;
+
+    await AiApi(client: client).streamChat(
+      messages: const [
+        {'role': 'user', 'content': '测试'},
+      ],
+      requestId: '00000000-0000-4000-8000-000000000001',
+      personalized: true,
+      onMetadata: (_) {},
+      onToken: tokens.add,
+      onDone: () => done = true,
+      onError: fail,
+    );
+
+    expect(tokens, ['你好']);
+    expect(done, isTrue);
   });
 }
 
@@ -73,6 +100,31 @@ class _JsonAdapter implements HttpClientAdapter {
       200,
       headers: {
         Headers.contentTypeHeader: ['application/json; charset=utf-8'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _StreamAdapter implements HttpClientAdapter {
+  _StreamAdapter(this.first, this.second);
+
+  final Uint8List first;
+  final Uint8List second;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody(
+      Stream<Uint8List>.fromIterable([first, second]),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['text/event-stream; charset=utf-8'],
       },
     );
   }

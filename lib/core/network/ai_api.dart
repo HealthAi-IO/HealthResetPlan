@@ -107,7 +107,7 @@ class AiApi {
       throw const FormatException('AI 返回内容为空，请重新生成');
     }
     return AiWellnessResult(
-      provider: result['provider'] as String? ?? 'qwen',
+      provider: 'ai',
       data: structured,
     );
   }
@@ -136,7 +136,7 @@ class AiApi {
     final data = _unwrapData(resp.data);
 
     return AiChatReply(
-      provider: data['provider'] as String? ?? apiProvider ?? 'oneapi',
+      provider: 'ai',
       content: data['content'] as String? ?? '',
     );
   }
@@ -220,8 +220,8 @@ class AiApi {
       final stream = (response.data as ResponseBody).stream;
       var buffer = '';
 
-      await for (final bytes in stream) {
-        buffer += utf8.decode(bytes, allowMalformed: true);
+      await for (final chunk in utf8.decoder.bind(stream)) {
+        buffer += chunk;
         buffer = buffer.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
 
         while (buffer.contains('\n\n')) {
@@ -386,15 +386,12 @@ class AiApi {
   }
 
   String? _normalizeProvider(String? provider) {
-    return 'qwen';
+    final value = provider?.trim();
+    return value == null || value.isEmpty ? null : value;
   }
 
   String _displayProvider(String? responseProvider, String? requestedProvider) {
-    final value = responseProvider?.trim();
-    if (value == null || value.isEmpty || value == 'oneapi') {
-      return requestedProvider ?? value ?? 'oneapi';
-    }
-    return value;
+    return 'ai';
   }
 
   String _friendlyDioError(DioException e) {
@@ -584,7 +581,7 @@ class AiVisionResult {
           : const [],
       advice: json['advice'] as String? ?? '',
       riskLevel: json['riskLevel'] as String? ?? 'low',
-      provider: json['provider'] as String? ?? '',
+      provider: 'ai',
       rawText: json['rawText'] as String? ?? '',
       imageObjectKey: json['imageObjectKey'] as String? ?? '',
     );

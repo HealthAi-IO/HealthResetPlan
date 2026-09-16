@@ -396,7 +396,7 @@ class _ResultCard extends StatelessWidget {
           if (result.provider.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
-              '识别服务：${result.provider}',
+              '识别服务：AI',
               style: TextStyle(color: AppTheme.muted, fontSize: 12),
             ),
           ],
@@ -661,6 +661,13 @@ enum _CheckType {
     '测脱发',
     '测脱发',
     '白天自然光拍摄，关闭美颜滤镜；头发保持干燥，不抹发油发蜡。垂直拍头顶分缝或发际线，避免逆光、阴影遮挡头皮。',
+    'AI 拍照自查',
+  ),
+  palm(
+    'palm',
+    '看手掌',
+    '看手掌颜色',
+    '自然光下拍摄掌心，手掌完整入镜并保持干燥；避免彩色灯光、滤镜和刚运动后的状态。AI 仅分析可见颜色变化，不能替代医学检查。',
     'AI 拍照自查',
   );
 

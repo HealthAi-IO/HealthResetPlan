@@ -39,7 +39,7 @@ class _ChatPageState extends State<ChatPage> {
   ChatSession? _currentSession;
   List<_UiMessage> _messages = [];
 
-  static const String _selectedProvider = 'qwen';
+  static const String _selectedProvider = '';
   bool _sending = false;
   bool _loadingHistory = true;
   UserProfileData? _profile;
@@ -530,13 +530,25 @@ class _ChatPageState extends State<ChatPage> {
           }
         },
       );
-    } catch (_) {
+    } on DioException catch (error) {
       if (mounted) {
         _clearStreamState();
         setState(() => _sending = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('消息发送失败，请重试')));
+        if (isAiCreditError(error)) {
+          await showAiCreditRequiredDialog(context);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error.message ?? '网络异常，请稍后重试')),
+          );
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        _clearStreamState();
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('消息发送失败：$error')),
+        );
       }
     }
   }

@@ -39,7 +39,7 @@ class _PersonalizedMenuPageState extends State<PersonalizedMenuPage> {
   bool _noKnownAllergies = false;
   String? _error;
   String? _goal;
-  String _provider = 'qwen';
+  String _provider = '';
   Map<String, dynamic>? _menu;
 
   @override

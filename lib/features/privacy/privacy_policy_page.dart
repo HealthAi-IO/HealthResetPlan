@@ -45,7 +45,7 @@ class PrivacyPolicyPage extends StatelessWidget {
     (
       '五、对外提供与第三方',
       [
-        '我们不会出售个人信息，也不会向第三方共享、转让或公开披露你的个人信息，法律法规另有规定、履行合同所必需或取得你单独同意的情形除外。你单独同意云端 AI 后，我们会将完成该次请求所必需的信息提供给你在授权页面确认的 AI 服务商（千问、豆包、智谱 GLM 或 DeepSeek）。购买付费权益时，支付渠道会按其规则处理完成支付和退款所必需的信息；发送短信验证码时，京东云短信会按我们的指令处理必要发送信息。我们要求服务提供方仅按约定目的处理，不用于广告、用户画像或模型训练。不接入广告、统计或社交类第三方数据服务；Web 推送仅在用户授权提醒后使用浏览器/系统推送能力。',
+        '我们不会出售个人信息，也不会向第三方共享、转让或公开披露你的个人信息，法律法规另有规定、履行合同所必需或取得你单独同意的情形除外。你单独同意云端 AI 后，我们会将完成该次请求所必需的信息提供给授权页面确认的 AI 服务商。购买付费权益时，支付渠道会按其规则处理完成支付和退款所必需的信息；发送短信验证码时，京东云短信会按我们的指令处理必要发送信息。我们要求服务提供方仅按约定目的处理，不用于广告、用户画像或模型训练。不接入广告、统计或社交类第三方数据服务；Web 推送仅在用户授权提醒后使用浏览器/系统推送能力。',
       ],
     ),
     (
@@ -75,8 +75,8 @@ class PrivacyPolicyPage extends StatelessWidget {
     (
       '十、第三方 SDK 说明',
       [
-        'APP 支付客户端 SDK（com.alipay.sdk）：开发者为支付宝(杭州)信息技术有限公司。用于发起支付宝支付、完成订单支付和结果回调，可能处理设备信息、应用标识、网络状态、支付请求与支付结果信息。隐私政策链接：https://opendocs.alipay.com/open/54/01g6qm#%E6%94%AF%E4%BB%98%E5%AE%9D%20App%20%E6%94%AF%E4%BB%98%E5%AE%A2%E6%88%B7%E7%AB%AF%20SDK%20%E9%9A%90%E7%A7%81%E6%94%BF%E7%AD%96',
-        '微信 OpenSDK Android（com.tencent.mm.opensdk）：开发者为深圳市腾讯计算机系统有限公司。用于微信登录和微信支付，可能处理设备信息、应用标识、网络状态、登录或支付请求与结果信息。隐私政策链接：https://support.weixin.qq.com/cgi-bin/mmsupportacctnodeweb-bin/pages/RYiYJkLOrQwu0nb8',
+        'SDK 名称：支付宝 App 支付客户端 SDK（com.alipay.sdk）。开发者：支付宝(杭州)信息技术有限公司。收集信息范围：设备信息、应用标识、网络状态、支付请求与支付结果信息。使用目的：发起支付宝支付、完成订单支付和结果回调。SDK 隐私政策链接：https://opendocs.alipay.com/open/54/01g6qm#%E6%94%AF%E4%BB%98%E5%AE%9D%20App%20%E6%94%AF%E4%BB%98%E5%AE%A2%E6%88%B7%E7%AB%AF%20SDK%20%E9%9A%90%E7%A7%81%E6%94%BF%E7%AD%96',
+        'SDK 名称：微信 OpenSDK Android（com.tencent.mm.opensdk）。开发者：深圳市腾讯计算机系统有限公司。收集信息范围：设备信息、应用标识、网络状态、登录或支付请求与结果信息。使用目的：微信登录和微信支付。SDK 隐私政策链接：https://support.weixin.qq.com/cgi-bin/mmsupportacctnodeweb-bin/pages/RYiYJkLOrQwu0nb8',
       ],
     ),
   ];
@@ -104,7 +104,7 @@ class PrivacyPolicyPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '生效日期：2026 年 9 月 7 日',
+                      '生效日期：2026 年 9 月 10 日',
                       style: TextStyle(color: AppTheme.muted),
                     ),
                     const SizedBox(height: 24),

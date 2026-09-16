@@ -39,7 +39,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('14 天成长体验中'), findsOneWidget);
-    expect(find.text('VIP 会员'), findsOneWidget);
+    expect(find.text('会员版'), findsOneWidget);
     expect(find.text('VIP 季卡'), findsWidgets);
     expect(tester.takeException(), isNull);
 

@@ -8,11 +8,14 @@ plugins {
 def keystoreProperties = new Properties()
 def configuredKeystoreProperties = System.getenv("HEALTH_KEY_PROPERTIES")
 def configuredKeystoreFile = System.getenv("HEALTH_KEYSTORE")
-def defaultKeystoreFile = file("D:/HuaweiMoveData/Users/Tong/Desktop/WeiLingJi/H-ziyuan/Health-sensitive/android-signing/jkcqplan-release.jks")
 def keystorePropertiesFile = configuredKeystoreProperties
         ? file(configuredKeystoreProperties)
-        : file("D:/HuaweiMoveData/Users/Tong/Desktop/WeiLingJi/H-ziyuan/Health-sensitive/android-signing/key.properties")
-if (keystorePropertiesFile.exists()) {
+        : null
+def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains("release") }
+if (releaseRequested && (keystorePropertiesFile == null || !keystorePropertiesFile.exists())) {
+    throw new GradleException("正式包需要设置 HEALTH_KEY_PROPERTIES，且文件必须存在")
+}
+if (keystorePropertiesFile != null && keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
@@ -58,12 +61,13 @@ android {
 
     signingConfigs {
         release {
-            if (keystorePropertiesFile.exists()) {
+            if (keystorePropertiesFile != null && keystorePropertiesFile.exists()) {
                 keyAlias = keystoreProperties["keyAlias"]
                 keyPassword = keystoreProperties["keyPassword"]
-                storeFile = configuredKeystoreFile
-                        ? file(configuredKeystoreFile)
-                        : defaultKeystoreFile
+                if (configuredKeystoreFile == null || configuredKeystoreFile.isBlank()) {
+                    throw new GradleException("正式包需要设置 HEALTH_KEYSTORE")
+                }
+                storeFile = file(configuredKeystoreFile)
                 storePassword = keystoreProperties["storePassword"]
             }
         }

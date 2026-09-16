@@ -433,9 +433,14 @@ class CaptchaTrajectoryPoint {
 String friendlyAuthError(Object e) {
   if (e is AuthApiException) return _friendlyCaptchaError(e.message);
   if (e is DioException) {
+    if (e.error is ApiResponseException) {
+      return _friendlyCaptchaError(
+        (e.error as ApiResponseException).message,
+      );
+    }
     final data = e.response?.data;
-    if (data is Map && data['message'] != null) {
-      final message = data['message'].toString();
+    if (data is Map && (data['message'] != null || data['msg'] != null)) {
+      final message = (data['message'] ?? data['msg']).toString();
       return _friendlyCaptchaError(message);
     }
     if (e.type == DioExceptionType.connectionTimeout ||
@@ -445,7 +450,7 @@ String friendlyAuthError(Object e) {
     if (e.type == DioExceptionType.receiveTimeout) {
       return '服务器响应超时';
     }
-    return '请求失败：${e.type.name}';
+    return '安全验证请求失败，请点击刷新重试';
   }
   if (e is TimeoutException) return '安全验证加载超时，请点击刷新重试';
   if (e is StateError) return e.message;
@@ -453,15 +458,25 @@ String friendlyAuthError(Object e) {
 }
 
 String _friendlyCaptchaError(String message) {
-  if (message.contains('trajectory') || message.contains('滑动过快')) {
+  final normalized = message.trim();
+  if (normalized.isEmpty ||
+      normalized.toLowerCase() == 'unknown' ||
+      normalized.toLowerCase() == '请求失败：unknown' ||
+      normalized.toLowerCase() == '请求失败: unknown') {
+    return '安全验证请求失败，请点击刷新重试';
+  }
+  if (normalized.contains('trajectory') || normalized.contains('滑动过快')) {
     return '请对准缺口并平稳滑动后再试';
   }
-  return message;
+  return normalized;
 }
 
 int? authErrorCode(Object error) {
   if (error is AuthApiException) return error.code;
   if (error is! DioException) return null;
+  if (error.error is ApiResponseException) {
+    return (error.error as ApiResponseException).code;
+  }
   final data = error.response?.data;
   if (data is! Map) return null;
   return int.tryParse('${data['code'] ?? ''}');

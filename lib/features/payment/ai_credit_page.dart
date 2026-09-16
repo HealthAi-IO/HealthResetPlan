@@ -200,11 +200,11 @@ class _AiCreditPageState extends State<AiCreditPage> {
             ? '${product['kind']}' == 'vip'
                 ? '支付成功，VIP 已开通'
                 : '支付成功，次数已到账'
-            : '订单处理中，请稍后刷新',
+            : '支付已提交，订单正在确认，请稍后刷新',
       );
       await _load();
     } catch (_) {
-      if (mounted) _message('$_channelName支付暂不可用，请稍后重试');
+      if (mounted) _message('$_channelName支付未能发起，请稍后重试');
     } finally {
       if (mounted) setState(() => _paying = false);
     }

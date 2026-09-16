@@ -563,7 +563,7 @@ class _MealRecordPageState extends State<MealRecordPage> {
             ),
             if (_provider.isNotEmpty) ...[
               const SizedBox(height: 10),
-              Text('识别服务：$_provider',
+              Text('识别服务：AI',
                   style: TextStyle(color: AppTheme.muted, fontSize: 12)),
             ],
           ],
@@ -757,6 +757,8 @@ class _UploadMealCard extends StatelessWidget {
                           }
                           return Image.memory(
                             bytes,
+                            cacheWidth: 1024,
+                            cacheHeight: 1024,
                             height: 180,
                             width: double.infinity,
                             fit: BoxFit.cover,

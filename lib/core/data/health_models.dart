@@ -387,6 +387,19 @@ class HealthReportRecord {
 
   int get indicatorCount => (structured['indicators'] as List?)?.length ?? 0;
 
+  List<String> get imagePaths {
+    final paths = structured['imagePaths'];
+    if (paths is List) {
+      final normalized = paths
+          .whereType<String>()
+          .map((path) => path.trim())
+          .where((path) => path.isNotEmpty)
+          .toList();
+      if (normalized.isNotEmpty) return normalized;
+    }
+    return imagePath.trim().isEmpty ? const [] : [imagePath];
+  }
+
   factory HealthReportRecord.fromRow(Map<String, Object?> row) {
     return HealthReportRecord(
       id: _asInt(row['id']),

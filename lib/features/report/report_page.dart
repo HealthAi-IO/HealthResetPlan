@@ -113,17 +113,29 @@ class _OcrResult {
   final bool complete;
   final String warning;
 
-  _OcrResult copyWith({List<_OcrIndicator>? indicators}) => _OcrResult(
-        reportDate: reportDate,
+  _OcrResult copyWith({
+    String? reportDate,
+    List<_OcrIndicator>? indicators,
+    String? summary,
+    String? analysisAdvice,
+    String? rawText,
+    String? provider,
+    bool? highRisk,
+    String? riskMessage,
+    bool? complete,
+    String? warning,
+  }) =>
+      _OcrResult(
+        reportDate: reportDate ?? this.reportDate,
         indicators: indicators ?? this.indicators,
-        summary: summary,
-        analysisAdvice: analysisAdvice,
-        rawText: rawText,
-        provider: provider,
-        highRisk: highRisk,
-        riskMessage: riskMessage,
-        complete: complete,
-        warning: warning,
+        summary: summary ?? this.summary,
+        analysisAdvice: analysisAdvice ?? this.analysisAdvice,
+        rawText: rawText ?? this.rawText,
+        provider: provider ?? this.provider,
+        highRisk: highRisk ?? this.highRisk,
+        riskMessage: riskMessage ?? this.riskMessage,
+        complete: complete ?? this.complete,
+        warning: warning ?? this.warning,
       );
 
   factory _OcrResult.fromJson(Map<String, dynamic> json) {
@@ -222,8 +234,8 @@ class _ReportPageState extends State<ReportPage> {
   bool _analyzing = false;
   bool _saving = false;
   String _analyzeStage = '';
-  XFile? _pickedImage;
-  String? _uploadedImagePath;
+  List<XFile> _pickedImages = const [];
+  List<String> _uploadedImagePaths = const [];
   String? _reportClientId;
   _OcrResult? _ocrResult;
   List<HealthReportRecord> _reports = const [];
@@ -268,14 +280,23 @@ class _ReportPageState extends State<ReportPage> {
     final ok = await requireAccountAndMember(context, PaywallFeature.reportOcr);
     if (!ok) return;
 
-    XFile? file;
+    List<XFile> files;
     try {
-      file = await _picker.pickImage(
-        source: source,
-        maxWidth: 3000,
-        maxHeight: 3000,
-        imageQuality: 95,
-      );
+      if (source == ImageSource.gallery) {
+        files = await _picker.pickMultiImage(
+          maxWidth: 3000,
+          maxHeight: 3000,
+          imageQuality: 95,
+        );
+      } else {
+        final file = await _picker.pickImage(
+          source: source,
+          maxWidth: 3000,
+          maxHeight: 3000,
+          imageQuality: 95,
+        );
+        files = file == null ? const [] : [file];
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -284,12 +305,15 @@ class _ReportPageState extends State<ReportPage> {
       return;
     }
 
-    if (file == null) return;
-    setState(() {
-      _pickedImage = file;
-      _ocrResult = null;
-    });
-    await _analyzeImage(file);
+    if (files.isEmpty) return;
+    if (!mounted) return;
+    if (files.length > 6) {
+      files = files.take(6).toList();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('最多同时识别 6 张报告图片')),
+      );
+    }
+    _appendPickedImages(files);
   }
 
   Future<void> _pickFile() async {
@@ -300,32 +324,30 @@ class _ReportPageState extends State<ReportPage> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-        allowMultiple: false,
+        allowMultiple: true,
         withData: kIsWeb,
       );
       if (result == null || result.files.isEmpty) return;
 
-      final file = result.files.single;
-      if (kIsWeb && (file.bytes == null || file.bytes!.isEmpty)) {
-        throw StateError('文件内容为空');
+      final files = <XFile>[];
+      for (final file in result.files.take(6)) {
+        if (kIsWeb && (file.bytes == null || file.bytes!.isEmpty)) {
+          throw StateError('文件内容为空');
+        }
+        if (!kIsWeb && (file.path == null || file.path!.isEmpty)) {
+          throw StateError('无法读取所选文件');
+        }
+        files.add(kIsWeb
+            ? XFile.fromData(
+                file.bytes!,
+                name: file.name,
+                mimeType: _mimeType(file.name),
+              )
+            : XFile(file.path!, name: file.name));
       }
-      if (!kIsWeb && (file.path == null || file.path!.isEmpty)) {
-        throw StateError('无法读取所选文件');
-      }
-      final picked = kIsWeb
-          ? XFile.fromData(
-              file.bytes!,
-              name: file.name,
-              mimeType: _mimeType(file.name),
-            )
-          : XFile(file.path!, name: file.name);
 
       if (!mounted) return;
-      setState(() {
-        _pickedImage = picked;
-        _ocrResult = null;
-      });
-      await _analyzeImage(picked);
+      _appendPickedImages(files);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -334,7 +356,39 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  Future<void> _analyzeImage(XFile file) async {
+  void _appendPickedImages(List<XFile> files) {
+    final merged = [..._pickedImages];
+    final existingKeys = merged.map(_imageKey).toSet();
+    for (final file in files) {
+      if (merged.length >= 6) break;
+      if (existingKeys.add(_imageKey(file))) {
+        merged.add(file);
+      }
+    }
+    if (merged.length == _pickedImages.length) return;
+    final reachedLimit = merged.length >= 6 &&
+        merged.length < _pickedImages.length + files.length;
+
+    setState(() {
+      _pickedImages = merged;
+      _ocrResult = null;
+    });
+    if (reachedLimit && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('最多同时识别 6 张报告图片')),
+      );
+    }
+  }
+
+  String _imageKey(XFile file) => file.path.isNotEmpty ? file.path : file.name;
+
+  Future<void> _startAnalyze() async {
+    if (_pickedImages.isEmpty || _analyzing || _saving) return;
+    await _analyzeImages(List<XFile>.from(_pickedImages));
+  }
+
+  Future<void> _analyzeImages(List<XFile> files) async {
+    if (files.isEmpty) return;
     if (!await ensureAiConsent(context)) return;
     if (!mounted) return;
     if (!await confirmAiCreditUseIfNeeded(context, 'report_ocr')) return;
@@ -367,46 +421,75 @@ class _ReportPageState extends State<ReportPage> {
     });
 
     try {
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) throw const FormatException('图片内容为空');
-      if (bytes.length > 10 * 1024 * 1024) {
-        throw const FormatException('图片不能超过 10MB');
+      final reportClientId = const Uuid().v4();
+      final uploadedPaths = <String>[];
+      final failedFiles = <String>[];
+      for (var index = 0; index < files.length; index++) {
+        final file = files[index];
+        try {
+          final bytes = await file.readAsBytes();
+          if (bytes.isEmpty) throw const FormatException('图片内容为空');
+          if (bytes.length > 10 * 1024 * 1024) {
+            throw const FormatException('图片不能超过 10MB');
+          }
+          final mimeType = _mimeType(file.name);
+          if (!const {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+              .contains(mimeType)) {
+            throw const FormatException('仅支持 JPEG、PNG、WebP 或 GIF 图片');
+          }
+          if (!mounted) return;
+          setState(() =>
+              _analyzeStage = '正在处理第 ${index + 1}/${files.length} 张图片...');
+          final compressedBytes = await compute(_compressReportImage, bytes);
+          final imageClientId = '$reportClientId-$index';
+          final uploadedImagePath = await sl<FileApi>().uploadImage(
+            XFile.fromData(
+              compressedBytes,
+              name: '$imageClientId.jpg',
+              mimeType: 'image/jpeg',
+            ),
+            imageClientId,
+          );
+          uploadedPaths.add(uploadedImagePath);
+          _uploadedImagePaths = [...uploadedPaths];
+        } on DioException catch (error) {
+          if (isAiCreditError(error)) rethrow;
+          failedFiles.add(file.name);
+        } catch (_) {
+          failedFiles.add(file.name);
+        }
       }
-      final mimeType = _mimeType(file.name);
-      if (!const {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
-          .contains(mimeType)) {
-        throw const FormatException('仅支持 JPEG、PNG、WebP 或 GIF 图片');
+      if (uploadedPaths.isEmpty) {
+        throw const FormatException('所有报告图片均未能识别');
       }
+      _reportClientId = reportClientId;
+      _uploadedImagePaths = uploadedPaths;
       if (!mounted) return;
-      setState(() => _analyzeStage = '正在压缩并上传报告...');
-      final compressedBytes = await compute(_compressReportImage, bytes);
-      final clientId = const Uuid().v4();
-      final uploadedImagePath = await sl<FileApi>().uploadImage(
-        XFile.fromData(
-          compressedBytes,
-          name: '$clientId.jpg',
-          mimeType: 'image/jpeg',
-        ),
-        clientId,
+      setState(() => _analyzeStage = '正在合并识别结果...');
+      final response = await _uploadReports(
+        uploadedPaths,
+        reportClientId,
       );
-      _uploadedImagePath = uploadedImagePath;
-      _reportClientId = clientId;
-      if (!mounted) return;
-      setState(() => _analyzeStage = '正在识别报告内容...');
-      final response = await _uploadReport(uploadedImagePath, 'image/jpeg');
-      if (!mounted) return;
-      setState(() => _analyzeStage = '正在整理健康指标...');
-      final result = _OcrResult.fromJson(requireApiMap(response.data));
-
-      if (!mounted) return;
+      var result = _OcrResult.fromJson(requireApiMap(response.data));
+      if (failedFiles.isNotEmpty) {
+        final warning =
+            '有 ${failedFiles.length} 张图片上传失败：${failedFiles.join('、')}';
+        final mergedWarning = [
+          if (result.warning.trim().isNotEmpty) result.warning,
+          warning,
+        ].join('\n');
+        result = result.copyWith(warning: mergedWarning, complete: false);
+      }
       setState(() {
         _ocrResult = result;
+        _pickedImages = const [];
         _analyzing = false;
         _analyzeStage = '';
       });
       _showReviewSheet(result);
       _loadAiUsage();
     } on DioException catch (e) {
+      await _cleanupUploadedImages();
       if (!mounted) return;
       setState(() {
         _analyzing = false;
@@ -423,6 +506,7 @@ class _ReportPageState extends State<ReportPage> {
         );
       }
     } catch (e) {
+      await _cleanupUploadedImages();
       if (!mounted) return;
       setState(() {
         _analyzing = false;
@@ -434,15 +518,20 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  Future<Response<dynamic>> _uploadReport(
-      String imageObjectKey, String mimeType) async {
+  Future<Response<dynamic>> _uploadReports(
+      List<String> imageObjectKeys, String requestId) async {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         return await _apiClient.dio.post(
-          '/reports/analyze-stored',
+          '/reports/analyze-stored-batch',
           data: {
-            'objectKey': imageObjectKey,
-            'mimeType': mimeType,
+            'requestId': requestId,
+            'images': imageObjectKeys
+                .map((objectKey) => {
+                      'objectKey': objectKey,
+                      'mimeType': 'image/jpeg',
+                    })
+                .toList(),
           },
           options: Options(
             connectTimeout: const Duration(seconds: 15),
@@ -452,17 +541,37 @@ class _ReportPageState extends State<ReportPage> {
         );
       } on DioException catch (error) {
         if (attempt == 1 || !_isRetryable(error)) rethrow;
+        if (_isReportProcessing(error)) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
       }
     }
     throw StateError('报告上传失败');
   }
 
-  bool _isRetryable(DioException error) => const {
-        DioExceptionType.connectionTimeout,
-        DioExceptionType.sendTimeout,
-        DioExceptionType.receiveTimeout,
-        DioExceptionType.connectionError,
-      }.contains(error.type);
+  Future<void> _cleanupUploadedImages() async {
+    final paths = [..._uploadedImagePaths];
+    _uploadedImagePaths = const [];
+    for (final path in paths) {
+      await _deleteReportImage(path);
+    }
+    _reportClientId = null;
+  }
+
+  bool _isRetryable(DioException error) {
+    if (_isReportProcessing(error)) return true;
+    return const {
+      DioExceptionType.connectionTimeout,
+      DioExceptionType.sendTimeout,
+      DioExceptionType.receiveTimeout,
+      DioExceptionType.connectionError,
+    }.contains(error.type);
+  }
+
+  bool _isReportProcessing(DioException error) {
+    final apiError = error.error;
+    return apiError is ApiResponseException && apiError.code == 40902;
+  }
 
   void _showReviewSheet(_OcrResult result) {
     showModalBottomSheet(
@@ -476,7 +585,10 @@ class _ReportPageState extends State<ReportPage> {
           setState(() => _ocrResult = editedResult);
           _saveResult(editedResult);
         },
-        onDiscard: () => Navigator.pop(context),
+        onDiscard: () {
+          Navigator.pop(context);
+          _cleanupUploadedImages();
+        },
       ),
     );
   }
@@ -486,7 +598,11 @@ class _ReportPageState extends State<ReportPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _ReportDetailSheet(record: record),
+      builder: (_) => _ReportDetailSheet(
+        record: record,
+        onSave: (result, reportTime) =>
+            _updateReport(record, result, reportTime),
+      ),
     );
   }
 
@@ -514,8 +630,14 @@ class _ReportPageState extends State<ReportPage> {
 
     final messenger = ScaffoldMessenger.of(context);
     try {
+      await _repo.deleteReportIndicators(
+        reportClientId: record.clientId,
+        measuredAt: record.reportDateTime,
+      );
       await _repo.deleteReportRecord(record.clientId);
-      await _deleteReportImage(record.imagePath);
+      for (final imagePath in record.imagePaths) {
+        await _deleteReportImage(imagePath);
+      }
 
       if (!mounted) return;
       messenger.showSnackBar(
@@ -540,7 +662,13 @@ class _ReportPageState extends State<ReportPage> {
     try {
       final reportTime = _parseReportDate(result.reportDate) ?? DateTime.now();
       final clientId = _reportClientId ?? const Uuid().v4();
-      final imagePath = await _persistReportImage(clientId);
+      final imagePaths = await _persistReportImages(clientId);
+      final imagePath = imagePaths.isEmpty ? '' : imagePaths.first;
+      final structured = {
+        ...result.toJson(),
+        'imagePaths': imagePaths,
+        'reportClientId': clientId,
+      };
 
       await _repo.saveReportRecord(
         clientId: clientId,
@@ -548,15 +676,19 @@ class _ReportPageState extends State<ReportPage> {
         reportTime: reportTime,
         summary: result.summary,
         rawText: result.rawText,
-        structured: result.toJson(),
+        structured: structured,
         provider: result.provider,
       );
-      await _saveIndicatorsLocally(result, reportTime);
+      await _repo.deleteReportIndicators(
+        reportClientId: clientId,
+        measuredAt: reportTime,
+      );
+      await _saveIndicatorsLocally(result, reportTime, clientId);
 
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _uploadedImagePath = null;
+        _uploadedImagePaths = const [];
         _reportClientId = null;
       });
       messenger.showSnackBar(
@@ -578,6 +710,7 @@ class _ReportPageState extends State<ReportPage> {
   Future<void> _saveIndicatorsLocally(
     _OcrResult result,
     DateTime measuredAt,
+    String reportClientId,
   ) async {
     double? systolic;
     double? diastolic;
@@ -636,8 +769,9 @@ class _ReportPageState extends State<ReportPage> {
           'systolic': sys,
           'diastolic': dia,
           'summary': result.summary,
+          'reportClientId': reportClientId,
         },
-        source: 'report',
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -648,8 +782,9 @@ class _ReportPageState extends State<ReportPage> {
         payload: {
           'bpm': heartRate.round(),
           'summary': result.summary,
+          'reportClientId': reportClientId,
         },
-        source: 'report',
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -657,8 +792,12 @@ class _ReportPageState extends State<ReportPage> {
     if (weight != null) {
       tasks.add(_repo.addIndicator(
         type: 'weight',
-        payload: {'weightKg': weight, 'summary': result.summary},
-        source: 'report',
+        payload: {
+          'weightKg': weight,
+          'summary': result.summary,
+          'reportClientId': reportClientId,
+        },
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -666,8 +805,12 @@ class _ReportPageState extends State<ReportPage> {
     if (glucose != null) {
       tasks.add(_repo.addIndicator(
         type: 'glucose',
-        payload: {'glucoseMmol': glucose, 'summary': result.summary},
-        source: 'report',
+        payload: {
+          'glucoseMmol': glucose,
+          'summary': result.summary,
+          'reportClientId': reportClientId,
+        },
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -684,8 +827,9 @@ class _ReportPageState extends State<ReportPage> {
           if (highDensityLipoprotein != null) 'hdl': highDensityLipoprotein,
           if (triglyceride != null) 'tg': triglyceride,
           'summary': result.summary,
+          'reportClientId': reportClientId,
         },
-        source: 'report',
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -693,8 +837,12 @@ class _ReportPageState extends State<ReportPage> {
     if (waist != null) {
       tasks.add(_repo.addIndicator(
         type: 'waist',
-        payload: {'waistCm': waist, 'summary': result.summary},
-        source: 'report',
+        payload: {
+          'waistCm': waist,
+          'summary': result.summary,
+          'reportClientId': reportClientId,
+        },
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -702,8 +850,12 @@ class _ReportPageState extends State<ReportPage> {
     if (bodyFat != null) {
       tasks.add(_repo.addIndicator(
         type: 'body_fat',
-        payload: {'bodyFatPct': bodyFat, 'summary': result.summary},
-        source: 'report',
+        payload: {
+          'bodyFatPct': bodyFat,
+          'summary': result.summary,
+          'reportClientId': reportClientId,
+        },
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -711,8 +863,12 @@ class _ReportPageState extends State<ReportPage> {
     if (spo2 != null) {
       tasks.add(_repo.addIndicator(
         type: 'spo2',
-        payload: {'spo2Pct': spo2.round(), 'summary': result.summary},
-        source: 'report',
+        payload: {
+          'spo2Pct': spo2.round(),
+          'summary': result.summary,
+          'reportClientId': reportClientId,
+        },
+        source: 'report:$reportClientId',
         measuredAt: measuredAt,
       ));
     }
@@ -720,19 +876,45 @@ class _ReportPageState extends State<ReportPage> {
     if (tasks.isNotEmpty) await Future.wait(tasks);
   }
 
-  Future<String> _persistReportImage(String clientId) async {
-    final uploadedImagePath = _uploadedImagePath;
-    if (uploadedImagePath != null && uploadedImagePath.isNotEmpty) {
-      return uploadedImagePath;
+  Future<List<String>> _persistReportImages(String clientId) async {
+    if (_uploadedImagePaths.isNotEmpty) return [..._uploadedImagePaths];
+    final images = _pickedImages;
+    if (images.isEmpty) return const [];
+    final paths = <String>[];
+    for (var index = 0; index < images.length; index++) {
+      try {
+        paths
+            .add(await sl<FileApi>().upload(images[index], '$clientId-$index'));
+      } catch (_) {}
     }
-    final image = _pickedImage;
-    if (image == null) return '';
+    return paths;
+  }
 
-    try {
-      return await sl<FileApi>().upload(image, clientId);
-    } catch (_) {
-      return '';
-    }
+  Future<void> _updateReport(
+    HealthReportRecord record,
+    _OcrResult result,
+    DateTime reportTime,
+  ) async {
+    final structured = {
+      ...result.toJson(),
+      'imagePaths': record.imagePaths,
+      'reportClientId': record.clientId,
+    };
+    await _repo.deleteReportIndicators(
+      reportClientId: record.clientId,
+      measuredAt: record.reportDateTime,
+    );
+    await _repo.saveReportRecord(
+      clientId: record.clientId,
+      imagePath: record.imagePath,
+      reportTime: reportTime,
+      summary: result.summary,
+      rawText: result.rawText,
+      structured: structured,
+      provider: result.provider,
+    );
+    await _saveIndicatorsLocally(result, reportTime, record.clientId);
+    await _load(silent: true);
   }
 
   Future<void> _deleteReportImage(String imagePath) async {
@@ -826,7 +1008,7 @@ class _ReportPageState extends State<ReportPage> {
                       style: TextStyle(color: AppTheme.muted, fontSize: 13)),
                 ),
               _PickCard(
-                pickedImage: _pickedImage,
+                pickedImages: _pickedImages,
                 analyzing: _analyzing,
                 saving: _saving,
                 analyzeStage: _analyzeStage,
@@ -834,6 +1016,7 @@ class _ReportPageState extends State<ReportPage> {
                 onPickCamera:
                     _canUseCamera ? () => _pickImage(ImageSource.camera) : null,
                 onPickFile: _pickFile,
+                onStartAnalyze: _startAnalyze,
               ),
               if (_ocrResult != null) ...[
                 const SizedBox(height: 16),
@@ -863,41 +1046,43 @@ Uint8List _compressReportImage(Uint8List bytes) {
   final oriented = image_lib.bakeOrientation(decoded);
   final longestSide =
       oriented.width > oriented.height ? oriented.width : oriented.height;
-  final resized = longestSide > 2400
+  final resized = longestSide > 2048
       ? image_lib.copyResize(
           oriented,
-          width: oriented.width >= oriented.height ? 2400 : null,
-          height: oriented.height > oriented.width ? 2400 : null,
+          width: oriented.width >= oriented.height ? 2048 : null,
+          height: oriented.height > oriented.width ? 2048 : null,
           interpolation: image_lib.Interpolation.linear,
         )
       : oriented;
-  for (final quality in const [85, 76, 68, 60]) {
+  for (final quality in const [82, 74, 66, 58]) {
     final encoded = Uint8List.fromList(
       image_lib.encodeJpg(resized, quality: quality),
     );
-    if (encoded.length <= 4 * 1024 * 1024 || quality == 60) return encoded;
+    if (encoded.length <= 4 * 1024 * 1024 || quality == 58) return encoded;
   }
   throw const FormatException('图片压缩失败');
 }
 
 class _PickCard extends StatelessWidget {
   const _PickCard({
-    required this.pickedImage,
+    required this.pickedImages,
     required this.analyzing,
     required this.saving,
     required this.analyzeStage,
     required this.onPickGallery,
     required this.onPickCamera,
     required this.onPickFile,
+    required this.onStartAnalyze,
   });
 
-  final XFile? pickedImage;
+  final List<XFile> pickedImages;
   final bool analyzing;
   final bool saving;
   final String analyzeStage;
   final VoidCallback onPickGallery;
   final VoidCallback? onPickCamera;
   final VoidCallback onPickFile;
+  final VoidCallback onStartAnalyze;
 
   @override
   Widget build(BuildContext context) {
@@ -915,7 +1100,7 @@ class _PickCard extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         Text(
-          '上传体检或检验报告图片，AI 自动提取指标；确认后保存到当前账号。',
+          '上传体检或检验报告图片（最多 6 张），可一次选择多张；选完后点击“开始识别”。',
           style: TextStyle(color: AppTheme.muted, height: 1.5),
         ),
         const SizedBox(height: 16),
@@ -939,39 +1124,57 @@ class _PickCard extends StatelessWidget {
         else
           Wrap(spacing: 10, runSpacing: 10, children: [
             FilledButton.icon(
-              onPressed: onPickGallery,
+              onPressed: pickedImages.length >= 6 ? null : onPickGallery,
               icon: const Icon(Icons.photo_library_outlined, size: 16),
-              label: const Text('从相册选择'),
+              label: Text(pickedImages.isEmpty ? '从相册选择' : '继续添加图片'),
             ),
             if (onPickCamera != null)
               OutlinedButton.icon(
-                onPressed: onPickCamera,
+                onPressed: pickedImages.length >= 6 ? null : onPickCamera,
                 icon: const Icon(Icons.camera_alt_outlined, size: 16),
-                label: const Text('拍照'),
+                label: const Text('拍照添加'),
               ),
             OutlinedButton.icon(
-              onPressed: onPickFile,
+              onPressed: pickedImages.length >= 6 ? null : onPickFile,
               icon: const Icon(Icons.folder_open_outlined, size: 16),
-              label: const Text('从文件选择'),
+              label: const Text('从文件添加'),
             ),
+            if (pickedImages.isNotEmpty)
+              FilledButton.icon(
+                onPressed: onStartAnalyze,
+                icon: const Icon(Icons.auto_awesome, size: 16),
+                label: const Text('开始识别'),
+              ),
           ]),
-        if (pickedImage != null) ...[
+        if (pickedImages.isNotEmpty) ...[
           const SizedBox(height: 10),
           Row(children: [
             Icon(Icons.image_outlined, size: 14, color: AppTheme.muted),
             const SizedBox(width: 6),
             Expanded(
               child: Text(
-                pickedImage!.name,
+                '已选择 ${pickedImages.length} 张图片',
                 style: TextStyle(color: AppTheme.muted, fontSize: 12),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
           ]),
-          if (pickedImage != null) ...[
-            const SizedBox(height: 12),
-            _PickedReportImage(file: pickedImage!),
-          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 92,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: pickedImages.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (_, index) => SizedBox(
+                width: 112,
+                child: _PickedReportImage(
+                  file: pickedImages[index],
+                  height: 92,
+                ),
+              ),
+            ),
+          ),
         ],
       ]),
     );
@@ -979,9 +1182,10 @@ class _PickCard extends StatelessWidget {
 }
 
 class _PickedReportImage extends StatefulWidget {
-  const _PickedReportImage({required this.file});
+  const _PickedReportImage({required this.file, this.height = 220});
 
   final XFile file;
+  final double height;
 
   @override
   State<_PickedReportImage> createState() => _PickedReportImageState();
@@ -1004,15 +1208,15 @@ class _PickedReportImageState extends State<_PickedReportImage> {
       future: _bytes,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return const SizedBox(
-            height: 220,
+          return SizedBox(
+            height: widget.height,
             child: Center(child: Text('无法预览所选图片')),
           );
         }
         final bytes = snapshot.data;
         if (bytes == null || bytes.isEmpty) {
-          return const SizedBox(
-            height: 220,
+          return SizedBox(
+            height: widget.height,
             child: Center(child: CircularProgressIndicator()),
           );
         }
@@ -1020,7 +1224,7 @@ class _PickedReportImageState extends State<_PickedReportImage> {
         return InkWell(
           borderRadius: BorderRadius.circular(14),
           onTap: () => _showImagePreview(context, image),
-          child: _ReportImagePreview(file: image, height: 220),
+          child: _ReportImagePreview(file: image, height: widget.height),
         );
       },
     );
@@ -1031,6 +1235,101 @@ bool get _canUseCamera =>
     kIsWeb ||
     defaultTargetPlatform == TargetPlatform.android ||
     defaultTargetPlatform == TargetPlatform.iOS;
+
+Future<_OcrIndicator?> _showIndicatorEditor(
+  BuildContext context, {
+  _OcrIndicator? initial,
+}) async {
+  final indicator = initial ??
+      const _OcrIndicator(
+        category: '其他',
+        name: '',
+        value: '',
+        unit: '',
+        referenceRange: '',
+        status: 'unknown',
+      );
+  final name = TextEditingController(text: indicator.name);
+  final value = TextEditingController(text: indicator.value);
+  final unit = TextEditingController(text: indicator.unit);
+  final reference = TextEditingController(text: indicator.referenceRange);
+  var status = indicator.status;
+  final edited = await showDialog<_OcrIndicator>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: Text(initial == null ? '新增指标' : '修改识别指标'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: name,
+              decoration: const InputDecoration(labelText: '指标名称'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: value,
+              decoration: const InputDecoration(labelText: '检测结果'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: unit,
+              decoration: const InputDecoration(labelText: '单位'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reference,
+              decoration: const InputDecoration(labelText: '参考范围'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue:
+                  const ['normal', 'high', 'low', 'unknown'].contains(status)
+                      ? status
+                      : 'unknown',
+              decoration: const InputDecoration(labelText: '状态'),
+              items: const [
+                DropdownMenuItem(value: 'normal', child: Text('正常')),
+                DropdownMenuItem(value: 'high', child: Text('偏高')),
+                DropdownMenuItem(value: 'low', child: Text('偏低')),
+                DropdownMenuItem(value: 'unknown', child: Text('待核对')),
+              ],
+              onChanged: (next) {
+                if (next != null) setDialogState(() => status = next);
+              },
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (name.text.trim().isEmpty || value.text.trim().isEmpty) return;
+              Navigator.pop(
+                context,
+                indicator.copyWith(
+                  name: name.text.trim(),
+                  value: value.text.trim(),
+                  unit: unit.text.trim(),
+                  referenceRange: reference.text.trim(),
+                  status: status,
+                ),
+              );
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    ),
+  );
+  name.dispose();
+  value.dispose();
+  unit.dispose();
+  reference.dispose();
+  return edited;
+}
 
 class _StatusRow extends StatelessWidget {
   const _StatusRow({required this.text, required this.color});
@@ -1400,8 +1699,7 @@ class _OcrReviewSheetState extends State<_OcrReviewSheet> {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
               ),
             ),
-            Text(result.provider,
-                style: TextStyle(color: AppTheme.muted, fontSize: 11)),
+            Text('AI', style: TextStyle(color: AppTheme.muted, fontSize: 11)),
           ]),
         ),
         if (result.summary.isNotEmpty) ...[
@@ -1550,14 +1848,18 @@ class _OcrReviewSheetState extends State<_OcrReviewSheet> {
 }
 
 class _ReportDetailSheet extends StatelessWidget {
-  const _ReportDetailSheet({required this.record});
+  const _ReportDetailSheet({
+    required this.record,
+    required this.onSave,
+  });
 
   final HealthReportRecord record;
+  final Future<void> Function(_OcrResult result, DateTime reportTime) onSave;
 
-  Color _statusColor(String status) => switch (status) {
-        'high' => Colors.red.shade600,
-        'low' => Colors.orange.shade700,
-        'normal' => Colors.green.shade700,
+  Color _statusColor(BuildContext context, String status) => switch (status) {
+        'high' => Theme.of(context).colorScheme.error,
+        'low' => AppTheme.warning(context),
+        'normal' => AppTheme.success(context),
         _ => AppTheme.muted,
       };
 
@@ -1581,7 +1883,10 @@ class _ReportDetailSheet extends StatelessWidget {
         : result.summary.trim();
     final rawText = result.rawText.trim();
     final analysisAdvice = _withAiDoctorDisclaimer(result.analysisAdvice);
-    final imageFile = reportImageProvider(record.imagePath);
+    final imageFiles = record.imagePaths
+        .map(reportImageProvider)
+        .whereType<ImageProvider<Object>>()
+        .toList();
     final imageHeight =
         (MediaQuery.sizeOf(context).height * 0.38).clamp(240.0, 380.0);
 
@@ -1623,11 +1928,24 @@ class _ReportDetailSheet extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    '${DateFormat('yyyy-MM-dd HH:mm').format(record.reportDateTime)} · ${record.provider.isBlank ? 'AI识别' : record.provider}',
+                    '${DateFormat('yyyy-MM-dd HH:mm').format(record.reportDateTime)} · AI识别',
                     style: TextStyle(color: AppTheme.muted, fontSize: 12),
                   ),
                 ],
               ),
+            ),
+            IconButton(
+              tooltip: '编辑报告',
+              onPressed: () => showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => _ReportEditSheet(
+                  record: record,
+                  onSave: onSave,
+                ),
+              ),
+              icon: const Icon(Icons.edit_outlined),
             ),
             IconButton(
               tooltip: '关闭',
@@ -1641,7 +1959,7 @@ class _ReportDetailSheet extends StatelessWidget {
             shrinkWrap: true,
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
             children: [
-              if (imageFile != null) ...[
+              if (imageFiles.isNotEmpty) ...[
                 const Text(
                   '报告原图',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
@@ -1649,11 +1967,11 @@ class _ReportDetailSheet extends StatelessWidget {
                 const SizedBox(height: 8),
                 InkWell(
                   borderRadius: BorderRadius.circular(14),
-                  onTap: () => _showImagePreview(context, imageFile),
+                  onTap: () => _showImagePreview(context, imageFiles.first),
                   child: Stack(
                     children: [
                       _ReportImagePreview(
-                        file: imageFile,
+                        file: imageFiles.first,
                         height: imageHeight.toDouble(),
                       ),
                       Positioned(
@@ -1676,6 +1994,30 @@ class _ReportDetailSheet extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (imageFiles.length > 1) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 78,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: imageFiles.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (_, index) => InkWell(
+                        onTap: () =>
+                            _showImagePreview(context, imageFiles[index]),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image(
+                            image: imageFiles[index],
+                            width: 88,
+                            height: 78,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
               ],
               if (summary.isNotEmpty) ...[
@@ -1756,7 +2098,7 @@ class _ReportDetailSheet extends StatelessWidget {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 1),
                               decoration: BoxDecoration(
-                                color: _statusColor(indicator.status)
+                                color: _statusColor(context, indicator.status)
                                     .withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(999),
                               ),
@@ -1764,7 +2106,8 @@ class _ReportDetailSheet extends StatelessWidget {
                                 _statusLabel(indicator.status),
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: _statusColor(indicator.status),
+                                  color:
+                                      _statusColor(context, indicator.status),
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
@@ -1802,6 +2145,218 @@ class _ReportDetailSheet extends StatelessWidget {
                 ),
               ],
             ],
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ReportEditSheet extends StatefulWidget {
+  const _ReportEditSheet({
+    required this.record,
+    required this.onSave,
+  });
+
+  final HealthReportRecord record;
+  final Future<void> Function(_OcrResult result, DateTime reportTime) onSave;
+
+  @override
+  State<_ReportEditSheet> createState() => _ReportEditSheetState();
+}
+
+class _ReportEditSheetState extends State<_ReportEditSheet> {
+  late _OcrResult _result;
+  late final TextEditingController _summaryController;
+  late final TextEditingController _adviceController;
+  late final TextEditingController _dateController;
+  late final List<_OcrIndicator> _indicators;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final structured = Map<String, dynamic>.from(widget.record.structured);
+    if ((structured['rawText'] as String? ?? '').trim().isEmpty &&
+        widget.record.rawText.trim().isNotEmpty) {
+      structured['rawText'] = widget.record.rawText;
+    }
+    _result = _OcrResult.fromJson(structured);
+    _indicators = [..._result.indicators];
+    _summaryController = TextEditingController(
+      text: widget.record.summary.trim().isNotEmpty
+          ? widget.record.summary
+          : _result.summary,
+    );
+    _adviceController = TextEditingController(text: _result.analysisAdvice);
+    _dateController = TextEditingController(
+      text: DateFormat('yyyy-MM-dd').format(widget.record.reportDateTime),
+    );
+  }
+
+  @override
+  void dispose() {
+    _summaryController.dispose();
+    _adviceController.dispose();
+    _dateController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _editIndicator(int index) async {
+    final edited = await _showIndicatorEditor(
+      context,
+      initial: _indicators[index],
+    );
+    if (edited != null && mounted) {
+      setState(() => _indicators[index] = edited);
+    }
+  }
+
+  Future<void> _addIndicator() async {
+    final edited = await _showIndicatorEditor(context);
+    if (edited != null && mounted) {
+      setState(() => _indicators.add(edited));
+    }
+  }
+
+  Future<void> _save() async {
+    final reportTime = DateTime.tryParse(_dateController.text.trim());
+    if (reportTime == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('报告日期格式应为 yyyy-MM-dd')),
+      );
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final result = _result.copyWith(
+        reportDate: reportTime.toIso8601String(),
+        indicators: [..._indicators],
+        summary: _summaryController.text.trim(),
+        analysisAdvice: _adviceController.text.trim(),
+      );
+      await widget.onSave(result, reportTime);
+      if (mounted) {
+        Navigator.pop(context);
+        Navigator.pop(context);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存失败：$error')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 56),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const SizedBox(height: 12),
+        Container(
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.outlineVariant,
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+          child: Row(children: [
+            const Expanded(
+              child: Text(
+                '编辑报告',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              ),
+            ),
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close),
+            ),
+          ]),
+        ),
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            children: [
+              TextField(
+                controller: _dateController,
+                decoration: const InputDecoration(
+                  labelText: '报告日期',
+                  hintText: 'yyyy-MM-dd',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _summaryController,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: '摘要'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _adviceController,
+                maxLines: 5,
+                decoration: const InputDecoration(labelText: 'AI 建议'),
+              ),
+              const SizedBox(height: 16),
+              Row(children: [
+                const Expanded(
+                  child: Text(
+                    '指标',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _addIndicator,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('新增指标'),
+                ),
+              ]),
+              for (var index = 0; index < _indicators.length; index++)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_indicators[index].name),
+                  subtitle: Text(
+                    '${_indicators[index].value} ${_indicators[index].unit}'
+                        .trim(),
+                  ),
+                  trailing: Wrap(children: [
+                    IconButton(
+                      tooltip: '编辑',
+                      onPressed: () => _editIndicator(index),
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
+                    IconButton(
+                      tooltip: '删除',
+                      onPressed: () =>
+                          setState(() => _indicators.removeAt(index)),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ]),
+                ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: const Icon(Icons.save_outlined, size: 18),
+              label: Text(_saving ? '正在保存...' : '保存修改'),
+            ),
           ),
         ),
       ]),
@@ -1937,7 +2492,7 @@ class _ReportHistoryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final summary = record.summary.trim();
     final title = summary.isNotEmpty ? summary : '体检/检验报告';
-    final provider = record.provider.isBlank ? 'AI识别' : record.provider;
+    const provider = 'AI识别';
     final imageFile = reportImageProvider(record.imagePath);
 
     return Material(
@@ -1987,7 +2542,7 @@ class _ReportHistoryRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      '${DateFormat('MM/dd HH:mm').format(record.reportDateTime)} · ${record.indicatorCount} 项指标 · $provider',
+                      '${DateFormat('MM/dd HH:mm').format(record.reportDateTime)} · ${record.indicatorCount} 项指标 · ${record.imagePaths.length} 张图片 · $provider',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: AppTheme.muted, fontSize: 12),
