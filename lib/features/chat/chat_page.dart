@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../app/app_theme.dart';
@@ -1193,17 +1195,10 @@ class _MessageBubbleState extends State<_MessageBubble>
                         onRetry: widget.onRetry,
                       )
                     else
-                      Text(
-                        widget.content,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.55,
-                          color: isUser
-                              ? Colors.white
-                              : widget.isError
-                                  ? Colors.red.shade700
-                                  : Theme.of(context).colorScheme.onSurface,
-                        ),
+                      _MessageMarkdown(
+                        content: widget.content,
+                        isUser: isUser,
+                        isError: widget.isError,
                       ),
                     if (!isUser && widget.contextSources.isNotEmpty) ...[
                       const SizedBox(height: 8),
@@ -1432,6 +1427,71 @@ class _AiWaitingIndicator extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class _MessageMarkdown extends StatelessWidget {
+  const _MessageMarkdown({
+    required this.content,
+    required this.isUser,
+    required this.isError,
+  });
+
+  final String content;
+  final bool isUser;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isUser
+        ? Colors.white
+        : isError
+            ? Colors.red.shade700
+            : Theme.of(context).colorScheme.onSurface;
+    final theme = Theme.of(context);
+    final baseStyle = MarkdownStyleSheet.fromTheme(theme).copyWith(
+      p: TextStyle(fontSize: 14, height: 1.55, color: color),
+      a: TextStyle(
+        fontSize: 14,
+        height: 1.55,
+        color: isUser ? Colors.white : theme.colorScheme.primary,
+        decoration: TextDecoration.underline,
+      ),
+      h1: TextStyle(fontSize: 20, height: 1.35, fontWeight: FontWeight.w800, color: color),
+      h2: TextStyle(fontSize: 18, height: 1.4, fontWeight: FontWeight.w800, color: color),
+      h3: TextStyle(fontSize: 16, height: 1.45, fontWeight: FontWeight.w700, color: color),
+      strong: TextStyle(fontSize: 14, height: 1.55, fontWeight: FontWeight.w700, color: color),
+      em: TextStyle(fontSize: 14, height: 1.55, fontStyle: FontStyle.italic, color: color),
+      blockquote: TextStyle(fontSize: 14, height: 1.55, color: color),
+      code: TextStyle(
+        fontSize: 13,
+        height: 1.45,
+        color: color,
+        backgroundColor: isUser
+            ? Colors.white.withValues(alpha: 0.12)
+            : theme.colorScheme.surfaceContainerHighest,
+      ),
+      codeblockDecoration: BoxDecoration(
+        color: isUser
+            ? Colors.white.withValues(alpha: 0.12)
+            : theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      listBullet: TextStyle(fontSize: 14, height: 1.55, color: color),
+    );
+
+    return MarkdownBody(
+      data: content,
+      selectable: true,
+      styleSheet: baseStyle,
+      onTapLink: (text, href, title) {
+        final url = href?.trim() ?? '';
+        if (url.startsWith('https://')) {
+          unawaited(launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication));
+        }
+      },
+      imageBuilder: (_, __, ___) => const SizedBox.shrink(),
     );
   }
 }

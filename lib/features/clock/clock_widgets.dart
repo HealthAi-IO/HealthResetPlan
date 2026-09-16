@@ -308,6 +308,23 @@ class _SeniorCurrentTask extends StatelessWidget {
           const SizedBox(height: 8),
           Row(
             children: [
+              if (medicine &&
+                  task.reminder?.payload['imageObjectKey']
+                          ?.toString()
+                          .isNotEmpty ==
+                      true) ...[
+                MedicationImage(
+                  objectKey:
+                      task.reminder!.payload['imageObjectKey']!.toString(),
+                  width: 96,
+                  height: 96,
+                  onTap: () => showMedicationImagePreview(
+                    context,
+                    task.reminder!.payload['imageObjectKey']!.toString(),
+                  ),
+                ),
+                const SizedBox(width: 14),
+              ],
               Icon(_typeIcon(task.type), size: 34, color: color),
               const SizedBox(width: 12),
               Expanded(
@@ -334,6 +351,24 @@ class _SeniorCurrentTask extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (medicineTask.reminder?.payload['imageObjectKey']
+                            ?.toString()
+                            .isNotEmpty ==
+                        true) ...[
+                      MedicationImage(
+                        objectKey: medicineTask
+                            .reminder!.payload['imageObjectKey']!
+                            .toString(),
+                        width: 104,
+                        height: 104,
+                        onTap: () => showMedicationImagePreview(
+                          context,
+                          medicineTask.reminder!.payload['imageObjectKey']!
+                              .toString(),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Text(
                       medicineTask.title,
                       style: const TextStyle(
@@ -435,6 +470,23 @@ class _SeniorTaskSection extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 10),
               child: Row(
                 children: [
+                  if (task.type == 'medicine' &&
+                      task.reminder?.payload['imageObjectKey']
+                              ?.toString()
+                              .isNotEmpty ==
+                          true) ...[
+                    MedicationImage(
+                      objectKey:
+                          task.reminder!.payload['imageObjectKey']!.toString(),
+                      width: 64,
+                      height: 64,
+                      onTap: () => showMedicationImagePreview(
+                        context,
+                        task.reminder!.payload['imageObjectKey']!.toString(),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                   SizedBox(
                     width: 78,
                     child: Text(
@@ -776,20 +828,31 @@ class _RecordList extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color:
-                          _typeColor(context, r.type).withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(10),
+                  if (r.type == 'medicine' && r.photoPath.isNotEmpty)
+                    MedicationImage(
+                      objectKey: r.photoPath,
+                      width: 64,
+                      height: 64,
+                      onTap: () => showMedicationImagePreview(
+                        context,
+                        r.photoPath,
+                      ),
+                    )
+                  else
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color:
+                            _typeColor(context, r.type).withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        _typeIcon(r.type),
+                        color: _typeColor(context, r.type),
+                        size: 19,
+                      ),
                     ),
-                    child: Icon(
-                      _typeIcon(r.type),
-                      color: _typeColor(context, r.type),
-                      size: 19,
-                    ),
-                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -1269,30 +1332,30 @@ class _ReminderListState extends State<_ReminderList> {
                 padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
                 child: Row(
                   children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      clipBehavior: Clip.antiAlias,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryBlue.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: imageProvider == null
-                          ? Icon(
+                    imageProvider == null
+                        ? Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              color:
+                                  AppTheme.primaryBlue.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
                               Icons.notifications_active_outlined,
                               color: AppTheme.deepBlue,
-                              size: 19,
-                            )
-                          : Image(
-                              image: imageProvider,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Icon(
-                                Icons.medication_outlined,
-                                color: AppTheme.deepBlue,
-                                size: 19,
-                              ),
+                              size: 24,
                             ),
-                    ),
+                          )
+                        : MedicationImage(
+                            objectKey: imageObjectKey,
+                            width: 64,
+                            height: 64,
+                            onTap: () => showMedicationImagePreview(
+                              context,
+                              imageObjectKey,
+                            ),
+                          ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -2374,7 +2437,6 @@ class _ReminderDetailsDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final note = reminder.payload['note']?.toString() ?? reminder.label;
     final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
-    final imageProvider = reportImageProvider(imageObjectKey);
     return AlertDialog(
       title: Text(reminder.label),
       content: SizedBox(
@@ -2384,17 +2446,14 @@ class _ReminderDetailsDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (imageProvider != null) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: Image(
-                    image: imageProvider,
-                    width: double.infinity,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const SizedBox(
-                      height: 180,
-                      child: Center(child: Text('药品图片加载失败')),
-                    ),
+              if (imageObjectKey.isNotEmpty) ...[
+                MedicationImage(
+                  objectKey: imageObjectKey,
+                  width: double.infinity,
+                  height: 220,
+                  onTap: () => showMedicationImagePreview(
+                    context,
+                    imageObjectKey,
                   ),
                 ),
                 const SizedBox(height: 14),

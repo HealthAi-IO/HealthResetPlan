@@ -1874,6 +1874,7 @@ class _FoodHomeSummary extends StatelessWidget {
     final cost = records.fold<double>(0, (sum, item) => sum + item.cost);
     return _Panel(
       title: '今日饮食',
+      onTap: onOpen,
       action: TextButton.icon(
         onPressed: onOpen,
         icon: const Icon(Icons.chevron_right),
@@ -2687,6 +2688,7 @@ class _SeniorTodayTasks extends StatelessWidget {
     required this.doneTypes,
     required this.onTakeMedicine,
     required this.onAcknowledge,
+    required this.onOpenMeal,
     required this.onOpenClock,
   });
 
@@ -2695,6 +2697,7 @@ class _SeniorTodayTasks extends StatelessWidget {
   final Set<String> doneTypes;
   final Future<void> Function(ReminderData, DateTime) onTakeMedicine;
   final Future<void> Function(ReminderData, DateTime) onAcknowledge;
+  final VoidCallback onOpenMeal;
   final VoidCallback onOpenClock;
 
   @override
@@ -2764,7 +2767,10 @@ class _SeniorTodayTasks extends StatelessWidget {
                     onOpenClock: onOpenClock,
                   ),
                 for (final plan in visiblePlans)
-                  _SeniorPlanTask(plan: plan, onTap: onOpenClock),
+                  _SeniorPlanTask(
+                    plan: plan,
+                    onTap: plan.type == 'meal' ? onOpenMeal : onOpenClock,
+                  ),
                 if (hiddenCount > 0)
                   TextButton.icon(
                     onPressed: onOpenClock,
@@ -2822,6 +2828,20 @@ class _SeniorReminderTask extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (reminder.type == 'medicine' &&
+                  reminder.payload['imageObjectKey']?.toString().isNotEmpty ==
+                      true) ...[
+                MedicationImage(
+                  objectKey: reminder.payload['imageObjectKey']!.toString(),
+                  width: 112,
+                  height: 112,
+                  onTap: () => showMedicationImagePreview(
+                    context,
+                    reminder.payload['imageObjectKey']!.toString(),
+                  ),
+                ),
+                const SizedBox(width: 14),
+              ],
               Text(
                 DateFormat('HH:mm').format(item.occurrence),
                 style: TextStyle(
@@ -3107,15 +3127,21 @@ class _HealthAlertCard extends StatelessWidget {
 }
 
 class _Panel extends StatelessWidget {
-  const _Panel({required this.title, required this.child, this.action});
+  const _Panel({
+    required this.title,
+    required this.child,
+    this.action,
+    this.onTap,
+  });
   final String title;
   final Widget child;
   final Widget? action;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Container(
+    final panel = Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -3145,6 +3171,19 @@ class _Panel extends StatelessWidget {
         const SizedBox(height: 12),
         child,
       ]),
+    );
+    if (onTap == null) return panel;
+    return Semantics(
+      button: true,
+      label: '打开$title',
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: panel,
+        ),
+      ),
     );
   }
 }

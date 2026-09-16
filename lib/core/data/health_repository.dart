@@ -2025,7 +2025,7 @@ class HealthRepository extends ChangeNotifier {
           clockAt: now.millisecondsSinceEpoch,
           note:
               '${reminder.displayLabel} · ${action == 'taken' ? '已服' : '已跳过'}',
-          photoPath: '',
+          photoPath: reminder.payload['imageObjectKey']?.toString() ?? '',
           createdAt: now.millisecondsSinceEpoch,
           updatedAt: now.millisecondsSinceEpoch,
         ).toRow(),

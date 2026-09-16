@@ -19,6 +19,7 @@ import '../../core/notification/reminder_scheduler.dart';
 import '../../core/network/file_api.dart';
 import '../../core/network/telemetry_api.dart';
 import '../../core/storage/report_image_storage.dart';
+import '../../core/widgets/medication_image.dart';
 import '../../core/widgets/numeric_picker_field.dart';
 import '../meals/meal_input_args.dart';
 
@@ -156,6 +157,22 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
       }
       reminders = await _repo.loadReminders();
     }
+    final displayRecords = records.map((record) {
+      if (record.type != 'medicine' || record.photoPath.isNotEmpty) {
+        return record;
+      }
+      final reminder = reminders
+          .where((item) =>
+              item.type == 'medicine' &&
+              record.note.startsWith(item.displayLabel))
+          .firstOrNull;
+      final imageObjectKey =
+          reminder?.payload['imageObjectKey']?.toString() ?? '';
+      if (imageObjectKey.isEmpty) return record;
+      return ClockRecordData.fromRow(
+        record.toRow()..['photo_path'] = imageObjectKey,
+      );
+    }).toList(growable: false);
     final plans = await _repo.loadPlans(limit: 40);
     final now = DateTime.now();
     final dayStart = DateTime(now.year, now.month, now.day);
@@ -166,7 +183,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
     final indicators = await _repo.loadIndicatorsSince(dayStart);
     if (!mounted) return;
     setState(() {
-      _records = records;
+      _records = displayRecords;
       _reminders = reminders;
       _plans = plans.where((p) => p.type != 'risk').toList(growable: false);
       _mealRecords = mealRecords;
@@ -663,6 +680,7 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
   Future<void> _showMedicineTaskActions(_SeniorClockTask task) async {
     final reminder = task.reminder;
     if (reminder == null) return;
+    final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
     final action = await _showSmoothDialog<String>(
       builder: (dialogContext) => AlertDialog(
         title: Text(
@@ -671,6 +689,18 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (imageObjectKey.isNotEmpty) ...[
+              MedicationImage(
+                objectKey: imageObjectKey,
+                width: double.infinity,
+                height: 160,
+                onTap: () => showMedicationImagePreview(
+                  dialogContext,
+                  imageObjectKey,
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
             Text(task.detail.isEmpty
                 ? '请选择本次服药的实际状态。'
                 : '${task.detail}\n请选择本次服药的实际状态。'),
