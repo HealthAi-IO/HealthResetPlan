@@ -770,7 +770,11 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
         ),
       );
       if (minutes == null) return;
-      await _scheduler.snoozeMedication(reminder, minutes: minutes);
+      await _scheduler.snoozeMedication(
+        reminder,
+        minutes: minutes,
+        scheduledAt: task.scheduledAt,
+      );
       if (mounted) _showSnack('已延后 $minutes 分钟提醒');
       return;
     }

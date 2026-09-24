@@ -5,20 +5,32 @@ class AppSettingsController extends ChangeNotifier {
   static const _seniorModeKey = 'senior_mode_v1';
   static const _waterGoalKey = 'water_goal_ml_v1';
   static const _seniorClockVoiceKey = 'senior_clock_voice_v1';
+  static const _medicationReminderVoiceKey = 'medication_reminder_voice_v1';
+  static const _showMedicationDetailsKey =
+      'show_medication_details_in_notification_v1';
 
   bool _seniorMode = false;
   int? _waterGoalMl;
   bool _seniorClockVoice = false;
+  bool _medicationReminderVoice = true;
+  bool _showMedicationDetailsInNotification = false;
 
   bool get seniorMode => _seniorMode;
   int? get waterGoalMl => _waterGoalMl;
   bool get seniorClockVoice => _seniorClockVoice;
+  bool get medicationReminderVoice => _medicationReminderVoice;
+  bool get showMedicationDetailsInNotification =>
+      _showMedicationDetailsInNotification;
 
   Future<void> load() async {
     final preferences = await SharedPreferences.getInstance();
     _seniorMode = preferences.getBool(_seniorModeKey) == true;
     _waterGoalMl = preferences.getInt(_waterGoalKey);
     _seniorClockVoice = preferences.getBool(_seniorClockVoiceKey) == true;
+    _medicationReminderVoice =
+        preferences.getBool(_medicationReminderVoiceKey) ?? true;
+    _showMedicationDetailsInNotification =
+        preferences.getBool(_showMedicationDetailsKey) ?? false;
   }
 
   Future<void> setSeniorMode(bool value) async {
@@ -47,6 +59,22 @@ class AppSettingsController extends ChangeNotifier {
     notifyListeners();
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_seniorClockVoiceKey, value);
+  }
+
+  Future<void> setMedicationReminderVoice(bool value) async {
+    if (_medicationReminderVoice == value) return;
+    _medicationReminderVoice = value;
+    notifyListeners();
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_medicationReminderVoiceKey, value);
+  }
+
+  Future<void> setShowMedicationDetailsInNotification(bool value) async {
+    if (_showMedicationDetailsInNotification == value) return;
+    _showMedicationDetailsInNotification = value;
+    notifyListeners();
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_showMedicationDetailsKey, value);
   }
 }
 

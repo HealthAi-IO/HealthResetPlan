@@ -18,11 +18,13 @@ import 'core/data/health_repository.dart';
 import 'core/di/service_locator.dart';
 import 'core/content/content_models.dart';
 import 'core/content/site_message_service.dart';
+import 'core/feedback/clock_feedback_service.dart';
 import 'core/notification/reminder_scheduler.dart';
 import 'core/network/telemetry_api.dart';
 import 'core/network/auth_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
 import 'core/update/app_update_service.dart';
+import 'core/widgets/medication_reminder_dialog.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -312,6 +314,10 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   bool _updateChecked = false;
   int _handledAiPlanEventId = 0;
   Timer? _reminderRefreshTimer;
+  Timer? _foregroundMedicationTimer;
+  final Set<String> _shownMedicationReminderKeys = <String>{};
+  bool _medicationDialogActive = false;
+  bool _medicationCheckRunning = false;
 
   @override
   void initState() {
@@ -337,10 +343,15 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _openReminder(pendingReminderId),
       );
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _checkMedicationReminderOnLaunch(),
+      );
     }
     final siteMessages = sl<SiteMessageService>();
     _siteMessageSubscription = siteMessages.events.listen(_showSiteMessage);
     siteMessages.start();
+    _startForegroundMedicationTimer();
     _scheduleReminderRefresh();
   }
 
@@ -353,6 +364,7 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     _medicationActionSubscription?.cancel();
     _siteMessageSubscription?.cancel();
     _reminderRefreshTimer?.cancel();
+    _foregroundMedicationTimer?.cancel();
     super.dispose();
   }
 
@@ -363,8 +375,23 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
       sl<ReminderScheduler>().syncAll().catchError((error) {
         debugPrint('Reminder refresh failed: $error');
       });
+      _checkMedicationReminderOnLaunch();
+      _startForegroundMedicationTimer();
       _scheduleReminderRefresh();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _foregroundMedicationTimer?.cancel();
+      _foregroundMedicationTimer = null;
     }
+  }
+
+  void _startForegroundMedicationTimer() {
+    _foregroundMedicationTimer?.cancel();
+    _foregroundMedicationTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _checkMedicationReminderOnLaunch(),
+    );
   }
 
   void _scheduleReminderRefresh() {
@@ -442,6 +469,16 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   }
 
   void _showReminder(ReminderData reminder) {
+    if (reminder.type == 'medicine') {
+      final scheduledAt = _findPendingMedicationOccurrences(
+        reminder,
+        DateTime.now(),
+      ).lastOrNull;
+      if (scheduledAt != null) {
+        unawaited(_presentMedicationReminder(reminder, scheduledAt));
+      }
+      return;
+    }
     final note = reminder.payload['note'] as String? ?? '';
     final body = note.isNotEmpty ? note : reminder.label;
     showAppSnackBar(
@@ -460,8 +497,146 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     );
   }
 
-  void _openReminder(int reminderId) {
+  Future<void> _openReminder(int reminderId) async {
+    if (reminderId == 0) {
+      AppRouter.router.go('/clock');
+      await _checkMedicationReminderOnLaunch();
+      return;
+    }
     AppRouter.router.go('/clock?reminderId=$reminderId');
+    final reminders = await sl<HealthRepository>().loadReminders();
+    final reminder =
+        reminders.where((item) => item.id == reminderId).firstOrNull;
+    if (reminder?.type != 'medicine') return;
+    final scheduledAt = _findPendingMedicationOccurrences(
+      reminder!,
+      DateTime.now(),
+    ).lastOrNull;
+    if (scheduledAt == null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    if (mounted) await _presentMedicationReminder(reminder, scheduledAt);
+  }
+
+  Future<void> _checkMedicationReminderOnLaunch() async {
+    if (_medicationCheckRunning || _medicationDialogActive) return;
+    _medicationCheckRunning = true;
+    try {
+      await _checkPendingMedicationQueue();
+    } finally {
+      _medicationCheckRunning = false;
+    }
+  }
+
+  Future<void> _checkPendingMedicationQueue() async {
+    final now = DateTime.now();
+    final reminders = await sl<HealthRepository>().loadReminders();
+    final pending = <({ReminderData reminder, DateTime scheduledAt})>[];
+    for (final reminder in reminders) {
+      if (reminder.type != 'medicine' || !reminder.isEnabled) continue;
+      for (final occurrence in _findPendingMedicationOccurrences(
+        reminder,
+        now,
+      )) {
+        pending.add((reminder: reminder, scheduledAt: occurrence));
+      }
+    }
+    pending.sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
+    if (pending.isEmpty || !mounted) return;
+    final item = pending.first;
+    await _presentMedicationReminder(item.reminder, item.scheduledAt);
+    if (mounted) await _checkPendingMedicationQueue();
+  }
+
+  List<DateTime> _findPendingMedicationOccurrences(
+    ReminderData reminder,
+    DateTime now,
+  ) {
+    final occurrences = <DateTime>[];
+    for (var dayOffset = 0; dayOffset <= 1; dayOffset++) {
+      final day = DateTime(now.year, now.month, now.day - dayOffset);
+      if (!reminder.occursOn(day)) continue;
+      for (final time in reminder.dailyTimes) {
+        final occurrence = DateTime(
+          day.year,
+          day.month,
+          day.day,
+          time.hour,
+          time.minute,
+        );
+        final snoozedUntil = reminder.snoozeAt(occurrence);
+        if (occurrence.isAfter(now) ||
+            reminder.actionAt(occurrence) != null ||
+            (snoozedUntil != null && snoozedUntil.isAfter(now))) {
+          continue;
+        }
+        occurrences.add(occurrence);
+      }
+    }
+    occurrences.sort();
+    return occurrences;
+  }
+
+  Future<void> _presentMedicationReminder(
+    ReminderData reminder,
+    DateTime scheduledAt,
+  ) async {
+    final key = '${reminder.id}:$scheduledAt';
+    final context = AppRouter.navigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    if (_medicationDialogActive) return;
+    if (!_shownMedicationReminderKeys.add(key)) return;
+    _medicationDialogActive = true;
+    final time = reminder.dailyTimes.firstWhere(
+      (value) =>
+          value.hour == scheduledAt.hour && value.minute == scheduledAt.minute,
+      orElse: () => reminder.dailyTimes.first,
+    );
+    if (appSettingsController.medicationReminderVoice) {
+      unawaited(
+        ClockFeedbackService.speakMedicationReminder(
+          medicineName: reminder.displayLabel,
+          dose: reminder.doseAt(time),
+          instructions: reminder.instructionsAt(time),
+        ),
+      );
+    }
+    final repository = sl<HealthRepository>();
+    try {
+      await showMedicationReminderDialog(
+        context,
+        reminder: reminder,
+        scheduledAt: scheduledAt,
+        seniorMode: appSettingsController.seniorMode,
+        onTaken: () async {
+          final updated = await repository.recordMedicationAction(
+            reminder,
+            'taken',
+            scheduledAt: scheduledAt,
+          );
+          await sl<ReminderScheduler>().syncReminder(updated);
+          showAppSnackBar(const SnackBar(content: Text('已记录本次服药')));
+        },
+        onSnooze: () async {
+          await sl<ReminderScheduler>().snoozeMedication(
+            reminder,
+            scheduledAt: scheduledAt,
+          );
+          _shownMedicationReminderKeys.remove(key);
+          showAppSnackBar(const SnackBar(content: Text('已延后 10 分钟')));
+        },
+        onSkipped: () async {
+          final updated = await repository.recordMedicationAction(
+            reminder,
+            'skipped',
+            scheduledAt: scheduledAt,
+          );
+          await sl<ReminderScheduler>().syncReminder(updated);
+          showAppSnackBar(const SnackBar(content: Text('已记录跳过本次')));
+        },
+      );
+    } finally {
+      _medicationDialogActive = false;
+    }
   }
 
   Future<void> _handleMedicationAction(
@@ -474,7 +649,10 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     if (reminder == null) return;
     try {
       if (event.action == 'snooze') {
-        await sl<ReminderScheduler>().snoozeMedication(reminder);
+        await sl<ReminderScheduler>().snoozeMedication(
+          reminder,
+          scheduledAt: event.scheduledAt,
+        );
         showAppSnackBar(
           const SnackBar(content: Text('已延后 10 分钟')),
         );

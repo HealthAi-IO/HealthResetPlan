@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../../app/app_settings_controller.dart';
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import 'web_push_service.dart';
@@ -287,26 +288,31 @@ class ReminderScheduler {
       final day = today.add(Duration(days: dayOffset));
       if (!reminder.occursOn(day)) continue;
       for (final time in reminder.dailyTimes) {
-        final scheduled = tz.TZDateTime(
-          now.location,
+        final original = DateTime(
           day.year,
           day.month,
           day.day,
           time.hour,
           time.minute,
         );
+        if (reminder.actionAt(original) != null) continue;
+        final snoozedUntil = reminder.snoozeAt(original);
+        final scheduled = snoozedUntil != null && snoozedUntil.isAfter(now)
+            ? tz.TZDateTime.from(snoozedUntil, now.location)
+            : tz.TZDateTime(
+                now.location,
+                day.year,
+                day.month,
+                day.day,
+                time.hour,
+                time.minute,
+              );
         if (!scheduled.isAfter(now)) continue;
-        final localScheduled = DateTime(
-          scheduled.year,
-          scheduled.month,
-          scheduled.day,
-          scheduled.hour,
-          scheduled.minute,
-        );
-        if (reminder.actionAt(localScheduled) != null) continue;
+        if (snoozedUntil == null && !original.isAfter(now)) continue;
         occurrences.add(_MedicationOccurrence(
           reminder: reminder,
           time: time,
+          occurrence: original,
           scheduled: scheduled,
         ));
       }
@@ -323,20 +329,24 @@ class ReminderScheduler {
     final minuteKey = scheduled.millisecondsSinceEpoch ~/ 60000;
     final notificationId = 1200000000 + (minuteKey % 400000000) * 2;
     final multiple = group.length > 1;
+    final showDetails =
+        appSettingsController.showMedicationDetailsInNotification;
     final names = group
         .map((item) => item.reminder.displayLabel)
         .toSet()
         .take(3)
         .join('、');
     final title = multiple
-        ? '用药提醒 · 共 ${group.length} 种药'
-        : '${first.reminder.displayLabel}用药提醒';
+        ? (showDetails ? '用药提醒 · 共 ${group.length} 种药' : '用药提醒')
+        : (showDetails ? '${first.reminder.displayLabel}用药提醒' : '用药提醒');
     final body = multiple
-        ? '$names，请打开 APP 逐项确认'
-        : _medicineNotificationBody(first.reminder, first.time);
+        ? (showDetails ? '$names，请打开 APP 逐项确认' : '您有多项用药提醒，请打开 APP 逐项确认')
+        : (showDetails
+            ? _medicineNotificationBody(first.reminder, first.time)
+            : '您有一项用药提醒，请打开 APP 查看');
     final payload = multiple
         ? 'medicine-group:${scheduled.millisecondsSinceEpoch}'
-        : 'reminder:${first.reminder.id}:${scheduled.millisecondsSinceEpoch}';
+        : 'reminder:${first.reminder.id}:${first.occurrence.millisecondsSinceEpoch}';
     await _plugin.zonedSchedule(
       id: notificationId,
       title: title,
@@ -352,9 +362,11 @@ class ReminderScheduler {
     await _plugin.zonedSchedule(
       id: notificationId + 1,
       title: multiple
-          ? '${group.length} 种药尚未全部确认'
-          : '${first.reminder.displayLabel}尚未确认',
-      body: multiple ? '请打开 APP 查看每种药的服用状态。' : '如已服用请及时记录；如未服用，请遵循医嘱处理。',
+          ? (showDetails ? '${group.length} 种药尚未全部确认' : '用药提醒尚未确认')
+          : (showDetails ? '${first.reminder.displayLabel}尚未确认' : '用药提醒尚未确认'),
+      body: showDetails
+          ? (multiple ? '请打开 APP 查看每种药的服用状态。' : '如已服用请及时记录；如未服用，请遵循医嘱处理。')
+          : '请打开 APP 查看用药状态。',
       scheduledDate: scheduled.add(const Duration(minutes: 30)),
       notificationDetails: _buildDetails(
         first.reminder,
@@ -471,10 +483,14 @@ class ReminderScheduler {
     await _plugin.zonedSchedule(
       id: notificationId,
       title: reminder.type == 'medicine'
-          ? '${reminder.displayLabel}用药提醒'
+          ? (appSettingsController.showMedicationDetailsInNotification
+              ? '${reminder.displayLabel}用药提醒'
+              : '用药提醒')
           : '健康重启计划提醒',
       body: reminder.type == 'medicine'
-          ? _medicineNotificationBody(reminder)
+          ? (appSettingsController.showMedicationDetailsInNotification
+              ? _medicineNotificationBody(reminder)
+              : '您有一项用药提醒，请打开 APP 查看')
           : '你有一项已设定的健康提醒',
       scheduledDate: scheduled,
       notificationDetails: _buildDetails(reminder),
@@ -487,8 +503,12 @@ class ReminderScheduler {
     if (reminder.type == 'medicine') {
       await _plugin.zonedSchedule(
         id: notificationId + 8,
-        title: '${reminder.displayLabel}尚未确认',
-        body: '如已服用请及时记录；如未服用，请遵循医嘱处理。',
+        title: appSettingsController.showMedicationDetailsInNotification
+            ? '${reminder.displayLabel}尚未确认'
+            : '用药提醒尚未确认',
+        body: appSettingsController.showMedicationDetailsInNotification
+            ? '如已服用请及时记录；如未服用，请遵循医嘱处理。'
+            : '请打开 APP 查看用药状态。',
         scheduledDate: scheduled.add(const Duration(minutes: 30)),
         notificationDetails: _buildDetails(reminder),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
@@ -626,20 +646,17 @@ class ReminderScheduler {
   Future<void> snoozeMedication(
     ReminderData reminder, {
     int minutes = 10,
+    DateTime? scheduledAt,
   }) async {
-    if (!_supported || reminder.id == null) return;
-    final scheduled = tz.TZDateTime.now(tz.local).add(
-      Duration(minutes: minutes),
+    if (reminder.id == null) return;
+    final occurrence = scheduledAt ?? DateTime.now();
+    final snoozedUntil = DateTime.now().add(Duration(minutes: minutes));
+    await repository.setMedicationSnooze(
+      reminder,
+      occurrence,
+      snoozedUntil,
     );
-    await _plugin.zonedSchedule(
-      id: reminder.id! * 1000 + 998,
-      title: '${reminder.displayLabel}用药提醒',
-      body: _medicineNotificationBody(reminder),
-      scheduledDate: scheduled,
-      notificationDetails: _buildDetails(reminder),
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      payload: 'reminder:${reminder.id}:${scheduled.millisecondsSinceEpoch}',
-    );
+    if (_supported) await syncAll();
   }
 
   void _startInAppReminderLoop() {
@@ -654,16 +671,24 @@ class ReminderScheduler {
     final reminders = await repository.loadReminders();
     for (final reminder in reminders) {
       if (!reminder.isEnabled) continue;
-      final time = reminder.remindTime;
-      if (time.hour != now.hour || time.minute != now.minute) continue;
       if (!reminder.occursOn(now)) continue;
-
-      final id = reminder.id?.toString() ??
-          '${reminder.type}-${time.hour}-${time.minute}';
-      final key = '${now.year}-${now.month}-${now.day}-$id';
-      if (!_inAppReminderKeys.add(key)) continue;
-
-      _inAppReminderController.add(reminder);
+      final times = reminder.type == 'medicine'
+          ? reminder.dailyTimes
+          : <TimeOfDayValue>[
+              TimeOfDayValue(
+                hour: reminder.remindTime.hour,
+                minute: reminder.remindTime.minute,
+              ),
+            ];
+      for (final time in times) {
+        if (time.hour != now.hour || time.minute != now.minute) continue;
+        final id = reminder.id?.toString() ??
+            '${reminder.type}-${time.hour}-${time.minute}';
+        final key =
+            '${now.year}-${now.month}-${now.day}-$id-${time.hour}-${time.minute}';
+        if (!_inAppReminderKeys.add(key)) continue;
+        _inAppReminderController.add(reminder);
+      }
     }
   }
 }
@@ -672,10 +697,12 @@ class _MedicationOccurrence {
   const _MedicationOccurrence({
     required this.reminder,
     required this.time,
+    required this.occurrence,
     required this.scheduled,
   });
 
   final ReminderData reminder;
   final TimeOfDayValue time;
+  final DateTime occurrence;
   final tz.TZDateTime scheduled;
 }

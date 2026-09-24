@@ -1988,6 +1988,13 @@ class HealthRepository extends ChangeNotifier {
       ..['lastAction'] = action
       ..['lastActionAt'] = now.millisecondsSinceEpoch
       ..['actionHistory'] = history;
+    final rawSnoozeHistory = reminder.payload['snoozeHistory'];
+    if (rawSnoozeHistory is Map) {
+      final snoozeHistory =
+          rawSnoozeHistory.map((key, value) => MapEntry(key.toString(), value));
+      snoozeHistory.remove(occurrenceKey);
+      payload['snoozeHistory'] = snoozeHistory;
+    }
     final remaining = reminder.inventoryRemaining;
     if (remaining != null && previousAction != action) {
       if (action == 'taken') {
@@ -2031,6 +2038,51 @@ class HealthRepository extends ChangeNotifier {
         ).toRow(),
       );
     });
+    notifyListeners();
+    return updated;
+  }
+
+  Future<ReminderData> setMedicationSnooze(
+    ReminderData reminder,
+    DateTime occurrence,
+    DateTime snoozedUntil,
+  ) async {
+    final id = reminder.id;
+    if (id == null || reminder.type != 'medicine') {
+      throw StateError('用药提醒记录无效');
+    }
+    final rawHistory = reminder.payload['snoozeHistory'];
+    final history = rawHistory is Map
+        ? rawHistory.map((key, value) => MapEntry(key.toString(), value))
+        : <String, dynamic>{};
+    history[_reminderOccurrenceKey(occurrence)] =
+        snoozedUntil.millisecondsSinceEpoch;
+    while (history.length > 120) {
+      final oldest = history.keys.toList()..sort();
+      history.remove(oldest.first);
+    }
+    final now = DateTime.now();
+    final updated = ReminderData(
+      id: id,
+      userId: reminder.userId,
+      type: reminder.type,
+      remindAt: reminder.remindAt,
+      payload: Map<String, dynamic>.from(reminder.payload)
+        ..['snoozeHistory'] = history,
+      channel: reminder.channel,
+      status: reminder.status,
+      createdAt: reminder.createdAt,
+      updatedAt: now.millisecondsSinceEpoch,
+      version: reminder.version + 1,
+      isDirty: 1,
+    );
+    final db = await database.open();
+    await db.update(
+      'reminder',
+      updated.toRow(),
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, kLocalUserId],
+    );
     notifyListeners();
     return updated;
   }
@@ -3299,6 +3351,7 @@ Object? _canonicalReminderValue(Object? value) {
   const ignoredKeys = {
     'ackHistory',
     'actionHistory',
+    'snoozeHistory',
     'archived',
     'inventoryRemaining',
   };

@@ -813,6 +813,16 @@ class _ProfilePageState extends State<ProfilePage> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _setMedicationReminderVoice(bool value) async {
+    await appSettingsController.setMedicationReminderVoice(value);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setMedicationDetailsInNotification(bool value) async {
+    await appSettingsController.setShowMedicationDetailsInNotification(value);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _requestNotificationPermission() async {
     await sl<ReminderScheduler>().requestPermission();
     await _load(silent: true, syncForm: false);
@@ -1132,10 +1142,17 @@ class _ProfilePageState extends State<ProfilePage> {
             seniorMode: appSettingsController.seniorMode,
             notificationsEnabled: _notificationsEnabled,
             exactAlarmEnabled: _exactAlarmEnabled,
+            medicationReminderVoice:
+                appSettingsController.medicationReminderVoice,
+            showMedicationDetailsInNotification:
+                appSettingsController.showMedicationDetailsInNotification,
             syncStatus: dataSyncStatusController,
             onEditProfile: _showSeniorProfileEditor,
             onNotificationPermission: _requestNotificationPermission,
             onExactAlarmPermission: _requestExactAlarmPermission,
+            onToggleMedicationReminderVoice: _setMedicationReminderVoice,
+            onToggleMedicationDetailsInNotification:
+                _setMedicationDetailsInNotification,
             onToggleSeniorMode: _setSeniorMode,
             onReminderSettings: () => context.go('/clock?manage=rules'),
             onMoreSettings: _showSeniorMoreSettings,
@@ -1546,6 +1563,25 @@ class _ProfilePageState extends State<ProfilePage> {
                       onChanged: _setSeniorClockVoice,
                     ),
                     const Divider(height: 1),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.medication_outlined),
+                      title: const Text('用药提醒语音'),
+                      subtitle: const Text('到点播报药品、剂量和用法，默认开启'),
+                      value: appSettingsController.medicationReminderVoice,
+                      onChanged: _setMedicationReminderVoice,
+                    ),
+                    const Divider(height: 1),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.lock_outline),
+                      title: const Text('通知显示药品名称'),
+                      subtitle: const Text('关闭后锁屏和通知栏只显示“用药提醒”'),
+                      value: appSettingsController
+                          .showMedicationDetailsInNotification,
+                      onChanged: _setMedicationDetailsInNotification,
+                    ),
+                    const Divider(height: 1),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: Icon(
@@ -1846,10 +1882,14 @@ class _SeniorProfileView extends StatelessWidget {
     required this.seniorMode,
     required this.notificationsEnabled,
     required this.exactAlarmEnabled,
+    required this.medicationReminderVoice,
+    required this.showMedicationDetailsInNotification,
     required this.syncStatus,
     required this.onEditProfile,
     required this.onNotificationPermission,
     required this.onExactAlarmPermission,
+    required this.onToggleMedicationReminderVoice,
+    required this.onToggleMedicationDetailsInNotification,
     required this.onToggleSeniorMode,
     required this.onReminderSettings,
     required this.onMoreSettings,
@@ -1865,10 +1905,14 @@ class _SeniorProfileView extends StatelessWidget {
   final bool seniorMode;
   final bool? notificationsEnabled;
   final bool? exactAlarmEnabled;
+  final bool medicationReminderVoice;
+  final bool showMedicationDetailsInNotification;
   final DataSyncStatusController syncStatus;
   final Future<void> Function() onEditProfile;
   final Future<void> Function() onNotificationPermission;
   final Future<void> Function() onExactAlarmPermission;
+  final Future<void> Function(bool) onToggleMedicationReminderVoice;
+  final Future<void> Function(bool) onToggleMedicationDetailsInNotification;
   final Future<void> Function(bool) onToggleSeniorMode;
   final VoidCallback onReminderSettings;
   final Future<void> Function() onMoreSettings;
@@ -1977,11 +2021,17 @@ class _SeniorProfileView extends StatelessWidget {
           _SeniorStatusPanel(
             notificationsEnabled: notificationsEnabled,
             exactAlarmEnabled: exactAlarmEnabled,
+            medicationReminderVoice: medicationReminderVoice,
+            showMedicationDetailsInNotification:
+                showMedicationDetailsInNotification,
             syncText: syncText,
             syncFailed: syncStatus.phase == DataSyncPhase.failed,
             syncConflict: syncStatus.phase == DataSyncPhase.conflict,
             onNotificationPermission: onNotificationPermission,
             onExactAlarmPermission: onExactAlarmPermission,
+            onToggleMedicationReminderVoice: onToggleMedicationReminderVoice,
+            onToggleMedicationDetailsInNotification:
+                onToggleMedicationDetailsInNotification,
             onRetrySync: syncStatus.canRetry ? syncStatus.retry : null,
             onResolveConflict: syncStatus.hasConflict
                 ? () => _showSyncConflictSheet(context, syncStatus)
@@ -2027,22 +2077,30 @@ class _SeniorStatusPanel extends StatelessWidget {
   const _SeniorStatusPanel({
     required this.notificationsEnabled,
     required this.exactAlarmEnabled,
+    required this.medicationReminderVoice,
+    required this.showMedicationDetailsInNotification,
     required this.syncText,
     required this.syncFailed,
     required this.syncConflict,
     required this.onNotificationPermission,
     required this.onExactAlarmPermission,
+    required this.onToggleMedicationReminderVoice,
+    required this.onToggleMedicationDetailsInNotification,
     required this.onRetrySync,
     required this.onResolveConflict,
   });
 
   final bool? notificationsEnabled;
   final bool? exactAlarmEnabled;
+  final bool medicationReminderVoice;
+  final bool showMedicationDetailsInNotification;
   final String syncText;
   final bool syncFailed;
   final bool syncConflict;
   final Future<void> Function() onNotificationPermission;
   final Future<void> Function() onExactAlarmPermission;
+  final Future<void> Function(bool) onToggleMedicationReminderVoice;
+  final Future<void> Function(bool) onToggleMedicationDetailsInNotification;
   final Future<void> Function()? onRetrySync;
   final VoidCallback? onResolveConflict;
 
@@ -2079,6 +2137,24 @@ class _SeniorStatusPanel extends StatelessWidget {
             enabledText: '精确闹钟已允许',
             disabledText: '尚未允许精确闹钟',
             onEnable: onExactAlarmPermission,
+          ),
+          const Divider(height: 24),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('用药提醒语音'),
+            subtitle: const Text('到点播报药品、剂量和用法'),
+            value: medicationReminderVoice,
+            onChanged: onToggleMedicationReminderVoice,
+          ),
+          const Divider(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.lock_outline),
+            title: const Text('通知显示药品名称'),
+            subtitle: const Text('关闭后通知栏只显示“用药提醒”'),
+            value: showMedicationDetailsInNotification,
+            onChanged: onToggleMedicationDetailsInNotification,
           ),
           const Divider(height: 24),
           Row(

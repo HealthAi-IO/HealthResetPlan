@@ -9,6 +9,8 @@ void main() {
     await controller.load();
     expect(controller.waterGoalMl, isNull);
     expect(controller.seniorClockVoice, isFalse);
+    expect(controller.medicationReminderVoice, isTrue);
+    expect(controller.showMedicationDetailsInNotification, isFalse);
   });
 
   test('饮水目标和长辈语音设置可以持久化与关闭', () async {
@@ -17,11 +19,13 @@ void main() {
     await controller.load();
     await controller.setWaterGoalMl(1800);
     await controller.setSeniorClockVoice(true);
+    await controller.setShowMedicationDetailsInNotification(true);
 
     final restored = AppSettingsController();
     await restored.load();
     expect(restored.waterGoalMl, 1800);
     expect(restored.seniorClockVoice, isTrue);
+    expect(restored.showMedicationDetailsInNotification, isTrue);
 
     await restored.setWaterGoalMl(null);
     expect(restored.waterGoalMl, isNull);

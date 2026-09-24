@@ -1227,6 +1227,14 @@ class ReminderData {
     return history is Map && history[_occurrenceKey(occurrence)] == true;
   }
 
+  DateTime? snoozeAt(DateTime occurrence) {
+    final history = payload['snoozeHistory'];
+    if (history is! Map) return null;
+    final value = history[_occurrenceKey(occurrence)];
+    if (value is num) return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+    return DateTime.tryParse(value?.toString() ?? '');
+  }
+
   List<int> get weekdays {
     if (!isWeekly) return const [];
     final raw = payload['weekdays'];
