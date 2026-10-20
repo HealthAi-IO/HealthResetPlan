@@ -1,3 +1,6 @@
+import '../routine/routine_summary.dart';
+import '../routine/routine_service.dart';
+import '../../core/network/api_client.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
@@ -61,6 +64,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
         _repo.loadClockRecords(limit: 500),
         _repo.loadWeeklyHealthReports(),
         AiActionRepository.instance.recent(limit: 10),
+        RoutineService(sl<ApiClient>()).load(days: _vipActive ? 30 : 7),
       ]);
       final indicators = results[0] as List<HealthIndicatorEntry>;
       final meals = results[1] as List<MealRecordData>;
@@ -87,11 +91,9 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
       );
       final weights = indicators.where((item) => item.type == 'weight').toList()
         ..sort((a, b) => a.measuredAt.compareTo(b.measuredAt));
-      final sleepValues = indicators
-          .where((item) => item.type == 'sleep')
-          .map((item) => (item.payload['sleepHours'] as num?)?.toDouble())
-          .whereType<double>()
-          .toList();
+      final routine = results[5] as Map;
+      final sessions = List<Map>.from(routine['sessions']);
+      days.addAll(List<Map>.from(routine['events']).map((e) => routineDate(DateTime.parse(e['occurredAt']))));
       final exerciseDays = clocks
           .where((item) => item.type == 'exercise' && item.status == 'done')
           .map((item) => DateFormat('yyyy-MM-dd').format(item.clockTime))
@@ -123,9 +125,7 @@ class _WeeklyHealthReportPageState extends State<WeeklyHealthReportPage> {
         if (weights.length >= 2)
           'weightChangeKg': (weights.last.numericTrendValue ?? 0) -
               (weights.first.numericTrendValue ?? 0),
-        if (sleepValues.isNotEmpty)
-          'averageSleepHours':
-              sleepValues.reduce((a, b) => a + b) / sleepValues.length,
+        ...routineSummary(sessions, indicators),
       };
       if (!mounted) return;
       setState(() {

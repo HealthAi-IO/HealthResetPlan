@@ -29,6 +29,7 @@ import '../features/records/senior_record_page.dart' deferred as senior_records;
 import '../features/quit_smoking/quit_smoking_page.dart'
     deferred as quit_smoking;
 import '../features/privacy/privacy_policy_page.dart';
+import '../features/routine/routine_page.dart';
 import '../features/payment/ai_benefits_page.dart';
 import '../features/payment/ai_credit_page.dart';
 import '../features/report/report_page.dart' deferred as report;
@@ -115,6 +116,7 @@ class AppRouter {
       return null;
     },
     routes: [
+      GoRoute(path: '/routine', pageBuilder: (context, state) => _page(state, const RoutinePage())),
       StatefulShellRoute.indexedStack(
         pageBuilder: (context, state, navigationShell) =>
             NoTransitionPage<void>(
@@ -395,7 +397,10 @@ class AppRouter {
       ),
       GoRoute(
         path: '/onboarding',
-        pageBuilder: (_, state) => _page(state, const OnboardingPage()),
+        pageBuilder: (_, state) => _page(
+            state,
+            OnboardingPage(
+                returnTo: state.uri.queryParameters['returnTo'] ?? '/home')),
       ),
       GoRoute(
         path: '/report',

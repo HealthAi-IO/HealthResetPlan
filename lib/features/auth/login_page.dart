@@ -190,23 +190,26 @@ class _LoginPageState extends State<LoginPage> {
                             if (captcha == null || captcha.isEmpty) return;
                             final sent = await sl<AuthApi>().sendSmsLoginCode(
                                 phone: phone, captchaTicket: captcha);
-                            if (sent.debugCode.isNotEmpty)
+                            if (sent.debugCode.isNotEmpty) {
                               codeController.text = sent.debugCode;
+                            }
                             setDialogState(() => countdown = 60);
                             timer?.cancel();
                             timer =
                                 Timer.periodic(const Duration(seconds: 1), (t) {
                               if (!context.mounted || countdown <= 1) {
                                 t.cancel();
-                                if (context.mounted)
+                                if (context.mounted) {
                                   setDialogState(() => countdown = 0);
+                                }
                               } else {
                                 setDialogState(() => countdown--);
                               }
                             });
                           } finally {
-                            if (context.mounted)
+                            if (context.mounted) {
                               setDialogState(() => sending = false);
+                            }
                           }
                         },
                   child: Text(countdown > 0 ? '$countdown 秒' : '获取验证码'),
@@ -234,7 +237,9 @@ class _LoginPageState extends State<LoginPage> {
                 final phone =
                     phoneController.text.replaceAll(RegExp(r'\D'), '');
                 if (!RegExp(r'^1\d{10}$').hasMatch(phone) ||
-                    codeController.text.length != 6) return;
+                    codeController.text.length != 6) {
+                  return;
+                }
                 final auth = await sl<AuthApi>().verifySocialPhone(
                     ticket: social.ticket!,
                     phone: phone,

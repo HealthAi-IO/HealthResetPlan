@@ -164,6 +164,7 @@ class _SeniorClockView extends StatelessWidget {
         key: const PageStorageKey('senior-clock-scroll'),
         padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
         children: [
+          const RoutineEntry(),
           const Text(
             '提醒',
             style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
@@ -801,7 +802,7 @@ class _RecordList extends StatelessWidget {
   final List<ClockRecordData> records;
   final ValueChanged<ClockRecordData> onEdit;
   final ValueChanged<ClockRecordData> onDelete;
-  final VoidCallback onCorrectMedicine;
+  final ValueChanged<ClockRecordData> onCorrectMedicine;
 
   @override
   Widget build(BuildContext context) {
@@ -907,7 +908,7 @@ class _RecordList extends StatelessWidget {
                     tooltip: '记录操作',
                     onSelected: (value) {
                       if (value == 'correct') {
-                        onCorrectMedicine();
+                        onCorrectMedicine(r);
                       } else if (value == 'edit') {
                         onEdit(r);
                       } else {
@@ -1247,16 +1248,7 @@ class _ReminderListState extends State<_ReminderList> {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final reminders = widget.reminders.where((item) {
-      return item.occursOn(now) &&
-          item.dailyTimes.any(
-            (time) => DateTime(
-              now.year,
-              now.month,
-              now.day,
-              time.hour,
-              time.minute,
-            ).isAfter(now),
-          );
+      return item.occursOn(now);
     }).toList()
       ..sort((a, b) {
         if (a.isEnabled != b.isEnabled) return a.isEnabled ? -1 : 1;
@@ -1302,15 +1294,6 @@ class _ReminderListState extends State<_ReminderList> {
   Widget _buildReminder(ReminderData reminder) {
     final now = DateTime.now();
     final timeText = reminder.dailyTimes
-        .where(
-          (time) => DateTime(
-            now.year,
-            now.month,
-            now.day,
-            time.hour,
-            time.minute,
-          ).isAfter(now),
-        )
         .map((time) =>
             '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}')
         .join('、');
@@ -1318,6 +1301,7 @@ class _ReminderListState extends State<_ReminderList> {
     final imageProvider = reportImageProvider(imageObjectKey);
     final showActions =
         reminder.id != null && _expandedActionReminderId == reminder.id;
+    final statusText = _todayReminderStatus(reminder, now);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -1402,6 +1386,17 @@ class _ReminderListState extends State<_ReminderList> {
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
+                          if (statusText != null)
+                            Text(
+                              statusText,
+                              style: TextStyle(
+                                color: statusText == '已跳过'
+                                    ? AppTheme.muted
+                                    : AppTheme.leafGreen,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -1463,6 +1458,20 @@ class _ReminderListState extends State<_ReminderList> {
         ),
       ),
     );
+  }
+
+  String? _todayReminderStatus(ReminderData reminder, DateTime now) {
+    if (reminder.type != 'medicine') return null;
+    final day = DateTime(now.year, now.month, now.day);
+    final actions = reminder.dailyTimes
+        .map((time) => reminder.actionAt(
+              DateTime(day.year, day.month, day.day, time.hour, time.minute),
+            ))
+        .whereType<String>()
+        .toSet();
+    if (actions.contains('taken')) return '已服';
+    if (actions.contains('skipped')) return '已跳过';
+    return null;
   }
 }
 
@@ -1661,8 +1670,8 @@ class _ReminderDialogState extends State<_ReminderDialog> {
   final _refillThresholdCtrl = TextEditingController();
   final _imagePicker = ImagePicker();
   TimeOfDay _time = const TimeOfDay(hour: 7, minute: 0);
-  List<_MedicineTimeDraft> _medicineTimes = const [
-    _MedicineTimeDraft(
+  List<_MedicineTimeDraft> _medicineTimes = [
+    const _MedicineTimeDraft(
       time: TimeOfDay(hour: 7, minute: 0),
       dose: '1 片',
       instructions: '',

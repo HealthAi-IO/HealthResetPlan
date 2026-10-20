@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth/user_session.dart';
 import '../../core/data/online_data_service.dart';
+import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
@@ -101,12 +102,18 @@ class _RegisterPageState extends State<RegisterPage> {
         sl<ApiClient>().setAccessToken(null);
         rethrow;
       }
+      // 账号已有完整健康档案时直接进入首页，避免重复填写注册问卷。
+      final existingProfile = await sl<HealthRepository>().loadProfile();
       final preferences = await SharedPreferences.getInstance();
       await preferences.setString(
         UserSession.welcomeLetterPendingUserKey,
         result.userId,
       );
-      if (mounted) context.go(widget.args.returnTo);
+      if (mounted) {
+        context.go(
+          existingProfile?.isComplete == true ? '/home' : '/onboarding?returnTo=',
+        );
+      }
     } catch (error) {
       if (mounted) setState(() => _error = friendlyAuthError(error));
     } finally {

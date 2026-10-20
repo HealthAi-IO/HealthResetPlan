@@ -20,6 +20,7 @@ class HealthRepository extends ChangeNotifier {
   HealthRepository({required this.database});
 
   final AppDatabase database;
+  Future<void> Function()? clearRoutineData;
   bool _ready = false;
   static const _uuid = Uuid();
 
@@ -2029,6 +2030,7 @@ class HealthRepository extends ChangeNotifier {
         ClockRecordData(
           type: 'medicine',
           status: action == 'taken' ? 'done' : 'skip',
+          detail: 'medication:$id:${occurrence.millisecondsSinceEpoch}',
           clockAt: now.millisecondsSinceEpoch,
           note:
               '${reminder.displayLabel} · ${action == 'taken' ? '已服' : '已跳过'}',
@@ -2439,6 +2441,7 @@ class HealthRepository extends ChangeNotifier {
 
   // 清空本地全部数据（不可逆）
   Future<void> clearAllData() async {
+    await clearRoutineData?.call();
     final db = await database.open();
     for (final table in [
       'health_indicator',

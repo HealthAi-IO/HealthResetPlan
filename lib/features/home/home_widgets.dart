@@ -126,6 +126,7 @@ class _DesktopHomeDashboard extends StatelessWidget {
         key: const PageStorageKey('desktop-home-scroll'),
         padding: const EdgeInsets.fromLTRB(26, 22, 26, 26),
         children: [
+          const RoutineEntry(),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [

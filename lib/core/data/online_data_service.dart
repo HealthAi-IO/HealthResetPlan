@@ -54,6 +54,14 @@ class OnlineDataService {
     await _database.unbindOnline();
     await _database.switchSpace('signed-out');
     _repository.signalChanged();
+    // 清理旧账号已排入系统的通知，避免退出后仍弹出旧账号的用药提醒。
+    try {
+      await _reminderScheduler.initialize();
+      await _reminderScheduler.cancelAllNotifications();
+    } catch (error, stackTrace) {
+      debugPrint('Reminder cleanup after sign out failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   Future<void> reload() async {

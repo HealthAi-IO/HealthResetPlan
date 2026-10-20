@@ -28,6 +28,21 @@ class MedicationImage extends StatelessWidget {
               width: width,
               height: height,
               fit: BoxFit.contain,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return SizedBox(
+                  width: width,
+                  height: height,
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      value: progress.expectedTotalBytes == null
+                          ? null
+                          : progress.cumulativeBytesLoaded /
+                              progress.expectedTotalBytes!,
+                    ),
+                  ),
+                );
+              },
               errorBuilder: (_, __, ___) =>
                   _MedicationImageFallback(width: width, height: height),
             ),
@@ -95,7 +110,33 @@ Future<void> showMedicationImagePreview(
                 maxScale: 4,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                  child: Image(image: provider, fit: BoxFit.contain),
+                  child: Image(
+                    image: provider,
+                    fit: BoxFit.contain,
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) return child;
+                      return SizedBox(
+                        height: 220,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            value: progress.expectedTotalBytes == null
+                                ? null
+                                : progress.cumulativeBytesLoaded /
+                                    progress.expectedTotalBytes!,
+                          ),
+                        ),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) => Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        '图片加载失败，请稍后重试',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),

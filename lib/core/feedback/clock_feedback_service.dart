@@ -5,6 +5,30 @@ class ClockFeedbackService {
   ClockFeedbackService._();
 
   static final FlutterTts _speech = FlutterTts();
+  static Future<void>? _configureFuture;
+  static Future<void> _speechQueue = Future<void>.value();
+
+  static Future<void> _configure() {
+    return _configureFuture ??= () async {
+      await _speech.setLanguage('zh-CN');
+      await _speech.setSpeechRate(0.42);
+      await _speech.awaitSpeakCompletion(false);
+    }();
+  }
+
+  static Future<void> _speak(String message) async {
+    final task = _speechQueue.then((_) async {
+      try {
+        await _configure().timeout(const Duration(seconds: 3));
+        await _speech.stop().timeout(const Duration(seconds: 2));
+        await _speech.speak(message).timeout(const Duration(seconds: 3));
+      } catch (_) {
+        // 语音引擎不可用或响应超时时，不阻塞提醒界面。
+      }
+    });
+    _speechQueue = task.catchError((_) {});
+    await task;
+  }
 
   static Future<void> acknowledge({
     required String message,
@@ -12,14 +36,7 @@ class ClockFeedbackService {
   }) async {
     await HapticFeedback.lightImpact();
     if (!speak) return;
-    try {
-      await _speech.stop();
-      await _speech.setLanguage('zh-CN');
-      await _speech.setSpeechRate(0.42);
-      await _speech.speak(message);
-    } catch (_) {
-      // 语音引擎不可用时，视觉反馈仍然有效。
-    }
+    await _speak(message);
   }
 
   static Future<void> speakMedicationReminder({
@@ -32,13 +49,6 @@ class ClockFeedbackService {
     final message = details.isEmpty
         ? '您该吃药了，$medicineName'
         : '您该吃药了，$medicineName，$details';
-    try {
-      await _speech.stop();
-      await _speech.setLanguage('zh-CN');
-      await _speech.setSpeechRate(0.42);
-      await _speech.speak(message);
-    } catch (_) {
-      // 语音引擎不可用时，弹层和通知仍然有效。
-    }
+    await _speak(message);
   }
 }

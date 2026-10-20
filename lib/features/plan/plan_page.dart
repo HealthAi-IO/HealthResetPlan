@@ -1,3 +1,4 @@
+import '../routine/routine_entry.dart';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -802,6 +803,7 @@ class _PlanPageState extends State<PlanPage> {
         padding: EdgeInsets.fromLTRB(20, 4, 20, bottomPadding),
         cacheExtent: 900,
         children: [
+          const RoutineEntry(),
           HealthPageHeader(
             title: '健康计划',
             subtitle: '把下一步行动安排清楚',

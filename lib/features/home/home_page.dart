@@ -1,3 +1,4 @@
+import '../routine/routine_entry.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
+import '../../core/network/profile_api.dart';
 import '../../core/widgets/medication_image.dart';
 import '../../core/widgets/motion.dart';
 import '../meals/meal_input_args.dart';
@@ -100,6 +102,25 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     if (!silent) setState(() => _loading = true);
     try {
+      if (UserSession.instance.isAccountLogin) {
+        final localProfile = await _repo.loadProfile();
+        if (localProfile?.isComplete != true) {
+          final remote = await sl<ProfileApi>().loadOnboardingProfile();
+          if (remote.isNotEmpty) {
+            final now = DateTime.now().millisecondsSinceEpoch;
+            await _repo.saveProfile(UserProfileData(
+              nickname: UserSession.instance.name,
+              gender: remote['gender']?.toString() ?? '',
+              birthYear: (remote['birthYear'] as num?)?.toInt() ?? 0,
+              heightCm: (remote['heightCm'] as num?)?.toDouble() ?? 0,
+              weightKg: (remote['weightKg'] as num?)?.toDouble() ?? 0,
+              medicalHistory: (remote['conditions'] as List?)?.join('、') ?? '',
+              medications: '', createdAt: now, updatedAt: now,
+              goal: remote['goal']?.toString() ?? 'maintain',
+            ));
+          }
+        }
+      }
       final cutoff = DateTime.now().subtract(const Duration(days: 3));
       final results = await Future.wait<Object?>([
         _repo.loadDashboard(),
@@ -177,7 +198,7 @@ class _HomePageState extends State<HomePage> {
       final snoozedUntil = prefs.getInt(snoozedKey) ?? 0;
       if (snoozedUntil > DateTime.now().millisecondsSinceEpoch) return;
     }
-    if (prefs.getBool(dismissedKey) == true) {
+    if (prefs.get(dismissedKey) == true) {
       return;
     }
     if (!mounted) return;
@@ -572,6 +593,7 @@ class _HomePageState extends State<HomePage> {
           key: const PageStorageKey('senior-home-scroll'),
           padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
           children: [
+          const RoutineEntry(),
             Row(
               children: [
                 Expanded(
@@ -674,6 +696,7 @@ class _HomePageState extends State<HomePage> {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         cacheExtent: 900,
         children: [
+          const RoutineEntry(),
           _HomeTopBar(
             profile: profile,
             todayLabel: todayLabel,

@@ -24,6 +24,8 @@ import '../network/auth_api.dart';
 import '../network/content_api.dart';
 import '../network/file_api.dart';
 import '../network/online_data_api.dart';
+import '../network/profile_api.dart';
+import '../../features/routine/routine_service.dart';
 import '../network/telemetry_api.dart';
 import '../network/web_push_api.dart';
 import '../payment/payment_api.dart';
@@ -85,11 +87,16 @@ Future<void> setupServiceLocator() async {
   }
 
   sl.registerSingleton<AuthApi>(AuthApi(client: apiClient));
+  sl.registerSingleton<ProfileApi>(ProfileApi(client: apiClient));
   sl.registerLazySingleton<WechatLoginService>(() => WechatLoginService());
   sl.registerSingleton<PaymentApi>(PaymentApi(client: apiClient));
   final paymentService = PaymentService(api: sl<PaymentApi>());
-  await paymentService.initialize();
   sl.registerSingleton<PaymentService>(paymentService);
+  unawaited(
+    paymentService.initialize().catchError((error, stackTrace) {
+      sl<Logger>().w('支付服务初始化失败', error: error, stackTrace: stackTrace);
+    }),
+  );
   sl.registerSingleton<FileApi>(FileApi(client: apiClient));
   final contentApi = ContentApi(client: apiClient);
   sl.registerSingleton<ContentApi>(contentApi);
@@ -115,6 +122,19 @@ Future<void> setupServiceLocator() async {
     webPushService: webPushService,
   );
   sl.registerSingleton<ReminderScheduler>(reminderScheduler);
+  healthRepository.clearRoutineData = () async {
+    if (UserSession.instance.userId != null) {
+      await apiClient.dio.delete('/routine');
+    }
+    await reminderScheduler.cancelAllNotifications();
+  };
+  reminderScheduler.routineSettingsLoader = () async {
+    final userId = UserSession.instance.userId;
+    if (userId == null) return {};
+    final result = await RoutineService(apiClient).load();
+    if (UserSession.instance.userId != userId) return {};
+    return Map<String, dynamic>.from(result['settings'] as Map);
+  };
   final onlineDataService = OnlineDataService(
     database: appDatabase,
     api: onlineDataApi,

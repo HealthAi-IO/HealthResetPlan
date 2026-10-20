@@ -33,10 +33,19 @@ class ReminderScheduler {
 
   final HealthRepository repository;
   final WebPushService webPushService;
+  Future<Map<String, dynamic>> Function()? routineSettingsLoader;
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
+  int _syncVersion = 0;
+
+  Future<void> cancelAllNotifications() async {
+    _syncVersion++;
+    _inAppReminderTimer?.cancel();
+    _inAppReminderKeys.clear();
+    if (_supported && _initialized) await _plugin.cancelAll();
+  }
   Timer? _inAppReminderTimer;
   final Set<String> _inAppReminderKeys = <String>{};
   final StreamController<ReminderData> _inAppReminderController =
@@ -230,6 +239,7 @@ class ReminderScheduler {
 
   /// 取消所有已调度通知，再根据数据库中的提醒规则重新调度。
   Future<void> syncAll() async {
+    final syncVersion = ++_syncVersion;
     if (!_initialized) return;
     if (!await hasUserConsent()) {
       if (_supported) await _plugin.cancelAll();
@@ -245,9 +255,11 @@ class ReminderScheduler {
     await _plugin.cancelAll();
 
     final reminders = await repository.loadReminders();
+    if (syncVersion != _syncVersion) return;
     final now = tz.TZDateTime.now(tz.local);
     final medicationGroups = <int, List<_MedicationOccurrence>>{};
     for (final reminder in reminders) {
+      if (syncVersion != _syncVersion) return;
       if (reminder.id == null || !reminder.isEnabled) continue;
       if (reminder.type == 'medicine') {
         for (final occurrence in _medicationOccurrences(reminder, now)) {
@@ -263,7 +275,31 @@ class ReminderScheduler {
       }
     }
     for (final group in medicationGroups.values) {
+      if (syncVersion != _syncVersion) return;
       await _scheduleMedicationGroup(group);
+    }
+    final loader = routineSettingsLoader;
+    if (loader != null) {
+      final settings = await loader();
+      if (syncVersion != _syncVersion) return;
+      for (final type in ['wake', 'bed']) {
+        if (settings['${type}Reminder'] != true || settings['${type}Target'] == null) continue;
+        final time = (settings['${type}Target'] as String).split(':');
+        final zone = tz.getLocation('Asia/Shanghai');
+        final now = tz.TZDateTime.now(zone);
+        var next = tz.TZDateTime(zone, now.year, now.month, now.day, int.parse(time[0]), int.parse(time[1]));
+        if (!next.isAfter(now)) next = tz.TZDateTime(zone, now.year, now.month, now.day + 1, int.parse(time[0]), int.parse(time[1]));
+        await _plugin.zonedSchedule(
+          id: type == 'wake' ? 1900000000 : 1900000001,
+          title: type == 'wake' ? '早安，开始从容的一天' : '晚安，给自己一段安静的休息',
+          body: '打开健康重启计划，记录你的作息', scheduledDate: next,
+          notificationDetails: const NotificationDetails(android: AndroidNotificationDetails(
+            _dailyChannelId, _dailyChannelName, channelDescription: _dailyChannelDesc), iOS: DarwinNotificationDetails()),
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          matchDateTimeComponents: DateTimeComponents.time,
+          payload: 'routine',
+        );
+      }
     }
   }
 
@@ -520,6 +556,14 @@ class ReminderScheduler {
 
   void _handleNotificationResponse(NotificationResponse response) {
     final payload = response.payload ?? '';
+    if (payload == 'routine') {
+      if (_notificationTapController.hasListener) {
+        _notificationTapController.add(-2);
+      } else {
+        _pendingNotificationReminderId = -2;
+      }
+      return;
+    }
     if (payload.startsWith('medicine-group:')) {
       if (_notificationTapController.hasListener) {
         _notificationTapController.add(0);

@@ -4,6 +4,9 @@ import 'package:intl/intl.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/network/api_client.dart';
+import '../routine/routine_service.dart';
+import '../routine/routine_entry.dart';
 
 class DataCalendarPage extends StatefulWidget {
   const DataCalendarPage({super.key});
@@ -21,6 +24,9 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
   List<ClockRecordData> _records = const [];
   List<HealthIndicatorEntry> _weights = const [];
   List<MealRecordData> _meals = const [];
+  List<Map> _routine = const [];
+  int _loadVersion = 0;
+  String? _loadError;
 
   @override
   void initState() {
@@ -38,21 +44,36 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
   void _onChanged() => _load(silent: true);
 
   Future<void> _load({bool silent = false}) async {
+    final version = ++_loadVersion;
     if (!silent && mounted) setState(() => _loading = true);
     final start = DateTime(_month.year, _month.month, 1);
     final end = DateTime(_month.year, _month.month + 1, 1);
-    final results = await Future.wait<Object?>([
-      _repo.loadClockRecords(limit: 500),
-      _repo.loadIndicators(type: 'weight', limit: 500),
-      _repo.loadMealsBetween(start, end),
-    ]);
-    if (!mounted) return;
-    setState(() {
-      _records = results[0] as List<ClockRecordData>;
-      _weights = results[1] as List<HealthIndicatorEntry>;
-      _meals = results[2] as List<MealRecordData>;
-      _loading = false;
-    });
+    try {
+      final results = await Future.wait<Object?>([
+        _repo.loadClockRecords(limit: 500),
+        _repo.loadIndicators(type: 'weight', limit: 500),
+        _repo.loadMealsBetween(start, end),
+        RoutineService(sl<ApiClient>()).load(
+            from: DateFormat('yyyy-MM-dd').format(start),
+            to: DateFormat('yyyy-MM-dd')
+                .format(end.subtract(const Duration(days: 1)))),
+      ]);
+      if (!mounted || version != _loadVersion) return;
+      setState(() {
+        _records = results[0] as List<ClockRecordData>;
+        _weights = results[1] as List<HealthIndicatorEntry>;
+        _meals = results[2] as List<MealRecordData>;
+        _routine = List<Map>.from((results[3] as Map)['events']);
+        _loading = false;
+        _loadError = null;
+      });
+    } catch (_) {
+      if (!mounted || version != _loadVersion) return;
+      setState(() {
+        _loading = false;
+        _loadError = '日历加载失败，请重试';
+      });
+    }
   }
 
   void _changeMonth(int offset) {
@@ -74,6 +95,9 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
       key: const PageStorageKey('data-calendar'),
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
       children: [
+        if (_loadError != null)
+          TextButton(onPressed: _load, child: Text(_loadError!)),
+        const RoutineEntry(),
         Row(children: [
           const Expanded(
             child: Text('数据日历',
@@ -93,17 +117,21 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
           ),
         ]),
         const SizedBox(height: 10),
-        SegmentedButton<String>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: 'weight', label: Text('体重')),
-            ButtonSegment(value: 'water', label: Text('饮水')),
-            ButtonSegment(value: 'exercise', label: Text('运动')),
-            ButtonSegment(value: 'meal', label: Text('饮食')),
-          ],
-          selected: {_type},
-          onSelectionChanged: (value) => setState(() => _type = value.first),
-        ),
+        SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'weight', label: Text('体重')),
+                ButtonSegment(value: 'water', label: Text('饮水')),
+                ButtonSegment(value: 'exercise', label: Text('运动')),
+                ButtonSegment(value: 'meal', label: Text('饮食')),
+                ButtonSegment(value: 'routine', label: Text('作息')),
+              ],
+              selected: {_type},
+              onSelectionChanged: (value) =>
+                  setState(() => _type = value.first),
+            )),
         const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
@@ -198,18 +226,35 @@ class _DataCalendarPageState extends State<DataCalendarPage> {
           ]),
         ),
         const SizedBox(height: 14),
-        _DayDetails(
-          date: _selectedDate,
-          type: _type,
-          records: _records,
-          weights: _weights,
-          meals: _meals,
-        ),
+        if (_type == 'routine') ...[
+          Text(DateFormat('M月d日').format(_selectedDate)),
+          for (final event in _routine.where((e) =>
+              routineDate(DateTime.parse(e['occurredAt'])) ==
+              DateFormat('yyyy-MM-dd').format(_selectedDate)))
+            ListTile(
+                title: Text(
+                    '${event['eventType'] == 'wake' ? '早安 · 起床' : '晚安 · 睡前'} ${DateFormat('HH:mm').format(beijingTime(DateTime.parse(event['occurredAt'])))}')),
+        ] else
+          _DayDetails(
+            date: _selectedDate,
+            type: _type,
+            records: _records,
+            weights: _weights,
+            meals: _meals,
+          ),
       ],
     );
   }
 
   String _valueForDay(DateTime day) {
+    if (_type == 'routine') {
+      final entries = _routine.where((e) =>
+          routineDate(DateTime.parse(e['occurredAt'])) ==
+          DateFormat('yyyy-MM-dd').format(day));
+      return entries
+          .map((e) => e['eventType'] == 'wake' ? '早' : '晚')
+          .join(' / ');
+    }
     if (_type == 'weight') {
       final entries =
           _weights.where((item) => DateUtils.isSameDay(item.measuredTime, day));

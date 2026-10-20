@@ -1,3 +1,4 @@
+import '../routine/routine_entry.dart';
 import 'dart:math';
 import 'dart:ui' as ui;
 
@@ -16,8 +17,9 @@ import '../../core/network/api_client.dart';
 import '../../core/network/auth_api.dart';
 
 ImageProvider<Object>? _authenticatedAvatarProvider(AccountInfo? info) {
-  if (info == null || info.avatarUrl.isEmpty) return null;
-  final objectKey = Uri.tryParse(info.avatarUrl)?.queryParameters['objectKey'];
+  final avatarUrl = info?.avatarUrl ?? UserSession.instance.avatarUrl;
+  if (avatarUrl.isEmpty) return null;
+  final objectKey = Uri.tryParse(avatarUrl)?.queryParameters['objectKey'];
   final token = UserSession.instance.accessToken;
   if (objectKey == null || objectKey.isEmpty || token == null) return null;
   final baseUrl =
@@ -176,9 +178,13 @@ class _StatsPageState extends State<StatsPage> {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         cacheExtent: 900,
         children: [
-          _TrendHeader(
-            profile: profile,
-            onEditProfile: () => context.push('/profile'),
+          const RoutineEntry(),
+          ListenableBuilder(
+            listenable: UserSession.instance,
+            builder: (context, _) => _TrendHeader(
+              profile: profile,
+              onEditProfile: () => context.push('/profile'),
+            ),
           ),
           const SizedBox(height: 14),
           _SummaryRow(profile: profile, data: data),
@@ -300,6 +306,7 @@ class _SeniorStatsView extends StatelessWidget {
         key: const PageStorageKey('senior-stats-scroll'),
         padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
         children: [
+          const RoutineEntry(),
           const Text('健康变化',
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
           const SizedBox(height: 4),
@@ -597,6 +604,7 @@ class _TrendHeader extends StatelessWidget {
     final ageText = age == null || age == 0 ? '-- 岁' : '$age 岁';
     final bmi = profile?.bmi ?? 0;
     final bmiText = bmi == 0 ? 'BMI --' : 'BMI ${bmi.toStringAsFixed(1)}';
+    final avatar = _authenticatedAvatarProvider(null);
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -619,6 +627,8 @@ class _TrendHeader extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 31,
+                foregroundImage: avatar,
+                onForegroundImageError: avatar == null ? null : (_, __) {},
                 backgroundColor: Colors.white24,
                 child: Text(
                   name.characters.first,

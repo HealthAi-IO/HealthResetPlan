@@ -25,6 +25,7 @@ import 'core/network/auth_api.dart';
 import 'core/privacy/privacy_consent_gate.dart';
 import 'core/update/app_update_service.dart';
 import 'core/widgets/medication_reminder_dialog.dart';
+import 'core/storage/report_image_storage.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -353,6 +354,9 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     siteMessages.start();
     _startForegroundMedicationTimer();
     _scheduleReminderRefresh();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_checkForUpdate());
+    });
   }
 
   @override
@@ -498,6 +502,10 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
   }
 
   Future<void> _openReminder(int reminderId) async {
+    if (reminderId == -2) {
+      AppRouter.router.go('/routine');
+      return;
+    }
     if (reminderId == 0) {
       AppRouter.router.go('/clock');
       await _checkMedicationReminderOnLaunch();
@@ -552,25 +560,23 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
     DateTime now,
   ) {
     final occurrences = <DateTime>[];
-    for (var dayOffset = 0; dayOffset <= 1; dayOffset++) {
-      final day = DateTime(now.year, now.month, now.day - dayOffset);
-      if (!reminder.occursOn(day)) continue;
-      for (final time in reminder.dailyTimes) {
-        final occurrence = DateTime(
-          day.year,
-          day.month,
-          day.day,
-          time.hour,
-          time.minute,
-        );
-        final snoozedUntil = reminder.snoozeAt(occurrence);
-        if (occurrence.isAfter(now) ||
-            reminder.actionAt(occurrence) != null ||
-            (snoozedUntil != null && snoozedUntil.isAfter(now))) {
-          continue;
-        }
-        occurrences.add(occurrence);
+    final day = DateTime(now.year, now.month, now.day);
+    if (!reminder.occursOn(day)) return occurrences;
+    for (final time in reminder.dailyTimes) {
+      final occurrence = DateTime(
+        day.year,
+        day.month,
+        day.day,
+        time.hour,
+        time.minute,
+      );
+      final snoozedUntil = reminder.snoozeAt(occurrence);
+      if (occurrence.isAfter(now) ||
+          reminder.actionAt(occurrence) != null ||
+          (snoozedUntil != null && snoozedUntil.isAfter(now))) {
+        continue;
       }
+      occurrences.add(occurrence);
     }
     occurrences.sort();
     return occurrences;
@@ -591,6 +597,11 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
           value.hour == scheduledAt.hour && value.minute == scheduledAt.minute,
       orElse: () => reminder.dailyTimes.first,
     );
+    final imageObjectKey = reminder.payload['imageObjectKey']?.toString() ?? '';
+    final imageProvider = reportImageProvider(imageObjectKey);
+    if (imageProvider != null) {
+      unawaited(precacheImage(imageProvider, context).catchError((_) {}));
+    }
     if (appSettingsController.medicationReminderVoice) {
       unawaited(
         ClockFeedbackService.speakMedicationReminder(
@@ -634,6 +645,9 @@ class _HealthResetPlanAppState extends State<HealthResetPlanApp>
           showAppSnackBar(const SnackBar(content: Text('已记录跳过本次')));
         },
       );
+    } catch (_) {
+      _shownMedicationReminderKeys.remove(key);
+      showAppSnackBar(const SnackBar(content: Text('用药记录未完成，请重试')));
     } finally {
       _medicationDialogActive = false;
     }

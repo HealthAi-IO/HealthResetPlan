@@ -22,6 +22,7 @@ import '../../core/network/api_client.dart';
 import '../../core/network/ai_consent_api.dart';
 import '../../core/network/auth_api.dart';
 import '../../core/network/file_api.dart';
+import '../../core/network/profile_api.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import '../../core/privacy/privacy_consent_gate.dart';
 import '../../core/storage/data_sync_status.dart';
@@ -146,6 +147,27 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       profile = await _repo.loadProfile();
     } catch (_) {}
+    if (UserSession.instance.isAccountLogin && profile?.isComplete != true) {
+      try {
+        final remote = await sl<ProfileApi>().loadOnboardingProfile();
+        if (remote.isNotEmpty) {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          await _repo.saveProfile(UserProfileData(
+            nickname: UserSession.instance.name,
+            gender: remote['gender']?.toString() ?? '',
+            birthYear: (remote['birthYear'] as num?)?.toInt() ?? 0,
+            heightCm: (remote['heightCm'] as num?)?.toDouble() ?? 0,
+            weightKg: (remote['weightKg'] as num?)?.toDouble() ?? 0,
+            medicalHistory: (remote['conditions'] as List?)?.join('、') ?? '',
+            medications: '',
+            createdAt: now,
+            updatedAt: now,
+            goal: remote['goal']?.toString() ?? 'maintain',
+          ));
+          profile = await _repo.loadProfile();
+        }
+      } catch (_) {}
+    }
     try {
       indicators = await _repo.loadIndicators(limit: 10);
     } catch (_) {}
@@ -820,6 +842,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _setMedicationDetailsInNotification(bool value) async {
     await appSettingsController.setShowMedicationDetailsInNotification(value);
+    try {
+      await sl<ReminderScheduler>().syncAll();
+    } catch (_) {
+      // 设置已保存；下次启动或提醒变更时会再次同步。
+    }
     if (mounted) setState(() {});
   }
 
@@ -2549,6 +2576,7 @@ class _AccountSecurityPanel extends StatelessWidget {
                   leading: CircleAvatar(
                     backgroundColor:
                         Theme.of(context).colorScheme.primaryContainer,
+                    foregroundImage: _authenticatedAvatarProvider(accountInfo),
                     child: Icon(
                       Icons.person_outline_rounded,
                       color: Theme.of(context).colorScheme.primary,

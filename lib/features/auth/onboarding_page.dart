@@ -1,182 +1,174 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/di/service_locator.dart';
+import '../../core/data/health_models.dart';
+import '../../core/data/health_repository.dart';
+import '../../core/auth/user_session.dart';
+import '../../core/network/profile_api.dart';
 
-import '../../app/app_theme.dart';
+class OnboardingPage extends StatefulWidget {
+  const OnboardingPage({super.key, this.returnTo = '/home'});
+  final String returnTo;
+  @override
+  State<OnboardingPage> createState() => _OnboardingPageState();
+}
 
-class OnboardingPage extends StatelessWidget {
-  const OnboardingPage({super.key});
+class _OnboardingPageState extends State<OnboardingPage> {
+  int step = 0;
+  String goal = 'maintain';
+  String gender = 'unknown';
+  bool saving = false;
+  final diet = <String>{}, allergies = <String>{}, conditions = <String>{};
+  final height = TextEditingController(),
+      weight = TextEditingController(),
+      birthYear = TextEditingController(text: '${DateTime.now().year - 30}');
+  @override
+  void dispose() {
+    height.dispose();
+    weight.dispose();
+    birthYear.dispose();
+    super.dispose();
+  }
+
+  Future<void> skip() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_skipped', true);
+    if (mounted) context.go(widget.returnTo);
+  }
+
+  Future<void> next() async {
+    if (step < 2) {
+      setState(() => step++);
+      return;
+    }
+    final y = int.tryParse(birthYear.text),
+        h = double.tryParse(height.text),
+        w = double.tryParse(weight.text);
+    if (y == null || h == null || w == null || gender == 'unknown') {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请完善身体数据')));
+      return;
+    }
+    setState(() => saving = true);
+    try {
+      await sl<ProfileApi>().saveOnboardingProfile(
+          goal: goal,
+          gender: gender,
+          birthYear: y,
+          heightCm: h,
+          weightKg: w,
+          dietPreferences: diet.toList(),
+          allergies: allergies.toList(),
+          conditions: conditions.toList(),
+          reminders: const {'weight': true, 'meal': true});
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await sl<HealthRepository>().saveProfile(UserProfileData(
+            nickname: UserSession.instance.name,
+            gender: gender,
+            birthYear: y,
+            heightCm: h,
+            weightKg: w,
+            medicalHistory: conditions.join('、'),
+            medications: '',
+            createdAt: now,
+            updatedAt: now,
+            goal: goal,
+            dietPreference: diet.isEmpty ? 'normal' : diet.first,
+          ));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('onboarding_completed', true);
+      if (mounted) context.go(widget.returnTo);
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('资料保存失败，请稍后重试')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final steps = const [
-      _Step(
-          icon: Icons.assignment_ind_outlined,
-          title: '完善健康档案',
-          desc: '填写出生年份、身高、体重、健康目标等基础信息。'),
-      _Step(
-          icon: Icons.monitor_heart_outlined,
-          title: '记录健康数据',
-          desc: '记录体重、血压、血糖、饮食和运动，逐步了解身体状态。'),
-      _Step(
-          icon: Icons.event_note_outlined,
-          title: '制定健康计划',
-          desc: '根据档案和近期记录生成基础计划，授权后可使用 AI 个性化计划。'),
-      _Step(
-          icon: Icons.insights_outlined,
-          title: '坚持打卡并查看趋势',
-          desc: '完成每日健康任务，通过连续记录看见身体变化。'),
-      _Step(
-          icon: Icons.psychology_outlined,
-          title: '使用 AI 健康工具',
-          desc: '健康顾问、报告识别、餐食识别和图像分析会在单独授权后启用。'),
-    ];
-    final colors = Theme.of(context).colorScheme;
-
+  Widget build(BuildContext c) {
+    final titles = ['你的健康目标', '身体数据', '饮食与健康情况'];
     return Scaffold(
-      appBar: AppBar(title: const Text('使用引导')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              color: AppTheme.softBlue,
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Image.asset(
-                  'assets/images/health_reset_logo_transparent.png',
-                  width: 72,
-                  height: 72,
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  '开始你的健康重启',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 10),
-                 Text(
-                  '从了解自己的身体开始，记录日常变化，逐步建立适合你的健康节奏。',
-                  style: TextStyle(color: AppTheme.muted, height: 1.6),
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _Pill(text: '账号同步', color: colors.primary),
-                    _Pill(text: '加密保护', color: colors.primary),
-                    _Pill(text: '长辈模式', color: colors.tertiary),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: AppTheme.cardBorder),
-            ),
-            child: Column(
-              children: [
-                for (var index = 0; index < steps.length; index++) ...[
-                  _StepRow(step: steps[index]),
-                  if (index != steps.length - 1)
-                    const Divider(indent: 72, endIndent: 16),
+        appBar: AppBar(
+            leading: BackButton(
+                onPressed: step == 0 ? skip : () => setState(() => step--)),
+            actions: [TextButton(onPressed: skip, child: const Text('跳过'))]),
+        body: SafeArea(
+            child: ListView(padding: const EdgeInsets.all(20), children: [
+          LinearProgressIndicator(value: (step + 1) / 3),
+          const SizedBox(height: 28),
+          Text(titles[step],
+              style: Theme.of(c)
+                  .textTheme
+                  .headlineMedium
+                  ?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 24),
+          content(),
+          const SizedBox(height: 28),
+          FilledButton(
+              onPressed: saving ? null : next,
+              child: Text(step == 2 ? '完成' : '下一步'))
+        ])));
+  }
+
+  Widget content() => switch (step) {
+        0 => choices({
+            'maintain': '保持健康',
+            'fat_loss': '减重塑形',
+            'glucose_control': '控糖管理',
+            'improve_sleep': '改善睡眠'
+          }, (v) => setState(() => goal = v), goal),
+        1 => Column(children: [
+            DropdownButtonFormField(
+                value: gender == 'unknown' ? null : gender,
+                items: const [
+                  DropdownMenuItem(value: 'female', child: Text('女性')),
+                  DropdownMenuItem(value: 'male', child: Text('男性'))
                 ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () => context.go('/home'),
-              icon: const Icon(Icons.arrow_forward),
-              label: const Text('开始使用'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Step {
-  const _Step({
-    required this.icon,
-    required this.title,
-    required this.desc,
-  });
-
-  final IconData icon;
-  final String title;
-  final String desc;
-}
-
-class _StepRow extends StatelessWidget {
-  const _StepRow({required this.step});
-
-  final _Step step;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: colors.primaryContainer,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(step.icon, color: colors.onPrimaryContainer),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(step.title,
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Text(step.desc,
-                    style:  TextStyle(color: AppTheme.muted, height: 1.5)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Pill extends StatelessWidget {
-  const _Pill({required this.text, required this.color});
-
-  final String text;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(fontWeight: FontWeight.w700, color: color),
-      ),
-    );
-  }
+                onChanged: (v) => setState(() => gender = v ?? 'unknown'),
+                decoration: const InputDecoration(labelText: '性别')),
+            TextField(
+                controller: birthYear,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '出生年份')),
+            TextField(
+                controller: height,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '身高（厘米）')),
+            TextField(
+                controller: weight,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '体重（千克）'))
+          ]),
+        _ => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('饮食偏好'),
+            multi(['均衡饮食', '多蔬菜', '多蛋白', '素食'], diet),
+            const SizedBox(height: 18),
+            const Text('过敏或忌口'),
+            multi(['乳制品', '海鲜', '坚果', '无'], allergies),
+            const SizedBox(height: 18),
+            const Text('特殊情况'),
+            multi(['血糖高', '血压高', '肠道敏感', '无'], conditions)
+          ])
+      };
+  Widget choices(
+          Map<String, String> v, ValueChanged<String> on, String selected) =>
+      Column(children: [
+        for (final e in v.entries)
+          RadioListTile(
+              value: e.key,
+              groupValue: selected,
+              onChanged: (x) => on(x!),
+              title: Text(e.value))
+      ]);
+  Widget multi(List<String> v, Set<String> s) => Wrap(spacing: 8, children: [
+        for (final x in v)
+          FilterChip(
+              label: Text(x),
+              selected: s.contains(x),
+              onSelected: (on) => setState(() => on ? s.add(x) : s.remove(x)))
+      ]);
 }
