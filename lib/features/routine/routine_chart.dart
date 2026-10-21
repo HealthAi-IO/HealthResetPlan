@@ -38,6 +38,12 @@ class RoutineChart extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(
           '有效时长 ${valid.length} 天 / $days 天${target == null ? '' : ' · 达到休息目标 $reached 天'}'),
+      if (valid.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: Text('还没有可展示的休息时长。记录晚安和次日起床，或在起床记录中确认实际睡眠。'),
+        ),
+      if (valid.isNotEmpty) ...[
       const Text('时长（小时） · 空白表示未记录'),
       const SizedBox(height: 12),
       SizedBox(
@@ -52,6 +58,7 @@ class RoutineChart extends StatelessWidget {
       ]),
       Text('● 自报睡眠   ▬ 估算休息${target == null ? '' : '   ┄ 目标 $target 小时'}',
           style: TextStyle(color: colors.primary)),
+      ],
       const SizedBox(height: 20),
       Text('作息时刻 · 夜间连续时间轴', style: Theme.of(context).textTheme.titleMedium),
       const Text('中午 12:00 → 午夜 00:00 → 次日中午 12:00'),

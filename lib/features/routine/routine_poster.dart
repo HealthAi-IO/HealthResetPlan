@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../core/auth/user_session.dart';
 import 'routine_service.dart';
+import 'routine_landscape.dart';
 import 'package:dio/dio.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/network/api_client.dart';
@@ -22,6 +23,7 @@ class _RoutinePosterState extends State<RoutinePoster> {
   bool nickname = false;
   bool saving = false;
   bool avatar = false;
+  bool loadingAvatar = false;
   Uint8List? avatarBytes;
   final account = UserSession.instance.userId;
 
@@ -32,14 +34,25 @@ class _RoutinePosterState extends State<RoutinePoster> {
     }
     final key = Uri.tryParse(UserSession.instance.avatarUrl)
         ?.queryParameters['objectKey'];
-    if (key == null) return;
+    if (key == null || key.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请先在个人资料中设置头像，再开启海报头像')));
+      return;
+    }
+    setState(() => loadingAvatar = true);
     try {
       final response = await sl<ApiClient>().dio.get<List<int>>('/files/avatar',
           queryParameters: {'objectKey': key},
           options: Options(responseType: ResponseType.bytes));
       if (!mounted || account != UserSession.instance.userId) return;
+      final bytes = Uint8List.fromList(response.data!);
+      var imageValid = true;
+      await precacheImage(MemoryImage(bytes), context,
+          onError: (error, stack) => imageValid = false);
+      if (!imageValid) throw const FormatException('Invalid avatar image');
+      if (!mounted || account != UserSession.instance.userId) return;
       setState(() {
-        avatarBytes = Uint8List.fromList(response.data!);
+        avatarBytes = bytes;
         avatar = true;
       });
     } catch (_) {
@@ -47,6 +60,8 @@ class _RoutinePosterState extends State<RoutinePoster> {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('头像暂时不可用，可继续保存海报')));
       }
+    } finally {
+      if (mounted) setState(() => loadingAvatar = false);
     }
   }
 
@@ -112,22 +127,23 @@ class _RoutinePosterState extends State<RoutinePoster> {
                           end: Alignment.bottomRight,
                           colors: colors)),
                   child: DefaultTextStyle(
-                      style: TextStyle(color: ink, fontSize: 16, height: 1.6),
+                      style: TextStyle(
+                          color: ink,
+                          fontFamily: Theme.of(context).textTheme.bodyLarge?.fontFamily,
+                          fontSize: 16,
+                          height: 1.6),
                       child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text('健康重启计划  /  作息重启'),
-                            const SizedBox(height: 44),
-                            Align(
-                                alignment: Alignment.centerRight,
-                                child: Icon(
-                                    morning
-                                        ? Icons.wb_sunny_rounded
-                                        : Icons.nights_stay_rounded,
-                                    size: 100,
-                                    color: morning
-                                        ? const Color(0xffd28d30)
-                                        : const Color(0xffe7d7ac))),
+                            const SizedBox(height: 24),
+                            ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                    width: double.infinity,
+                                    height: 164,
+                                    child: CustomPaint(
+                                        painter: RoutineLandscape(morning: morning)))),
                             const SizedBox(height: 32),
                             Text(morning ? '早安，\n新的一天。' : '晚安，\n安心休息。',
                                 style: const TextStyle(
@@ -168,8 +184,9 @@ class _RoutinePosterState extends State<RoutinePoster> {
           SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('海报显示头像'),
+              subtitle: loadingAvatar ? const Text('正在加载头像…') : null,
               value: avatar,
-              onChanged: saving ? null : toggleAvatar),
+              onChanged: saving || loadingAvatar ? null : toggleAvatar),
           SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('海报显示昵称'),
@@ -178,6 +195,7 @@ class _RoutinePosterState extends State<RoutinePoster> {
                   saving ? null : (value) => setState(() => nickname = value)),
           FilledButton.icon(
               onPressed: saving ||
+                      loadingAvatar ||
                       kIsWeb ||
                       defaultTargetPlatform != TargetPlatform.android
                   ? null

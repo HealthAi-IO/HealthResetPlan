@@ -1,4 +1,4 @@
-import '../routine/routine_entry.dart';
+import '../routine/routine_check_in_section.dart';
 import 'dart:async';
 
 import 'package:android_intent_plus/android_intent.dart';
@@ -2110,7 +2110,6 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         cacheExtent: 900,
         children: [
-          const RoutineEntry(),
           // 今日进度卡片
           _TodayProgressCard(tasks: todayProgressTasks),
           const SizedBox(height: 14),
@@ -2165,6 +2164,9 @@ class _ClockPageState extends State<ClockPage> with WidgetsBindingObserver {
               },
             ),
           ),
+          const SizedBox(height: 14),
+
+          const RoutineCheckInSection(),
           const SizedBox(height: 14),
 
           // 新增提醒

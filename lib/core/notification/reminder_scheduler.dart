@@ -11,6 +11,7 @@ import '../../app/app_settings_controller.dart';
 import '../data/health_models.dart';
 import '../data/health_repository.dart';
 import 'web_push_service.dart';
+import '../../features/routine/routine_reminders.dart';
 
 class MedicationNotificationAction {
   const MedicationNotificationAction(
@@ -46,6 +47,7 @@ class ReminderScheduler {
     _inAppReminderKeys.clear();
     if (_supported && _initialized) await _plugin.cancelAll();
   }
+
   Timer? _inAppReminderTimer;
   final Set<String> _inAppReminderKeys = <String>{};
   final StreamController<ReminderData> _inAppReminderController =
@@ -283,22 +285,25 @@ class ReminderScheduler {
       final settings = await loader();
       if (syncVersion != _syncVersion) return;
       for (final type in ['wake', 'bed']) {
-        if (settings['${type}Reminder'] != true || settings['${type}Target'] == null) continue;
-        final time = (settings['${type}Target'] as String).split(':');
         final zone = tz.getLocation('Asia/Shanghai');
         final now = tz.TZDateTime.now(zone);
-        var next = tz.TZDateTime(zone, now.year, now.month, now.day, int.parse(time[0]), int.parse(time[1]));
-        if (!next.isAfter(now)) next = tz.TZDateTime(zone, now.year, now.month, now.day + 1, int.parse(time[0]), int.parse(time[1]));
-        await _plugin.zonedSchedule(
-          id: type == 'wake' ? 1900000000 : 1900000001,
-          title: type == 'wake' ? '早安，开始从容的一天' : '晚安，给自己一段安静的休息',
-          body: '打开健康重启计划，记录你的作息', scheduledDate: next,
-          notificationDetails: const NotificationDetails(android: AndroidNotificationDetails(
-            _dailyChannelId, _dailyChannelName, channelDescription: _dailyChannelDesc), iOS: DarwinNotificationDetails()),
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-          matchDateTimeComponents: DateTimeComponents.time,
-          payload: 'routine',
-        );
+        for (final next in routineReminderTimes(settings, type, now)) {
+          if (syncVersion != _syncVersion) return;
+          await _plugin.zonedSchedule(
+            id: 1900000010 + (type == 'wake' ? 0 : 7) + next.weekday,
+            title: type == 'wake' ? '早安，开始从容的一天' : '晚安，给自己一段安静的休息',
+            body: '打开健康重启计划，记录你的作息',
+            scheduledDate: next,
+            notificationDetails: const NotificationDetails(
+                android: AndroidNotificationDetails(
+                    _dailyChannelId, _dailyChannelName,
+                    channelDescription: _dailyChannelDesc),
+                iOS: DarwinNotificationDetails()),
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+            payload: 'routine',
+          );
+        }
       }
     }
   }

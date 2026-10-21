@@ -116,7 +116,7 @@ class AppRouter {
       return null;
     },
     routes: [
-      GoRoute(path: '/routine', pageBuilder: (context, state) => _page(state, const RoutinePage())),
+      GoRoute(path: '/routine', pageBuilder: (context, state) => _page(state, RoutinePage(initialAction: state.uri.queryParameters['action']))),
       StatefulShellRoute.indexedStack(
         pageBuilder: (context, state, navigationShell) =>
             NoTransitionPage<void>(

@@ -164,7 +164,6 @@ class _SeniorClockView extends StatelessWidget {
         key: const PageStorageKey('senior-clock-scroll'),
         padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
         children: [
-          const RoutineEntry(),
           const Text(
             '提醒',
             style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
@@ -175,6 +174,8 @@ class _SeniorClockView extends StatelessWidget {
             style: TextStyle(fontSize: 17, color: AppTheme.muted),
           ),
           _SeniorTodayTotals(records: records, waterGoalMl: waterGoalMl),
+          const SizedBox(height: 18),
+          const RoutineCheckInSection(),
           const SizedBox(height: 18),
           if (current == null)
             Container(

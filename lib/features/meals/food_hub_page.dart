@@ -10,6 +10,7 @@ import '../../app/app_messenger.dart';
 import '../../core/data/health_models.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
+import '../../core/storage/data_sync_status.dart';
 import 'meal_image.dart';
 import 'meal_input_args.dart';
 import 'meal_slots.dart';
@@ -62,6 +63,9 @@ class _FoodHubPageState extends State<FoodHubPage> {
   Future<void> _load({bool silent = false, bool ensureRecipes = false}) async {
     if (!silent && mounted) setState(() => _loading = true);
     try {
+      if (!silent && dataSyncStatusController.phase == DataSyncPhase.failed) {
+        await dataSyncStatusController.retry();
+      }
       final results = await (() async {
         if (ensureRecipes) await _repo.ensureStarterMealRecipes();
         final now = DateTime.now();

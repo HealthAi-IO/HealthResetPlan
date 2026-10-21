@@ -263,10 +263,11 @@ class _MemoryAppDatabase extends AppDatabase {
   @override
   Future<void> bindOnline(OnlineDataApi api) async {
     _onlineApi = api;
-    dataSyncStatusController.attachRetry(_persist);
+    dataSyncStatusController.attachRetry(() => bindOnline(api));
     dataSyncStatusController.markSyncing();
     try {
       await _loadOnline();
+      dataSyncStatusController.attachRetry(_persist);
       dataSyncStatusController.markSynced();
     } catch (error) {
       dataSyncStatusController.markFailed(error);

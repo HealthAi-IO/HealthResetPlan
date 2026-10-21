@@ -11,11 +11,14 @@ import 'routine_service.dart';
 import 'routine_poster.dart';
 import 'routine_chart.dart';
 import 'routine_summary.dart';
+import 'routine_goal_dialog.dart';
+import 'routine_reminders.dart';
 import '../../core/data/health_repository.dart';
 import '../../core/network/api_response.dart';
 
 class RoutinePage extends StatefulWidget {
-  const RoutinePage({super.key});
+  const RoutinePage({super.key, this.initialAction});
+  final String? initialAction;
   @override
   State<RoutinePage> createState() => _RoutinePageState();
 }
@@ -30,6 +33,7 @@ class _RoutinePageState extends State<RoutinePage> {
   String? error;
   int days = 7;
   int loadVersion = 0;
+  bool initialActionHandled = false;
   final account = UserSession.instance.userId;
   bool get active => mounted && account == UserSession.instance.userId;
 
@@ -60,6 +64,40 @@ class _RoutinePageState extends State<RoutinePage> {
         hasMore = records['hasMore'] == true;
         error = null;
       });
+      if (!initialActionHandled) {
+        initialActionHandled = true;
+        final type = widget.initialAction;
+        if (type == 'wake' || type == 'bed') {
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            if (!active) return;
+            final today = routineDate(DateTime.now());
+            final recorded = List<Map>.from(result['events']).where((event) =>
+                event['eventType'] == type &&
+                routineDate(DateTime.parse(event['occurredAt'])) == today);
+            if (recorded.isNotEmpty) {
+              await Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => RoutinePoster(event: recorded.first)));
+              return;
+            }
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: Text(type == 'wake' ? '记录现在起床？' : '记录现在准备睡觉？'),
+                content: const Text('按当前北京时间记录。睡前到起床的间隔仅为估算休息时长。'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('确认记录')),
+                ],
+              ),
+            );
+            if (confirmed == true && active) await checkIn(type!);
+          });
+        }
+      }
     } catch (e) {
       if (active && version == loadVersion) setState(() => error = message(e));
     }
@@ -226,119 +264,54 @@ class _RoutinePageState extends State<RoutinePage> {
   }
 
   Future<void> settings() async {
-    final current = Map<String, dynamic>.from(data!['settings']);
-    final wake = TextEditingController(text: current['wakeTarget'] ?? '');
-    final bed = TextEditingController(text: current['bedTarget'] ?? '');
-    final rest = TextEditingController(
-        text: current['restTargetHours']?.toString() ?? '');
-    String? validationError;
-    final accepted = await showDialog<bool>(
+    final selected = await showDialog<Map<String, dynamic>>(
         context: context,
-        builder: (context) => StatefulBuilder(
-            builder: (context, update) => AlertDialog(
-                    title: const Text('我的作息目标'),
-                    content: SingleChildScrollView(
-                        child:
-                            Column(mainAxisSize: MainAxisSize.min, children: [
-                      if (validationError != null)
-                        Text(validationError!,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)),
-                      TextField(
-                          controller: wake,
-                          decoration: const InputDecoration(
-                              labelText: '起床时间，例如 07:00')),
-                      TextField(
-                          controller: bed,
-                          decoration: const InputDecoration(
-                              labelText: '睡前时间，例如 23:00')),
-                      TextField(
-                          controller: rest,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                              labelText: '目标休息时长（1—16 小时）')),
-                    ])),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('取消')),
-                      FilledButton(
-                          onPressed: () {
-                            final time = RegExp(r'^([01]\d|2[0-3]):[0-5]\d$');
-                            final value = double.tryParse(rest.text);
-                            if ((wake.text.isNotEmpty &&
-                                    !time.hasMatch(wake.text)) ||
-                                (bed.text.isNotEmpty &&
-                                    !time.hasMatch(bed.text)) ||
-                                (rest.text.isNotEmpty &&
-                                    (value == null ||
-                                        !value.isFinite ||
-                                        value < 1 ||
-                                        value > 16))) {
-                              update(() => validationError =
-                                  '时间请用 07:00 格式，休息时长为 1—16 小时；也可留空。');
-                              return;
-                            }
-                            Navigator.pop(context, true);
-                          },
-                          child: const Text('保存'))
-                    ])));
-    if (accepted == true && active) {
+        builder: (_) => RoutineGoalDialog(
+            settings: Map<String, dynamic>.from(data!['settings'])));
+    if (selected != null && active) {
       await perform(() async {
-        await service.settings({
-          ...current,
-          'wakeReminder':
-              current['wakeReminder'] == true && wake.text.isNotEmpty,
-          'bedReminder': current['bedReminder'] == true && bed.text.isNotEmpty,
-          'wakeTarget': wake.text.isEmpty ? null : wake.text,
-          'bedTarget': bed.text.isEmpty ? null : bed.text,
-          'restTargetHours': double.tryParse(rest.text)
-        });
-        await reload();
-        try {
-          await sl<ReminderScheduler>().syncAll();
-        } catch (_) {
-          notify('目标已保存，本机提醒同步失败，请重试');
-        }
-      });
-    }
-    wake.dispose();
-    bed.dispose();
-    rest.dispose();
-  }
-
-  Future<void> toggleReminders() => perform(() async {
-        if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
-          notify('作息提醒首版支持 Android App');
-          return;
-        }
-        final current = Map<String, dynamic>.from(data!['settings']);
-        final enabled =
-            current['wakeReminder'] == true || current['bedReminder'] == true;
-        if (!enabled &&
-            current['wakeTarget'] == null &&
-            current['bedTarget'] == null) {
-          notify('请先在右上角设置作息目标时间');
-          return;
-        }
         final scheduler = sl<ReminderScheduler>();
-        if (!enabled) {
+        if (selected['wakeReminder'] == true ||
+            selected['bedReminder'] == true) {
+          if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+            notify('作息通知目前支持 Android App，请选择不提醒');
+            return;
+          }
           final consent = await confirmReminderUse(context, scheduler);
-          if (consent != ReminderConsentResult.allowed || !active) return;
+          if (!active) return;
+          if (consent != ReminderConsentResult.allowed) {
+            notify('未保存修改。开启通知权限后可设置 APP 提醒，也可选择不提醒或手机闹钟');
+            return;
+          }
         }
-        await service.settings({
-          ...current,
-          'wakeReminder': !enabled && current['wakeTarget'] != null,
-          'bedReminder': !enabled && current['bedTarget'] != null
-        });
+        await service.settings(selected);
         await reload();
         try {
           await scheduler.syncAll();
-          notify(enabled ? '已关闭作息提醒' : '已设置作息提醒，系统可能延迟送达');
         } catch (_) {
           notify('目标已保存，本机提醒同步失败，请重试');
         }
+        if (!active) return;
+        if (selected['wakeReminderMode'] == 'alarm') {
+          if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+            notify('目标已保存，请在 Android 手机时钟设置闹钟');
+            return;
+          }
+          try {
+            await routineSystemAlarm(selected).launch();
+            notify('请在手机时钟确认闹钟；后续修改或关闭也请在手机时钟操作');
+          } catch (_) {
+            notify('目标已保存，无法打开手机时钟，请手动设置闹钟或重新选择 APP 通知');
+          }
+        } else {
+          notify(selected['wakeReminder'] == true ||
+                  selected['bedReminder'] == true
+              ? '作息目标已保存，APP 通知可能受系统限制延迟送达'
+              : '作息目标已保存；已有系统闹钟请在手机时钟中管理');
+        }
       });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -388,12 +361,9 @@ class _RoutinePageState extends State<RoutinePage> {
                   icon: const Icon(Icons.edit_calendar_outlined),
                   label: const Text('补录最近 7 天')),
               TextButton.icon(
-                  onPressed: busy || data == null ? null : toggleReminders,
+                  onPressed: busy || data == null ? null : settings,
                   icon: const Icon(Icons.notifications_outlined),
-                  label: Text(data?['settings']?['wakeReminder'] == true ||
-                          data?['settings']?['bedReminder'] == true
-                      ? '关闭作息提醒'
-                      : '开启作息提醒')),
+                  label: const Text('设置作息提醒')),
               const SizedBox(height: 20),
               SegmentedButton<int>(
                   segments: const [
@@ -428,8 +398,10 @@ class _RoutinePageState extends State<RoutinePage> {
                     child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                              '${row['date']} · ${row['selfReportedHours'] != null ? '自报睡眠' : '估算休息'} ${((row['selfReportedHours'] ?? row['estimatedHours']) as num?)?.toStringAsFixed(1) ?? '待确认'} 小时'),
+                          Text(row['selfReportedHours'] != null ||
+                                  row['estimatedHours'] != null
+                              ? '${row['date']} · ${row['selfReportedHours'] != null ? '自报睡眠' : '估算休息'} ${((row['selfReportedHours'] ?? row['estimatedHours']) as num).toStringAsFixed(1)} 小时'
+                              : '${row['date']} · ${row['status'] == 'missing_bed' ? '缺少晚安记录，暂无法估算休息时长' : '休息间隔待确认，可在记录中确认实际睡眠'}'),
                           if (row['sleepSource'] != null)
                             Text(row['sleepSource']),
                           if (row['selfReportedHours'] != null ||

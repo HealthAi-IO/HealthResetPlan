@@ -1,4 +1,3 @@
-import '../routine/routine_entry.dart';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -16,6 +15,7 @@ import '../../core/data/health_repository.dart';
 import '../../core/di/service_locator.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import '../../core/network/profile_api.dart';
+import '../../core/storage/data_sync_status.dart';
 import '../../core/widgets/medication_image.dart';
 import '../../core/widgets/motion.dart';
 import '../meals/meal_input_args.dart';
@@ -102,6 +102,9 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     if (!silent) setState(() => _loading = true);
     try {
+      if (!silent && dataSyncStatusController.phase == DataSyncPhase.failed) {
+        await dataSyncStatusController.retry();
+      }
       if (UserSession.instance.isAccountLogin) {
         final localProfile = await _repo.loadProfile();
         if (localProfile?.isComplete != true) {
@@ -593,7 +596,6 @@ class _HomePageState extends State<HomePage> {
           key: const PageStorageKey('senior-home-scroll'),
           padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
           children: [
-          const RoutineEntry(),
             Row(
               children: [
                 Expanded(
@@ -696,7 +698,6 @@ class _HomePageState extends State<HomePage> {
         padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
         cacheExtent: 900,
         children: [
-          const RoutineEntry(),
           _HomeTopBar(
             profile: profile,
             todayLabel: todayLabel,
