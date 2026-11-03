@@ -3,6 +3,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:health_reset_plan/core/widgets/numeric_picker_field.dart';
 
 void main() {
+  testWidgets('血糖打开选择器再确认不改变已有两位小数', (tester) async {
+    final controller = TextEditingController(text: '5.55');
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: NumericPickerField(
+      controller: controller, label: '血糖', min: 1, max: 40,
+      step: 0.01, decimals: 2,
+    ))));
+    await tester.tap(find.text('5.55'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(controller.text, '5.55');
+  });
   testWidgets('数值选择器不提供可编辑输入框并可确认默认值', (tester) async {
     final controller = TextEditingController();
     addTearDown(controller.dispose);

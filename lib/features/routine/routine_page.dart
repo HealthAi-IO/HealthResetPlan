@@ -9,6 +9,7 @@ import '../../core/notification/reminder_consent.dart';
 import '../../core/notification/reminder_scheduler.dart';
 import 'routine_service.dart';
 import 'routine_poster.dart';
+import 'routine_rankings.dart';
 import 'routine_chart.dart';
 import 'routine_summary.dart';
 import 'routine_goal_dialog.dart';
@@ -334,6 +335,12 @@ class _RoutinePageState extends State<RoutinePage> {
                   style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 12),
               const Text('按北京时间记录 · 睡前打卡表示准备休息，不等于已经入睡'),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                  onPressed: busy ? null : () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(builder: (_) => const RoutineRankings())),
+                  icon: const Icon(Icons.leaderboard_outlined),
+                  label: const Text('查看早起 / 早睡排行榜')),
               const SizedBox(height: 20),
               if (error != null) ...[
                 Text(error!,

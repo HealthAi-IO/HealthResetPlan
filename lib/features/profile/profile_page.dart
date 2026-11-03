@@ -1492,7 +1492,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
                   final quickActions = _Panel(
                     title: '快速记录',
-                    subtitle: '本地录入最近指标',
+                    subtitle: '录入本次测量的健康指标',
                     child: Wrap(
                       spacing: 12,
                       runSpacing: 12,
@@ -3344,9 +3344,9 @@ class _IndicatorDialogState extends State<_IndicatorDialog> {
                   unit: 'mmol/L',
                   min: HealthRanges.minGlucoseMmol,
                   max: HealthRanges.maxGlucoseMmol,
-                  step: 0.1,
+                  step: 0.01,
                   initialValue: 5.6,
-                  decimals: 1,
+                  decimals: 2,
                   validator: (value) => _validateRange(
                     value,
                     HealthRanges.minGlucoseMmol,

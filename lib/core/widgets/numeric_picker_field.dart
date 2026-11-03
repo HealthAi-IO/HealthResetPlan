@@ -22,7 +22,7 @@ Future<NumericPickerResult?> showNumericPicker({
   final resolvedInitial = (initialValue ?? min).clamp(min, max).toDouble();
   final initialIndex =
       ((resolvedInitial - min) / step).round().clamp(0, itemCount - 1).toInt();
-  var selectedIndex = initialIndex;
+  var selectedValue = resolvedInitial;
   final controller = FixedExtentScrollController(initialItem: initialIndex);
 
   return showModalBottomSheet<NumericPickerResult>(
@@ -68,7 +68,7 @@ Future<NumericPickerResult?> showNumericPicker({
                       TextButton(
                         onPressed: () => Navigator.pop(
                           sheetContext,
-                          NumericPickerResult(min + selectedIndex * step),
+                          NumericPickerResult(selectedValue),
                         ),
                         child: const Text('确定'),
                       ),
@@ -107,7 +107,8 @@ Future<NumericPickerResult?> showNumericPicker({
                         itemExtent: 56,
                         diameterRatio: 1.35,
                         physics: const FixedExtentScrollPhysics(),
-                        onSelectedItemChanged: (index) => selectedIndex = index,
+                        onSelectedItemChanged: (index) =>
+                            selectedValue = min + index * step,
                         childDelegate: ListWheelChildBuilderDelegate(
                           childCount: itemCount,
                           builder: (context, index) {

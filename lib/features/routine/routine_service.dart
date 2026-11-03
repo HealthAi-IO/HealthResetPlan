@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+import 'package:dio/dio.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/network/api_client.dart';
 
@@ -10,6 +12,21 @@ class RoutineService {
   RoutineService(this.client);
   final ApiClient client;
   final Map<String, String> _requests = {};
+
+  Future<Uint8List> themeImage(
+      String period, int id, CancelToken cancel) async {
+    final response = await client.dio.get<List<int>>(
+        '/routine/themes/v1/$period/$id',
+        cancelToken: cancel,
+        options: Options(responseType: ResponseType.bytes));
+    return Uint8List.fromList(response.data!);
+  }
+
+  Future<Map<String, dynamic>> rankings(String type, int days) async {
+    final response = await client.dio.get('/routine/rankings',
+        queryParameters: {'type': type, 'days': days});
+    return Map<String, dynamic>.from(response.data as Map);
+  }
 
   Future<Map<String, dynamic>> load(
       {int days = 7, String? from, String? to}) async {

@@ -64,25 +64,26 @@ class _OnboardingPageState extends State<OnboardingPage> {
           reminders: const {'weight': true, 'meal': true});
       final now = DateTime.now().millisecondsSinceEpoch;
       await sl<HealthRepository>().saveProfile(UserProfileData(
-            nickname: UserSession.instance.name,
-            gender: gender,
-            birthYear: y,
-            heightCm: h,
-            weightKg: w,
-            medicalHistory: conditions.join('、'),
-            medications: '',
-            createdAt: now,
-            updatedAt: now,
-            goal: goal,
-            dietPreference: diet.isEmpty ? 'normal' : diet.first,
-          ));
+        nickname: UserSession.instance.name,
+        gender: gender,
+        birthYear: y,
+        heightCm: h,
+        weightKg: w,
+        medicalHistory: conditions.join('、'),
+        medications: '',
+        createdAt: now,
+        updatedAt: now,
+        goal: goal,
+        dietPreference: diet.isEmpty ? 'normal' : diet.first,
+      ));
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('onboarding_completed', true);
       if (mounted) context.go(widget.returnTo);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('资料保存失败，请稍后重试')));
+      }
     } finally {
       if (mounted) setState(() => saving = false);
     }
@@ -123,7 +124,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
           }, (v) => setState(() => goal = v), goal),
         1 => Column(children: [
             DropdownButtonFormField(
-                value: gender == 'unknown' ? null : gender,
+                initialValue: gender == 'unknown' ? null : gender,
                 items: const [
                   DropdownMenuItem(value: 'female', child: Text('女性')),
                   DropdownMenuItem(value: 'male', child: Text('男性'))
@@ -156,14 +157,15 @@ class _OnboardingPageState extends State<OnboardingPage> {
       };
   Widget choices(
           Map<String, String> v, ValueChanged<String> on, String selected) =>
-      Column(children: [
-        for (final e in v.entries)
-          RadioListTile(
-              value: e.key,
-              groupValue: selected,
-              onChanged: (x) => on(x!),
-              title: Text(e.value))
-      ]);
+      RadioGroup<String>(
+          groupValue: selected,
+          onChanged: (value) {
+            if (value != null) on(value);
+          },
+          child: Column(children: [
+            for (final e in v.entries)
+              RadioListTile(value: e.key, title: Text(e.value))
+          ]));
   Widget multi(List<String> v, Set<String> s) => Wrap(spacing: 8, children: [
         for (final x in v)
           FilterChip(

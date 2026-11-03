@@ -218,6 +218,7 @@ class HealthRepository extends ChangeNotifier {
     required Map<String, dynamic> payload,
     String source = 'manual',
     DateTime? measuredAt,
+    String? clockNote,
   }) async {
     final db = await database.open();
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -230,43 +231,60 @@ class HealthRepository extends ChangeNotifier {
       createdAt: now,
       updatedAt: now,
     );
-    final id = await db.insert('health_indicator', entry.toRow());
+    final id = await db.transaction((db) async {
+      final id = await db.insert('health_indicator', entry.toRow());
 
-    await _applyCriticalIndicatorSafety(type, db);
+      await _applyCriticalIndicatorSafety(type, db);
 
-    if (type == 'weight' && payload['weightKg'] is num) {
-      final profile = await loadProfile();
-      if (profile != null) {
-        final newWeight = (payload['weightKg'] as num).toDouble();
-        final updatedProfile = profile.copyWith(
-          weightKg: newWeight,
-          updatedAt: now,
-          isDirty: 1,
-        );
-        await db.update(
-          'user_profile',
-          updatedProfile.toRow(),
-          where: 'user_id = ?',
-          whereArgs: [kLocalUserId],
-        );
-        // 自动写入 BMI 指标记录（高度已知时）
-        final bmiVal = updatedProfile.bmi;
-        if (bmiVal > 0) {
-          await db.insert(
-            'health_indicator',
-            HealthIndicatorEntry(
-              clientId: _uuid.v4(),
-              type: 'bmi',
-              payload: {'bmiValue': double.parse(bmiVal.toStringAsFixed(2))},
-              source: 'calculated',
-              measuredAt: (measuredAt ?? DateTime.now()).millisecondsSinceEpoch,
-              createdAt: now,
-              updatedAt: now,
-            ).toRow(),
+      if (type == 'weight' && payload['weightKg'] is num) {
+        final profile = await loadProfile();
+        if (profile != null) {
+          final newWeight = (payload['weightKg'] as num).toDouble();
+          final updatedProfile = profile.copyWith(
+            weightKg: newWeight,
+            updatedAt: now,
+            isDirty: 1,
           );
+          await db.update(
+            'user_profile',
+            updatedProfile.toRow(),
+            where: 'user_id = ?',
+            whereArgs: [kLocalUserId],
+          );
+          // 自动写入 BMI 指标记录（高度已知时）
+          final bmiVal = updatedProfile.bmi;
+          if (bmiVal > 0) {
+            await db.insert(
+              'health_indicator',
+              HealthIndicatorEntry(
+                clientId: _uuid.v4(),
+                type: 'bmi',
+                payload: {'bmiValue': double.parse(bmiVal.toStringAsFixed(2))},
+                source: 'calculated',
+                measuredAt:
+                    (measuredAt ?? DateTime.now()).millisecondsSinceEpoch,
+                createdAt: now,
+                updatedAt: now,
+              ).toRow(),
+            );
+          }
         }
       }
-    }
+      if (clockNote != null && type == 'weight') {
+        await db.insert(
+            'clock_record',
+            ClockRecordData(
+              type: 'weight',
+              status: 'done',
+              clockAt: entry.measuredAt,
+              note: clockNote,
+              photoPath: '',
+              createdAt: now,
+              updatedAt: now,
+            ).toRow());
+      }
+      return id;
+    });
     notifyListeners();
     return id;
   }
@@ -1886,14 +1904,11 @@ class HealthRepository extends ChangeNotifier {
       );
       for (final row in rows) {
         final reminder = ReminderData.fromRow(row);
-        final latestTime = reminder.dailyTimes.last;
         final expiresAt = DateTime(
           reminder.remindTime.year,
           reminder.remindTime.month,
-          reminder.remindTime.day,
-          latestTime.hour,
-          latestTime.minute,
-        ).add(Duration(minutes: reminder.type == 'medicine' ? 30 : 0));
+          reminder.remindTime.day + 1,
+        );
         if (reminder.isWeekly || expiresAt.isAfter(now)) continue;
         await _deleteSyncedRow(
           txn,
@@ -2465,12 +2480,18 @@ class HealthRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateIndicator(int id, Map<String, dynamic> payload) async {
+  Future<void> updateIndicator(int id, Map<String, dynamic> payload,
+      {DateTime? measuredAt}) async {
     final db = await database.open();
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.update(
       'health_indicator',
-      {'payload_json': jsonEncode(payload), 'updated_at': now, 'is_dirty': 1},
+      {
+        'payload_json': jsonEncode(payload),
+        if (measuredAt != null) 'measured_at': measuredAt.millisecondsSinceEpoch,
+        'updated_at': now,
+        'is_dirty': 1,
+      },
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -3309,7 +3330,7 @@ class _RiskResult {
       parts.add('血压 $systolic/$diastolic mmHg');
     }
     if (glucoseMmol > 0) {
-      parts.add('血糖 ${glucoseMmol.toStringAsFixed(1)} mmol/L');
+      parts.add('血糖 $glucoseMmol mmol/L');
     }
     if (tc > 0) {
       parts.add('TC ${tc.toStringAsFixed(1)} mmol/L');

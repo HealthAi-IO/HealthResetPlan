@@ -1,10 +1,71 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:health_reset_plan/app/app_settings_controller.dart';
 import 'package:health_reset_plan/features/shell/app_shell.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  for (final entry in ['提醒设置', '趋势统计']) {
+    testWidgets('侧栏$entry进入记录分支后可返回首页', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({'senior_mode_v1': false});
+      await appSettingsController.load();
+      final router = GoRouter(initialLocation: '/home', routes: [
+        StatefulShellRoute.indexedStack(
+          builder: (context, state, shell) => AppShell(
+            location: state.uri.path,
+            navigationShell: shell,
+            child: shell,
+          ),
+          branches: [
+            for (final path in ['/home', '/plan', '/meals', '/records'])
+              StatefulShellBranch(routes: [
+                GoRoute(
+                    path: path,
+                    builder: (_, __) => Center(child: Text('page:$path')))
+              ]),
+          ],
+        ),
+        GoRoute(
+            path: '/clock',
+            redirect: (_, state) => Uri(
+                    path: '/records',
+                    queryParameters: state.uri.queryParameters)
+                .toString()),
+      ]);
+      addTearDown(router.dispose);
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpAndSettle();
+      tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text(entry), 250,
+          scrollable: find
+              .descendant(
+                  of: find.byType(Drawer), matching: find.byType(Scrollable))
+              .first);
+      await tester.tap(find.text(entry));
+      await tester.pumpAndSettle();
+      expect(find.text('page:/records'), findsOneWidget);
+      expect(
+          tester
+              .widget<NavigationBar>(find.byType(NavigationBar))
+              .selectedIndex,
+          3);
+      await tester.tap(find.text('首页'));
+      await tester.pumpAndSettle();
+      expect(find.text('page:/home'), findsOneWidget);
+      expect(
+          tester
+              .widget<NavigationBar>(find.byType(NavigationBar))
+              .selectedIndex,
+          0);
+    });
+  }
+
   testWidgets('普通模式与长辈模式使用独立导航', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;

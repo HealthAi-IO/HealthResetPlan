@@ -26,6 +26,16 @@ void main() {
     })));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    final qr = find.byWidgetPredicate((widget) =>
+        widget is Image &&
+        widget.image is AssetImage &&
+        (widget.image as AssetImage).assetName.endsWith('app_download_qr.png'));
+    expect(qr, findsOneWidget);
+    final poster =
+        find.ancestor(of: qr, matching: find.byType(RepaintBoundary)).first;
+    final posterSize = tester.getSize(poster);
+    expect(posterSize.width / posterSize.height, closeTo(3 / 4, 0.001));
+    expect(find.text('对照昨日，你比 12 人更早起床'), findsOneWidget);
     await tester.pumpWidget(app(Scaffold(
         body: SingleChildScrollView(
             child: RoutineChart(

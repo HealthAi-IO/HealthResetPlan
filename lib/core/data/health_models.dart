@@ -268,7 +268,7 @@ class HealthIndicatorEntry {
     return switch (type) {
       'bp' => '${_fmt(payload['systolic'])}/${_fmt(payload['diastolic'])} mmHg',
       'weight' => '${_fmt(payload['weightKg'], digits: 1)} kg',
-      'glucose' => '${_fmt(payload['glucoseMmol'], digits: 1)} mmol/L',
+      'glucose' => '${payload['glucoseMmol'] ?? '--'} mmol/L',
       'lipid' =>
         'TC ${_fmt(payload['tc'], digits: 1)} / LDL ${_fmt(payload['ldl'], digits: 1)}',
       'heart_rate' => '${_fmt(payload['bpm'])} bpm',

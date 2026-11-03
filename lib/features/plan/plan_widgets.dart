@@ -272,7 +272,6 @@ class _SeniorPlanView extends StatelessWidget {
         key: const PageStorageKey('senior-plan-scroll'),
         padding: EdgeInsets.fromLTRB(16, 18, 16, bottomPad),
         children: [
-          const RoutineEntry(),
           Row(
             children: [
               const Expanded(

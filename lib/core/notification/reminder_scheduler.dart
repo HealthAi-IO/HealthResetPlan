@@ -239,7 +239,7 @@ class ReminderScheduler {
 
   // ── 同步全部提醒 ─────────────────────────────────────────────
 
-  /// 取消所有已调度通知，再根据数据库中的提醒规则重新调度。
+  /// 根据提醒规则重新调度，保留当天已到点但尚未投递的普通提醒。
   Future<void> syncAll() async {
     final syncVersion = ++_syncVersion;
     if (!_initialized) return;
@@ -254,11 +254,16 @@ class ReminderScheduler {
     }
     if (!_supported) return;
 
-    await _plugin.cancelAll();
-
     final reminders = await repository.loadReminders();
     if (syncVersion != _syncVersion) return;
     final now = tz.TZDateTime.now(tz.local);
+    final pending = await _plugin.pendingNotificationRequests();
+    for (final request in pending) {
+      if (syncVersion != _syncVersion) return;
+      if (!shouldKeepDueReminder(request, reminders, now)) {
+        await _plugin.cancel(id: request.id);
+      }
+    }
     final medicationGroups = <int, List<_MedicationOccurrence>>{};
     for (final reminder in reminders) {
       if (syncVersion != _syncVersion) return;
@@ -740,6 +745,51 @@ class ReminderScheduler {
       }
     }
   }
+}
+
+@visibleForTesting
+bool shouldKeepDueReminder(
+  PendingNotificationRequest request,
+  List<ReminderData> reminders,
+  DateTime now,
+) {
+  final parts = request.payload?.split(':');
+  if (parts == null || parts.length != 3 || parts.first != 'reminder') {
+    return false;
+  }
+  final reminderId = int.tryParse(parts[1]);
+  final timestamp = int.tryParse(parts[2]);
+  if (timestamp == null ||
+      timestamp < 0 ||
+      timestamp > now.millisecondsSinceEpoch) {
+    return false;
+  }
+  final occurrence = DateTime.fromMillisecondsSinceEpoch(timestamp);
+  if (occurrence.year != now.year ||
+      occurrence.month != now.month ||
+      occurrence.day != now.day) {
+    return false;
+  }
+  for (final reminder in reminders) {
+    if (reminder.id != reminderId ||
+        !reminder.isEnabled ||
+        reminder.isWeekly ||
+        reminder.type == 'medicine' ||
+        !reminder.occursOn(occurrence) ||
+        reminder.actionAt(occurrence) != null ||
+        reminder.acknowledgedAt(occurrence)) {
+      continue;
+    }
+    for (var index = 0; index < reminder.dailyTimes.length; index++) {
+      final time = reminder.dailyTimes[index];
+      if (time.hour == occurrence.hour &&
+          time.minute == occurrence.minute &&
+          request.id == reminder.id! * 1000 + index * 20) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 class _MedicationOccurrence {

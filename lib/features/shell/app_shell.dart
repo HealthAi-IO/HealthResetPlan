@@ -228,7 +228,12 @@ class _AppDrawer extends StatelessWidget {
   void _open(BuildContext context, String location) {
     final router = GoRouter.of(context);
     Navigator.of(context).pop();
-    router.push(location);
+    final path = Uri.parse(location).path;
+    if (path == '/records' || path == '/clock') {
+      router.go(location);
+    } else {
+      router.push(location);
+    }
   }
 
   @override

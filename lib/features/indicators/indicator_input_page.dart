@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../../app/app_settings_controller.dart';
@@ -27,12 +29,16 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
   String _type = 'weight';
   DateTime _measuredAt = DateTime.now();
   bool _saving = false;
+  final Set<String> _savedRecords = {};
+  String? _savedSummary;
+  final Map<String, DateTime> _prefilledAt = {};
 
   // 各类型字段 controllers
   final _weightCtrl = TextEditingController();
   final _systolicCtrl = TextEditingController();
   final _diastolicCtrl = TextEditingController();
   final _bpmCtrl = TextEditingController();
+  final _bpHeartRateCtrl = TextEditingController();
   final _glucoseCtrl = TextEditingController();
   final _glucoseTypeCtrl = ValueNotifier<String>('fasting');
   final _tcCtrl = TextEditingController();
@@ -77,14 +83,27 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
 
   Future<void> _loadLatestForType(String type) async {
     if (_hasValueForType(type)) return;
-    final entries = await _repo.loadIndicators(type: type, limit: 1);
+    List<HealthIndicatorEntry> entries;
+    try {
+      entries = await _repo.loadIndicators(type: type, limit: 1);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未能加载上次记录，可直接填写本次测量值')),
+        );
+      }
+      return;
+    }
     if (!mounted ||
         entries.isEmpty ||
         _type != type ||
         _hasValueForType(type)) {
       return;
     }
-    setState(() => _fillFromExisting(entries.first));
+    setState(() {
+      _fillFromExisting(entries.first);
+      _prefilledAt[type] = entries.first.measuredTime;
+    });
   }
 
   bool _hasValueForType(String type) => switch (type) {
@@ -114,7 +133,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
       case 'bp':
         _systolicCtrl.text = '${e.payload['systolic'] ?? ''}';
         _diastolicCtrl.text = '${e.payload['diastolic'] ?? ''}';
-        _bpmCtrl.text = '${e.payload['heartRate'] ?? ''}';
+        _bpHeartRateCtrl.text = '${e.payload['heartRate'] ?? ''}';
       case 'glucose':
         _glucoseCtrl.text = '${e.payload['glucoseMmol'] ?? ''}';
         _glucoseTypeCtrl.value = e.payload['mealType'] as String? ?? 'fasting';
@@ -145,6 +164,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
     _systolicCtrl.dispose();
     _diastolicCtrl.dispose();
     _bpmCtrl.dispose();
+    _bpHeartRateCtrl.dispose();
     _glucoseCtrl.dispose();
     _glucoseTypeCtrl.dispose();
     _tcCtrl.dispose();
@@ -166,7 +186,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
       'bp' => {
           'systolic': int.parse(_systolicCtrl.text),
           'diastolic': int.parse(_diastolicCtrl.text),
-          if (_bpmCtrl.text.isNotEmpty) 'heartRate': int.parse(_bpmCtrl.text),
+          if (_bpHeartRateCtrl.text.isNotEmpty)
+            'heartRate': int.parse(_bpHeartRateCtrl.text),
         },
       'glucose' => {
           'glucoseMmol': double.parse(_glucoseCtrl.text),
@@ -214,42 +235,64 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
       '${value.minute.toString().padLeft(2, '0')}';
 
   Future<void> _save() async {
+    if (_saving) return;
     if (!_formKey.currentState!.validate()) return;
     final payload = _buildPayload();
-    final critical = HealthSafety.isCriticalIndicator(_type, payload);
-    final abnormal = HealthSafety.isAbnormalIndicator(_type, payload);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          critical
-              ? '数值达到危险范围'
-              : abnormal
-                  ? '数值可能异常'
-                  : '确认保存记录',
-        ),
-        content: Text(
-          '${_confirmationText(payload)}\n'
-          '测量时间：${_dateTimeText(_measuredAt)}'
-          '${critical ? '\n\n请确认没有输错；保存后请立即就医。' : abnormal ? '\n\n请确认测量方法和输入数值没有错误。' : ''}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('返回检查'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认保存'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+    if (_measuredAt.isAfter(DateTime.now())) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('测量时间不能晚于现在，请重新选择')),
+      );
+      return;
+    }
+    if (_type == 'lipid' && payload.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少填写一项血脂检查结果')),
+      );
+      return;
+    }
+    final recordKey =
+        jsonEncode([_type, _measuredAt.millisecondsSinceEpoch, payload]);
+    if (widget.existing == null && _savedRecords.contains(recordKey)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这条记录已保存，请切换下一项或修改测量时间')),
+      );
+      return;
+    }
     setState(() => _saving = true);
     try {
+      final critical = HealthSafety.isCriticalIndicator(_type, payload);
+      final abnormal = HealthSafety.isAbnormalIndicator(_type, payload);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            critical
+                ? '数值达到危险范围'
+                : abnormal
+                    ? '数值可能异常'
+                    : '确认保存记录',
+          ),
+          content: Text(
+            '${_confirmationText(payload)}\n'
+            '测量时间：${_dateTimeText(_measuredAt)}'
+            '${critical ? '\n\n请确认没有输错；保存后请立即就医。' : abnormal ? '\n\n请确认测量方法和输入数值没有错误。' : ''}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('返回检查'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确认保存'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
       if (widget.existing?.id != null) {
-        await _repo.updateIndicator(widget.existing!.id!, payload);
+        await _repo.updateIndicator(widget.existing!.id!, payload,
+            measuredAt: _measuredAt);
         if (!mounted) return;
         Navigator.of(context).pop(true);
       } else {
@@ -257,14 +300,8 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
           type: _type,
           payload: payload,
           measuredAt: _measuredAt,
+          clockNote: _type == 'weight' ? _confirmationText(payload) : null,
         );
-        if (_type == 'weight') {
-          await _repo.addClockRecord(
-            type: 'weight',
-            note: _confirmationText(payload),
-            clockAt: _measuredAt,
-          );
-        }
         sl<TelemetryApi>().record('indicator_recorded');
         if (!mounted) return;
         final isCritical = HealthSafety.isCriticalIndicator(_type, payload);
@@ -276,7 +313,11 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
             behavior: SnackBarBehavior.floating,
           ),
         );
-        Navigator.of(context).pop(true);
+        setState(() {
+          _savedRecords.add(recordKey);
+          _savedSummary =
+              '已保存：${_confirmationText(payload)}（${_dateTimeText(_measuredAt)}）';
+        });
       }
     } catch (_) {
       if (mounted) {
@@ -301,14 +342,14 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(_measuredAt),
     );
-    if (!mounted) return;
+    if (time == null || !mounted) return;
     setState(() {
       _measuredAt = DateTime(
         date.year,
         date.month,
         date.day,
-        time?.hour ?? _measuredAt.hour,
-        time?.minute ?? _measuredAt.minute,
+        time.hour,
+        time.minute,
       );
     });
   }
@@ -336,95 +377,107 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 const SizedBox(width: 8),
               ],
       ),
-      body: HealthResponsiveContent(
-        maxWidth: 760,
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              if (!isEdit) ...[
-                _SectionLabel('选择记录类型', senior: seniorMode),
-                const SizedBox(height: 10),
-                _TypeSelector(
-                  value: _type,
-                  types: seniorMode
-                      ? _typeList
-                          .where((item) => const {
+      body: AbsorbPointer(
+        absorbing: _saving,
+        child: HealthResponsiveContent(
+          maxWidth: 760,
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                if (!isEdit) ...[
+                  _SectionLabel('选择记录类型', senior: seniorMode),
+                  const SizedBox(height: 10),
+                  _TypeSelector(
+                    value: _type,
+                    types: seniorMode
+                        ? _typeList
+                            .where((item) => const {
+                                  'weight',
+                                  'bp',
+                                  'glucose',
+                                  'spo2',
+                                }.contains(item.$1))
+                            .toList()
+                        : _typeList,
+                    onChanged: _changeType,
+                  ),
+                  if (seniorMode) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: const {'weight', 'bp', 'glucose', 'spo2'}
+                              .contains(_type)
+                          ? null
+                          : _type,
+                      decoration: const InputDecoration(labelText: '其他记录类型'),
+                      items: _typeList
+                          .where((item) => !const {
                                 'weight',
                                 'bp',
                                 'glucose',
                                 'spo2',
                               }.contains(item.$1))
-                          .toList()
-                      : _typeList,
-                  onChanged: _changeType,
-                ),
-                if (seniorMode) ...[
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: const {'weight', 'bp', 'glucose', 'spo2'}
-                            .contains(_type)
-                        ? null
-                        : _type,
-                    decoration: const InputDecoration(labelText: '其他记录类型'),
-                    items: _typeList
-                        .where((item) => !const {
-                              'weight',
-                              'bp',
-                              'glucose',
-                              'spo2',
-                            }.contains(item.$1))
-                        .map((item) => DropdownMenuItem(
-                              value: item.$1,
-                              child: Text(item.$2),
-                            ))
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) _changeType(value);
-                    },
-                  ),
+                          .map((item) => DropdownMenuItem(
+                                value: item.$1,
+                                child: Text(item.$2),
+                              ))
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) _changeType(value);
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 20),
                 ],
-                const SizedBox(height: 20),
-              ],
-              if (seniorMode) ...[
-                const _SectionLabel('填写测量数值', senior: true),
-                const SizedBox(height: 10),
-                _buildFields(),
-                const SizedBox(height: 22),
-                const _SectionLabel('测量时间', senior: true),
-                const SizedBox(height: 10),
-                _DatePickerTile(value: _measuredAt, onTap: _pickDate),
-                const SizedBox(height: 12),
-                const Text('测量时间默认是现在，如需补录以前的数据再进行修改。'),
-              ] else ...[
-                const _SectionLabel('测量时间'),
-                const SizedBox(height: 10),
-                _DatePickerTile(value: _measuredAt, onTap: _pickDate),
-                const SizedBox(height: 20),
-                const _SectionLabel('数值录入'),
-                const SizedBox(height: 10),
-                _buildFields(),
-              ],
-              const SizedBox(height: 32),
-              FilledButton(
-                onPressed: _saving ? null : _save,
-                style: FilledButton.styleFrom(
-                  minimumSize: Size.fromHeight(seniorMode ? 60 : 52),
+                if (seniorMode) ...[
+                  const _SectionLabel('填写测量数值', senior: true),
+                  const SizedBox(height: 10),
+                  _buildFields(),
+                  const SizedBox(height: 22),
+                  const _SectionLabel('测量时间', senior: true),
+                  const SizedBox(height: 10),
+                  _DatePickerTile(value: _measuredAt, onTap: _pickDate),
+                  const SizedBox(height: 12),
+                  const Text('测量时间默认是现在，如需补录以前的数据再进行修改。'),
+                ] else ...[
+                  const _SectionLabel('测量时间'),
+                  const SizedBox(height: 10),
+                  _DatePickerTile(value: _measuredAt, onTap: _pickDate),
+                  const SizedBox(height: 20),
+                  const _SectionLabel('数值录入'),
+                  const SizedBox(height: 10),
+                  _buildFields(),
+                ],
+                if (!isEdit && _prefilledAt[_type] != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                      '数值预填自 ${_dateTimeText(_prefilledAt[_type]!)} 的记录，请核对本次测量结果后保存。'),
+                ],
+                const SizedBox(height: 32),
+                if (_savedSummary != null) ...[
+                  Text(_savedSummary!, semanticsLabel: _savedSummary),
+                  const SizedBox(height: 12),
+                ],
+                FilledButton(
+                  onPressed: _saving ? null : _save,
+                  style: FilledButton.styleFrom(
+                    minimumSize: Size.fromHeight(seniorMode ? 60 : 52),
+                  ),
+                  child: _saving
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : Text(
+                          isEdit ? '确认保存修改' : '确认保存记录',
+                          style: TextStyle(fontSize: seniorMode ? 18 : 16),
+                        ),
                 ),
-                child: _saving
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : Text(
-                        isEdit ? '确认保存修改' : '确认保存记录',
-                        style: TextStyle(fontSize: seniorMode ? 18 : 16),
-                      ),
-              ),
-              const SizedBox(height: 60),
-            ],
+                const SizedBox(height: 60),
+              ],
+            ),
           ),
         ),
       ),
@@ -476,7 +529,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
             ),
             const SizedBox(height: 14),
             _NumField(
-                controller: _bpmCtrl,
+                controller: _bpHeartRateCtrl,
                 label: '同测心率（选填）',
                 unit: 'bpm',
                 hint: '例如 72',
@@ -497,6 +550,7 @@ class _IndicatorInputPageState extends State<IndicatorInputPage> {
                 max: HealthRanges.maxGlucoseMmol,
                 initialValue: 5.6,
                 decimal: true,
+                precision: 2,
                 required: true),
             const SizedBox(height: 14),
             Text('测量类型', style: TextStyle(fontSize: 13, color: AppTheme.muted)),
@@ -747,40 +801,46 @@ class _TypeSelector extends StatelessWidget {
       runSpacing: 10,
       children: [
         for (final t in types)
-          GestureDetector(
-            onTap: () => onChanged(t.$1),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: value == t.$1
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
+          Semantics(
+            button: true,
+            selected: value == t.$1,
+            child: GestureDetector(
+              onTap: () => onChanged(t.$1),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
                   color: value == t.$1
                       ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.outlineVariant,
-                  width: value == t.$1 ? 2 : 1,
+                      : Theme.of(context).colorScheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: value == t.$1
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.outlineVariant,
+                    width: value == t.$1 ? 2 : 1,
+                  ),
                 ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(t.$3,
-                      size: 18,
-                      color: value == t.$1
-                          ? Theme.of(context).colorScheme.onPrimary
-                          : Theme.of(context).colorScheme.onSurface),
-                  const SizedBox(width: 6),
-                  Text(t.$2,
-                      style: TextStyle(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(t.$3,
+                        size: 18,
                         color: value == t.$1
                             ? Theme.of(context).colorScheme.onPrimary
-                            : Theme.of(context).colorScheme.onSurface,
-                        fontWeight: FontWeight.w700,
-                      )),
-                ],
+                            : Theme.of(context).colorScheme.onSurface),
+                    const SizedBox(width: 6),
+                    Text(t.$2,
+                        style: TextStyle(
+                          color: value == t.$1
+                              ? Theme.of(context).colorScheme.onPrimary
+                              : Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w700,
+                        )),
+                  ],
+                ),
               ),
             ),
           ),
@@ -840,6 +900,7 @@ class _NumField extends StatelessWidget {
     required this.max,
     required this.initialValue,
     this.decimal = false,
+    this.precision,
     this.required = false,
     this.extraValidator,
   });
@@ -852,6 +913,7 @@ class _NumField extends StatelessWidget {
   final double max;
   final double initialValue;
   final bool decimal;
+  final int? precision;
   final bool required;
   final String? Function(double value)? extraValidator;
 
@@ -864,8 +926,8 @@ class _NumField extends StatelessWidget {
       min: min,
       max: max,
       initialValue: initialValue,
-      step: decimal ? 0.1 : 1,
-      decimals: decimal ? 1 : 0,
+      step: precision == 2 ? 0.01 : (decimal ? 0.1 : 1),
+      decimals: precision ?? (decimal ? 1 : 0),
       optional: !required,
       validator: (v) {
         if (required && (v == null || v.isEmpty)) return '$label 不能为空';
