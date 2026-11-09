@@ -1,7 +1,7 @@
 name: health_reset_plan
 description: "健康重启计划 - 面向三高与体重管理人群的智能健康管理客户端"
 publish_to: 'none'
-version: 1.0.40+47
+version: 1.0.43+50
 
 environment:
   sdk: ^3.6.2
@@ -74,3 +74,4 @@ flutter:
     - family: NotoSansSC
       fonts:
         - asset: assets/fonts/NotoSansSC-Variable-1.0.12.ttf
+
